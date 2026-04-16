@@ -4,7 +4,7 @@
 
 namespace
 {
-    const std::string kShaderFile = "E:/Project/Falcor/Source/RenderPasses/Viewport/RenderToViewport.ps.slang";
+    const std::string kShaderFile = "RenderPasses/Viewport/RenderToViewport.ps.slang";
 }
 
 extern "C" FALCOR_API_EXPORT void registerPlugin(Falcor::PluginRegistry& registry)

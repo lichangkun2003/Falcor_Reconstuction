@@ -4,7 +4,7 @@
 
 namespace
 {
-const std::string kPrepareProgramFile = "E:/Project/Falcor/Source/RenderPasses/Voxelization/PrepareShadingData.cs.slang";
+const std::string kPrepareProgramFile = "RenderPasses/Voxelization/PrepareShadingData.cs.slang";
 
 }; // namespace
 

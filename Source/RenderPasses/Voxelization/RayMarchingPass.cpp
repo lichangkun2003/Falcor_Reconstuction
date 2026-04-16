@@ -5,8 +5,8 @@
 
 namespace
 {
-const std::string kShaderFile = "E:/Project/Falcor/Source/RenderPasses/Voxelization/RayMarching.ps.slang";
-const std::string kDisplayShaderFile = "E:/Project/Falcor/Source/RenderPasses/Voxelization/DisplayNDF.ps.slang";
+const std::string kShaderFile = "RenderPasses/Voxelization/RayMarching.ps.slang";
+const std::string kDisplayShaderFile = "RenderPasses/Voxelization/DisplayNDF.ps.slang";
 const std::string kOutputColor = "color";
 } // namespace
 

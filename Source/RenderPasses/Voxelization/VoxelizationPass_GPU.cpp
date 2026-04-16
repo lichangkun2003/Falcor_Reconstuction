@@ -3,8 +3,8 @@
 
 namespace
 {
-const std::string kSampleMeshProgramFile = "E:/Project/Falcor/Source/RenderPasses/Voxelization/SampleMesh.cs.slang";
-const std::string kClipMeshProgramFile = "E:/Project/Falcor/Source/RenderPasses/Voxelization/ClipMesh.cs.slang";
+const std::string kSampleMeshProgramFile = "RenderPasses/Voxelization/SampleMesh.cs.slang";
+const std::string kClipMeshProgramFile = "RenderPasses/Voxelization/ClipMesh.cs.slang";
 
 }; // namespace
 

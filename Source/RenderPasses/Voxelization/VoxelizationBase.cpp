@@ -17,7 +17,7 @@ GridData VoxelizationBase::GlobalGridData = {};
 uint3 VoxelizationBase::MinFactor = uint3(1, 1, 1);
 bool VoxelizationBase::FileUpdated = true;
 bool VoxelizationBase::LightChanged = true;
-std::string VoxelizationBase::ResourceFolder = "E:/Project/Falcor/resource/";
+std::string VoxelizationBase::ResourceFolder = "D:/lck/vs/Falcor_Reconstuction/resource/";
 
 std::random_device rd;
 std::mt19937 Random::Generator{ rd() };
