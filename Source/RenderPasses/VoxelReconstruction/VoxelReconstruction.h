@@ -28,6 +28,11 @@
 #pragma once
 #include "Falcor.h"
 #include "RenderGraph/RenderPass.h"
+#include "Utils/Debug/PixelDebug.h"
+
+#include "Defines.h"
+#include "Voxel/VoxelData.slang"
+#include "Voxel/VoxelGrid.slang"
 
 using namespace Falcor;
 
@@ -52,5 +57,35 @@ public:
     virtual bool onMouseEvent(const MouseEvent& mouseEvent) override { return false; }
     virtual bool onKeyEvent(const KeyboardEvent& keyEvent) override { return false; }
 
+    void beginFrame(RenderContext* pRenderContext, bool forceReset = false);
+    void endFrame(RenderContext* pRenderContext);
+
+
+    void setupGridResouce(RenderContext* pRenderContext, bool forceReset);
+
+    struct GridResources
+    {
+        ref<Buffer> gridDataBuffer;
+        ref<Texture> blockOM;
+        GridData gridData;
+    };
+
 private:
+    ref<Device> mpDevice;
+    ref<Scene> mpScene;
+    std::unique_ptr<PixelDebug> mpPixelDebug;
+
+    // Parameters
+    uint mFrameCount = 0;
+    uint2 mFrameDim;
+    float2 mInvFrameDim;
+
+
+    // Passes
+    ref<ComputePass> mpReflectTypes;
+
+    // Grid
+    GridResources mGridResources;  // cpu中的对应gpu中的资源，变量赋值，buffer绑定
+    ref<ParameterBlock> mpGridBlock; // gpu的block
+
 };
