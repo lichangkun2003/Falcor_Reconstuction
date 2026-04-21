@@ -12,6 +12,7 @@ target_sources(VoxelReconstruction PRIVATE
     Defines.h
 
     Shader/ReflectTypes.cs.slang
+    Shader/ProcessXuData.cs.slang
 )
 
 

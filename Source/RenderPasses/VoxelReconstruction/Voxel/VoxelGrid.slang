@@ -9,7 +9,6 @@ BEGIN_NAMESPACE_FALCOR
 struct GridData{
     uint3 gridSize;
 
-
     uint totalVoxelCount()
     {
         return gridSize.x * gridSize.y * gridSize.z;
@@ -35,6 +34,14 @@ ParameterBlock<GridData> gGridDataParamBlock;
 inline uint CellToIndex(uint3 cell, uint3 size)
 {
     return uint(cell.x) + uint(cell.y) * size.x + uint(cell.z) * size.x * size.y;
+}
+
+inline int3 IndexToCell(int index, uint3 size)
+{
+    int z = index / (size.x * size.y);
+    int y = (index % (size.x * size.y)) / size.x;
+    int x = index % size.x;
+    return int3(x, y, z);
 }
 
 
@@ -68,6 +75,43 @@ bool isSolidBlock(int3 blockInt)
     default: return false;
     }
 }
+
+bool setSolidBlock(int3 blockInt)
+{
+    uint2 blockSize = gGridDataParamBlock.blockGridSizeXY();
+
+    if (blockInt.x < 0 || blockInt.y < 0 || blockInt.z < 0)
+        return false;
+    if (blockInt.x >= blockSize.x || blockInt.y >= blockSize.y || blockInt.z >= 128)
+        return false;
+
+    uint4 zBits = gGridDataParamBlock.blockOM[blockInt.xy];
+    uint bit = 1u << (blockInt.z % 32);
+
+    switch (blockInt.z / 32)
+    {
+    case 0: gGridDataParamBlock.blockOM[blockInt.xy].x |= bit; break;
+    case 1: gGridDataParamBlock.blockOM[blockInt.xy].y |= bit; break;
+    case 2: gGridDataParamBlock.blockOM[blockInt.xy].z |= bit; break;
+    case 3: gGridDataParamBlock.blockOM[blockInt.xy].w |= bit; break;
+    default: return false;
+    }
+    //InterlockedOr(gGridDataParamBlock.blockOM[blockInt.xy].x, bit);
+
+    return true;
+}
+
+bool setSolidVoxel(int3 cellInt)
+{
+    if (any(cellInt < 0) || any(cellInt >= int3(gGridDataParamBlock.gridSize)))
+        return false;
+    uint offset = CellToIndex(uint3(cellInt), gGridDataParamBlock.gridSize);
+    gGridDataParamBlock.gridDataBuffer[offset].occupied = 1;
+    return true;
+}
+
+
+
 #endif
 
 END_NAMESPACE_FALCOR

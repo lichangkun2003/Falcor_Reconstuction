@@ -34,13 +34,21 @@ extern "C" FALCOR_API_EXPORT void registerPlugin(Falcor::PluginRegistry& registr
 
 
 // 常用命名（shader路径）
-namespace
+namespace VoxelPrime
 {
 const std::string ReflectTypesShaderFilePath = "RenderPasses/VoxelReconstruction/Shader/ReflectTypes.cs.slang";
+const std::string ProcessXuDataShaderFilePath = "RenderPasses/VoxelReconstruction/Shader/ProcessXuData.cs.slang";
 
+
+
+inline std::string kGBuffer = "gBuffer";
+inline std::string kVBuffer = "vBuffer";
+inline std::string kPBuffer = "pBuffer";
+inline std::string kBlockMap = "blockMap";
 }
 
-VoxelReconstruction::VoxelReconstruction(ref<Device> pDevice, const Properties& props) : RenderPass(pDevice)
+VoxelReconstruction::VoxelReconstruction(ref<Device> pDevice, const Properties& props)
+    : RenderPass(pDevice)
 {
     mpDevice = pDevice;
 
@@ -50,10 +58,19 @@ VoxelReconstruction::VoxelReconstruction(ref<Device> pDevice, const Properties& 
     // Create Grid pass
     {
         ProgramDesc desc;
-        desc.addShaderLibrary(ReflectTypesShaderFilePath).csEntry("main");
+        desc.addShaderLibrary(VoxelPrime::ReflectTypesShaderFilePath).csEntry("main");
         DefineList defines;
         mpReflectTypes = ComputePass::create(mpDevice, desc, defines, true);
     }
+
+    // Create ProcessXuData pass
+    {
+        ProgramDesc desc;
+        desc.addShaderLibrary(VoxelPrime::ProcessXuDataShaderFilePath).csEntry("main");
+        DefineList defines;
+        mpProcessXuDataPass = ComputePass::create(mpDevice, desc, defines, true);
+    }
+
 }
 
 Properties VoxelReconstruction::getProperties() const
@@ -65,11 +82,36 @@ RenderPassReflection VoxelReconstruction::reflect(const CompileData& compileData
 {
     // Define the required resources here
     RenderPassReflection reflector;
+
+    
+    // Input
+    reflector.addInput(VoxelPrime::kVBuffer, VoxelPrime::kVBuffer)
+        .bindFlags(ResourceBindFlags::ShaderResource)
+        .format(ResourceFormat::R32Uint)
+        .texture3D();
+
+    //reflector.addInput(kGBuffer, kGBuffer)
+    //    .bindFlags(ResourceBindFlags::ShaderResource)
+    //    .format(ResourceFormat::Unknown)
+    //    .rawBuffer(VoxelizationBase::GlobalGridData.solidVoxelCount * sizeof(PrimitiveBSDF));
+
+    //reflector.addInput(kPBuffer, kPBuffer)
+    //    .bindFlags(ResourceBindFlags::ShaderResource)
+    //    .format(ResourceFormat::Unknown)
+    //    .rawBuffer(VoxelizationBase::GlobalGridData.solidVoxelCount * sizeof(Ellipsoid));
+
+    reflector.addInput(VoxelPrime::kBlockMap, VoxelPrime::kBlockMap)
+        .bindFlags(ResourceBindFlags::ShaderResource)
+        .format(ResourceFormat::RGBA32Uint)
+        .texture2D();
+
+
+    // Output
     reflector.addOutput("dummy", "Dummy")
         .bindFlags(ResourceBindFlags::RenderTarget)
         .format(ResourceFormat::RGBA32Float)
         .texture2D(0, 0, 1, 1);
-    // reflector.addInput("src");
+
     return reflector;
 }
 
@@ -83,17 +125,20 @@ void VoxelReconstruction::execute(RenderContext* pRenderContext, const RenderDat
     mInvFrameDim = 1.0f / float2(mFrameDim);
     beginFrame(pRenderContext);
 
+    proccessXuData(pRenderContext, renderData);
 
 
     endFrame(pRenderContext);
 }
 
 void VoxelReconstruction::setScene(RenderContext* pRenderContext, const ref<Scene>& pScene){
-
+    mpScene = pScene;
 
 }
 
-void VoxelReconstruction::renderUI(Gui::Widgets& widget) {}
+void VoxelReconstruction::renderUI(Gui::Widgets& widget) {
+    //widget.text("kBlockMap Size: " + ToString(BlockMapSize));
+}
 
 void VoxelReconstruction::beginFrame(RenderContext* pRenderContext, bool forceReset)
 {
@@ -134,21 +179,36 @@ void VoxelReconstruction::setupGridResouce(RenderContext* pRenderContext, bool f
             sizeof(VoxelData), mGridResources.gridData.totalVoxelCount(),
             ResourceBindFlags::UnorderedAccess);
         mGridResources.blockOM = mpDevice->createTexture2D(
-            mGridResources.gridData.gridSize.x,
-            mGridResources.gridData.gridSize.y,
+            mGridResources.gridData.blockGridSizeXY().x,
+            mGridResources.gridData.blockGridSizeXY().y,
             ResourceFormat::RGBA32Uint,
             1u,
-            0,
+            1u,
             nullptr,
-            ResourceBindFlags::ShaderResource
+            ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess
         );
 
         pRenderContext->clearUAV(mGridResources.gridDataBuffer->getUAV().get(), uint4(0));
-        pRenderContext->clearTexture(mGridResources.blockOM.get());
+        pRenderContext->clearUAV(mGridResources.blockOM->getUAV().get(), uint4(0));
     }
 
     gridBlock["gridSize"] = mGridResources.gridData.gridSize;
     gridBlock["gridDataBuffer"] = mGridResources.gridDataBuffer;
     gridBlock["blockOM"] = mGridResources.blockOM;
+
+}
+
+
+void VoxelReconstruction::proccessXuData(RenderContext* pRenderContext, const RenderData& renderData)
+{
+    pRenderContext->clearUAV(mGridResources.gridDataBuffer->getUAV().get(), uint4(0));
+    pRenderContext->clearUAV(mGridResources.blockOM->getUAV().get(), uint4(0));
+
+
+    auto var = mpProcessXuDataPass->getRootVar();
+    var[VoxelPrime::kVBuffer] = renderData.getTexture(VoxelPrime::kVBuffer);
+    var[VoxelPrime::kBlockMap] = renderData.getTexture(VoxelPrime::kBlockMap);
+
+    mpProcessXuDataPass->execute(pRenderContext, uint3(GRID_RESOLUTION));
 
 }

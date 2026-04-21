@@ -53,7 +53,7 @@ public:
     virtual void compile(RenderContext* pRenderContext, const CompileData& compileData) override {}
     virtual void execute(RenderContext* pRenderContext, const RenderData& renderData) override;
     virtual void renderUI(Gui::Widgets& widget) override;
-    virtual void setScene(RenderContext* pRenderContext, const ref<Scene>& pScene) override {}
+    virtual void setScene(RenderContext* pRenderContext, const ref<Scene>& pScene) override;
     virtual bool onMouseEvent(const MouseEvent& mouseEvent) override { return false; }
     virtual bool onKeyEvent(const KeyboardEvent& keyEvent) override { return false; }
 
@@ -62,6 +62,7 @@ public:
 
 
     void setupGridResouce(RenderContext* pRenderContext, bool forceReset);
+    void proccessXuData(RenderContext* pRenderContext, const RenderData& renderData);
 
     struct GridResources
     {
@@ -83,9 +84,35 @@ private:
 
     // Passes
     ref<ComputePass> mpReflectTypes;
+    ref<ComputePass> mpProcessXuDataPass;
 
     // Grid
     GridResources mGridResources;  // cpu中的对应gpu中的资源，变量赋值，buffer绑定
     ref<ParameterBlock> mpGridBlock; // gpu的block
 
+    // UI
+    
+    
+
 };
+
+
+inline std::string ToString(float3 v)
+{
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(4);
+    oss << "(" << v.x << ", " << v.y << ", " << v.z << ")";
+    return oss.str();
+}
+inline std::string ToString(int2 v)
+{
+    std::ostringstream oss;
+    oss << "(" << v.x << ", " << v.y << ")";
+    return oss.str();
+}
+inline std::string ToString(int3 v)
+{
+    std::ostringstream oss;
+    oss << "(" << v.x << ", " << v.y << ", " << v.z << ")";
+    return oss.str();
+}
