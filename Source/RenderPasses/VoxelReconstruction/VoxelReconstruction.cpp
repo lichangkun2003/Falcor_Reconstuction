@@ -133,11 +133,30 @@ void VoxelReconstruction::execute(RenderContext* pRenderContext, const RenderDat
 
 void VoxelReconstruction::setScene(RenderContext* pRenderContext, const ref<Scene>& pScene){
     mpScene = pScene;
-
+    UpdateVoxelGrid(mpScene, mVoxelResolution);
+    setupGridResouce(pRenderContext, true);
 }
 
 void VoxelReconstruction::renderUI(Gui::Widgets& widget) {
     //widget.text("kBlockMap Size: " + ToString(BlockMapSize));
+
+
+
+
+
+
+
+
+    widget.text("Voxel Size: " + ToString(mGridResources.gridData.voxelSize));
+    widget.text("Voxel Count: " + ToString((int3)mGridResources.gridData.voxelCount));
+    widget.text("Block Count: " + ToString((int3)mGridResources.gridData.blockCount3D()));
+    widget.text("Grid Min: " + ToString(mGridResources.gridData.gridMin));
+    widget.text("Solid Voxel Count: " + std::to_string(mGridResources.gridData.solidVoxelCount));
+    widget.text(
+        "Solid Rate: " + std::to_string(mGridResources.gridData.solidVoxelCount / (float)mGridResources.gridData.totalVoxelCount())
+    );
+    //widget.text("Max Polygon Count: " + std::to_string(mGridResources.gridData.maxPolygonCount));
+    //widget.text("Total Polygon Count: " + std::to_string(mGridResources.gridData.totalPolygonCount));
 }
 
 void VoxelReconstruction::beginFrame(RenderContext* pRenderContext, bool forceReset)
@@ -172,8 +191,7 @@ void VoxelReconstruction::setupGridResouce(RenderContext* pRenderContext, bool f
     // -----------------------------------------------------------------------------
     // Resource setup
     // -----------------------------------------------------------------------------
-    mGridResources.gridData.gridSize = uint3(GRID_RESOLUTION, GRID_RESOLUTION, GRID_RESOLUTION);
-    if (initializeResource)
+    if (initializeResource || forceReset)
     {
         mGridResources.gridDataBuffer = mpDevice->createStructuredBuffer(
             sizeof(VoxelData), mGridResources.gridData.totalVoxelCount(),
@@ -192,9 +210,10 @@ void VoxelReconstruction::setupGridResouce(RenderContext* pRenderContext, bool f
         pRenderContext->clearUAV(mGridResources.blockOM->getUAV().get(), uint4(0));
     }
 
-    gridBlock["gridSize"] = mGridResources.gridData.gridSize;
+
     gridBlock["gridDataBuffer"] = mGridResources.gridDataBuffer;
     gridBlock["blockOM"] = mGridResources.blockOM;
+    gridBlock["voxelCount"] = mGridResources.gridData.voxelCount;
 
 }
 
@@ -209,6 +228,41 @@ void VoxelReconstruction::proccessXuData(RenderContext* pRenderContext, const Re
     var[VoxelPrime::kVBuffer] = renderData.getTexture(VoxelPrime::kVBuffer);
     var[VoxelPrime::kBlockMap] = renderData.getTexture(VoxelPrime::kBlockMap);
 
-    mpProcessXuDataPass->execute(pRenderContext, uint3(GRID_RESOLUTION));
+    mpProcessXuDataPass->execute(pRenderContext, mGridResources.gridData.voxelCount);
 
+    // TODO
+    //mGridResources.gridData.solidVoxelCount = 0;
+}
+
+void VoxelReconstruction::UpdateVoxelGrid(ref<Scene> scene, uint voxelResolution)
+{
+    float3 diag;
+    float length;
+    float3 center;
+    if (scene)
+    {
+        AABB aabb = scene->getSceneBounds();
+        diag = aabb.maxPoint - aabb.minPoint;
+        length = std::max(diag.z, std::max(diag.x, diag.y));
+        center = aabb.center();
+        diag *= 1.02f;
+        length *= 1.02f;
+    }
+    else
+    {
+        diag = float3(1);
+        length = 1.f;
+        center = float3(0);
+    }
+
+    mGridResources.gridData.voxelSize = float3(length / voxelResolution);
+    float3 temp = diag / mGridResources.gridData.voxelSize;
+
+    mGridResources.gridData.voxelCount = uint3(
+        (uint)math::ceil(temp.x / MinFactor.x) * MinFactor.x,
+        (uint)math::ceil(temp.y / MinFactor.y) * MinFactor.y,
+        (uint)math::ceil(temp.z / MinFactor.z) * MinFactor.z
+    );
+    mGridResources.gridData.gridMin = center - 0.5f * mGridResources.gridData.voxelSize * float3(mGridResources.gridData.voxelCount);
+    mGridResources.gridData.solidVoxelCount = 0;
 }

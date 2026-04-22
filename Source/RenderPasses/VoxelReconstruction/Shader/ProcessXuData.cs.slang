@@ -43,7 +43,7 @@ bool isSolidBlockXu(int3 blockInt)
 
 [numthreads(8, 8, 1)]
 void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
-    uint index = CellToIndex(dispatchThreadId, gGridDataParamBlock.gridSize);
+    uint index = CellToIndex(dispatchThreadId, gGridDataParamBlock.voxelCount);
     int3 cellInt = int3(dispatchThreadId);
     int3 blockInt = cellInt / BLOCK_TO_VOXEL;
     if (!isSolidBlockXu(blockInt))

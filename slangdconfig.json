@@ -1,6 +1,7 @@
 {
     "slang.additionalSearchPaths": [
-        "D:/lck/vs/Falcor_Reconstuction/Source"
-
+        "..",
+        "../..",
+        "../../.."
     ]
 }

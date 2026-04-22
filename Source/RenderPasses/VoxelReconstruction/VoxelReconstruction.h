@@ -29,6 +29,7 @@
 #include "Falcor.h"
 #include "RenderGraph/RenderPass.h"
 #include "Utils/Debug/PixelDebug.h"
+#include "Core/Pass/FullScreenPass.h"
 
 #include "Defines.h"
 #include "Voxel/VoxelData.slang"
@@ -63,12 +64,32 @@ public:
 
     void setupGridResouce(RenderContext* pRenderContext, bool forceReset);
     void proccessXuData(RenderContext* pRenderContext, const RenderData& renderData);
+    void UpdateVoxelGrid(ref<Scene> scene, uint voxelResolution);
+
+    void createRayMarchingPassResource(RenderContext* pRenderContext);
 
     struct GridResources
     {
         ref<Buffer> gridDataBuffer;
         ref<Texture> blockOM;
         GridData gridData;
+    };
+
+    struct RayMarchingPassResouce
+    {
+        ref<FullScreenPass> mpFullScreenPass;
+        ref<FullScreenPass> mpDisplayNDFPass;
+
+        void init() {
+            mpFullScreenPass = nullptr;
+            mpDisplayNDFPass = nullptr;
+        }
+    };
+    struct RayMarchingPassParams
+    {
+        bool mOptionsChanged;
+        uint mFrameIndex;
+        uint2 mOutputResolution;
     };
 
 private:
@@ -80,18 +101,24 @@ private:
     uint mFrameCount = 0;
     uint2 mFrameDim;
     float2 mInvFrameDim;
+    uint mVoxelResolution = GRID_RESOLUTION; // X,Y,Z三个方向中，最长的边被划分的体素数量
 
 
     // Passes
     ref<ComputePass> mpReflectTypes;
     ref<ComputePass> mpProcessXuDataPass;
+    
+
 
     // Grid
     GridResources mGridResources;  // cpu中的对应gpu中的资源，变量赋值，buffer绑定
     ref<ParameterBlock> mpGridBlock; // gpu的block
 
+    // RayMarchingPass
+
+    uint3 MinFactor = uint3(1, 1, 1);
+
     // UI
-    
     
 
 };

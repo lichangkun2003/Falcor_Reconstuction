@@ -7,19 +7,26 @@
 BEGIN_NAMESPACE_FALCOR
 
 struct GridData{
-    uint3 gridSize;
+    uint3 voxelCount;
+    float3 gridMin;
+    float3 voxelSize;
+    uint solidVoxelCount;
 
     uint totalVoxelCount()
     {
-        return gridSize.x * gridSize.y * gridSize.z;
+        return voxelCount.x * voxelCount.y * voxelCount.z;
     }
 
     uint2 blockGridSizeXY()
     {
         return uint2(
-            (gridSize.x + BLOCK_TO_VOXEL - 1) / BLOCK_TO_VOXEL,
-            (gridSize.y + BLOCK_TO_VOXEL - 1) / BLOCK_TO_VOXEL
+            (voxelCount.x + BLOCK_TO_VOXEL - 1) / BLOCK_TO_VOXEL,
+                     (voxelCount.y + BLOCK_TO_VOXEL - 1) / BLOCK_TO_VOXEL
         );
+    }
+    uint3 blockCount3D()
+    {
+        return uint3((voxelCount.x + BLOCK_TO_VOXEL - 1) / BLOCK_TO_VOXEL, (voxelCount.y + BLOCK_TO_VOXEL - 1) / BLOCK_TO_VOXEL, (voxelCount.z + BLOCK_TO_VOXEL - 1) / BLOCK_TO_VOXEL);
     }
 
 #if !defined(HOST_CODE)
@@ -47,9 +54,9 @@ inline int3 IndexToCell(int index, uint3 size)
 
 bool isSolidVoxel(int3 cellInt)
 {
-    if ( any(cellInt < 0) || any(cellInt >= int3(gGridDataParamBlock.gridSize)) )
+    if (any(cellInt < 0) || any(cellInt >= int3(gGridDataParamBlock.voxelCount)) )
         return false;
-    uint offset = CellToIndex( uint3(cellInt),gGridDataParamBlock.gridSize);
+    uint offset = CellToIndex(uint3(cellInt), gGridDataParamBlock.voxelCount);
     return gGridDataParamBlock.gridDataBuffer[offset].occupied != 0;
 }
 
@@ -103,9 +110,9 @@ bool setSolidBlock(int3 blockInt)
 
 bool setSolidVoxel(int3 cellInt)
 {
-    if (any(cellInt < 0) || any(cellInt >= int3(gGridDataParamBlock.gridSize)))
+    if (any(cellInt < 0) || any(cellInt >= int3(gGridDataParamBlock.voxelCount)))
         return false;
-    uint offset = CellToIndex(uint3(cellInt), gGridDataParamBlock.gridSize);
+    uint offset = CellToIndex(uint3(cellInt), gGridDataParamBlock.voxelCount);
     gGridDataParamBlock.gridDataBuffer[offset].occupied = 1;
     return true;
 }
