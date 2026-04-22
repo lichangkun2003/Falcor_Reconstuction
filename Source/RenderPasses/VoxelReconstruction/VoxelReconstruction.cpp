@@ -38,13 +38,14 @@ namespace VoxelPrime
 {
 const std::string ReflectTypesShaderFilePath = "RenderPasses/VoxelReconstruction/Shader/ReflectTypes.cs.slang";
 const std::string ProcessXuDataShaderFilePath = "RenderPasses/VoxelReconstruction/Shader/ProcessXuData.cs.slang";
-
+const std::string RayMarchingShaderFilePath = "RenderPasses/VoxelReconstruction/Shader/RayMarchingPass.ps.slang";
 
 
 inline std::string kGBuffer = "gBuffer";
 inline std::string kVBuffer = "vBuffer";
 inline std::string kPBuffer = "pBuffer";
 inline std::string kBlockMap = "blockMap";
+inline std::string kOutputColor = "color";
 }
 
 VoxelReconstruction::VoxelReconstruction(ref<Device> pDevice, const Properties& props)
@@ -69,6 +70,12 @@ VoxelReconstruction::VoxelReconstruction(ref<Device> pDevice, const Properties& 
         desc.addShaderLibrary(VoxelPrime::ProcessXuDataShaderFilePath).csEntry("main");
         DefineList defines;
         mpProcessXuDataPass = ComputePass::create(mpDevice, desc, defines, true);
+    }
+
+    // RayMarchingPass
+    {
+        mRayMarchingPassResouce.init();
+        mRayMarchingPassParams.init();
     }
 
 }
@@ -111,6 +118,11 @@ RenderPassReflection VoxelReconstruction::reflect(const CompileData& compileData
         .bindFlags(ResourceBindFlags::RenderTarget)
         .format(ResourceFormat::RGBA32Float)
         .texture2D(0, 0, 1, 1);
+    reflector.addOutput(VoxelPrime::kOutputColor, "Color")
+        .bindFlags(ResourceBindFlags::RenderTarget)
+        .format(ResourceFormat::RGBA32Float)
+        //.texture2D(0, 0, 1, 1);
+        .texture2D(mRayMarchingPassParams.mOutputResolution.x, mRayMarchingPassParams.mOutputResolution.y, 1, 1);
 
     return reflector;
 }
@@ -127,6 +139,7 @@ void VoxelReconstruction::execute(RenderContext* pRenderContext, const RenderDat
 
     proccessXuData(pRenderContext, renderData);
 
+    rayMarchingPass(pRenderContext, renderData);
 
     endFrame(pRenderContext);
 }
@@ -135,16 +148,42 @@ void VoxelReconstruction::setScene(RenderContext* pRenderContext, const ref<Scen
     mpScene = pScene;
     UpdateVoxelGrid(mpScene, mVoxelResolution);
     setupGridResouce(pRenderContext, true);
+
+    // RayMarching
+    createRayMarchingPassResource(pRenderContext);
 }
 
 void VoxelReconstruction::renderUI(Gui::Widgets& widget) {
-    //widget.text("kBlockMap Size: " + ToString(BlockMapSize));
 
-
-
-
-
-
+    // RayMarching
+    //if (widget.checkbox("Debug", mDebug))
+    //    mOptionsChanged = true;
+    //if (widget.checkbox("Use Emissive Light", mUseEmissiveLight))
+    //    mOptionsChanged = true;
+    if (widget.checkbox("Check Ellipsoid", mRayMarchingPassParams.mCheckEllipsoid))
+        mRayMarchingPassParams.mOptionsChanged = true;
+    //if (widget.checkbox("Check Visibility", mCheckVisibility))
+    //    mOptionsChanged = true;
+    //if (widget.checkbox("Check Coverage", mCheckCoverage))
+    //    mOptionsChanged = true;
+    if (widget.checkbox("Use Mipmap", mRayMarchingPassParams.mUseMipmap))
+        mRayMarchingPassParams.mOptionsChanged = true;
+    //if (widget.slider("Shadow Bias(x100)", mShadowBias100, 0.0f, 0.2f))
+    //    mOptionsChanged = true;
+    //if (widget.slider("Min Pdf(x100)", mMinPdf100, 0.0f, 0.2f))
+    //    mOptionsChanged = true;
+    //if (widget.slider("T Threshold(x100)", mTrasmittanceThreshold100, 0.0f, 10.0f))
+    //    mOptionsChanged = true;
+    if (widget.dropdown("Draw Mode", reinterpret_cast<ABSDFDrawMode&>(mRayMarchingPassParams.mDrawMode)))
+        mRayMarchingPassParams.mOptionsChanged = true;
+    if (widget.slider("Max Bounce", mRayMarchingPassParams.mMaxBounce, 0u, 4u))
+        mRayMarchingPassParams.mOptionsChanged = true;
+    if (widget.checkbox("Display NDF", mRayMarchingPassParams.mDisplayNDF))
+        mRayMarchingPassParams.mOptionsChanged = true;
+    if (widget.rgbColor("Clear Color", mRayMarchingPassParams.mClearColor))
+        mRayMarchingPassParams.mOptionsChanged = true;
+    if (widget.checkbox("Render Background", mRayMarchingPassParams.mRenderBackGround))
+        mRayMarchingPassParams.mOptionsChanged = true;
 
 
     widget.text("Voxel Size: " + ToString(mGridResources.gridData.voxelSize));
@@ -169,6 +208,7 @@ void VoxelReconstruction::endFrame(RenderContext* pRenderContext) {
 
     mpPixelDebug->endFrame(pRenderContext);
     mFrameCount++;
+    mRayMarchingPassParams.mFrameIndex = mFrameCount;
 }
 
 
@@ -214,7 +254,8 @@ void VoxelReconstruction::setupGridResouce(RenderContext* pRenderContext, bool f
     gridBlock["gridDataBuffer"] = mGridResources.gridDataBuffer;
     gridBlock["blockOM"] = mGridResources.blockOM;
     gridBlock["voxelCount"] = mGridResources.gridData.voxelCount;
-
+    gridBlock["voxelSize"] = mGridResources.gridData.voxelSize;
+    gridBlock["gridMin"] = mGridResources.gridData.gridMin;
 }
 
 
@@ -227,6 +268,7 @@ void VoxelReconstruction::proccessXuData(RenderContext* pRenderContext, const Re
     auto var = mpProcessXuDataPass->getRootVar();
     var[VoxelPrime::kVBuffer] = renderData.getTexture(VoxelPrime::kVBuffer);
     var[VoxelPrime::kBlockMap] = renderData.getTexture(VoxelPrime::kBlockMap);
+    var["gGridDataParamBlock"] = mpGridBlock;
 
     mpProcessXuDataPass->execute(pRenderContext, mGridResources.gridData.voxelCount);
 
@@ -265,4 +307,90 @@ void VoxelReconstruction::UpdateVoxelGrid(ref<Scene> scene, uint voxelResolution
     );
     mGridResources.gridData.gridMin = center - 0.5f * mGridResources.gridData.voxelSize * float3(mGridResources.gridData.voxelCount);
     mGridResources.gridData.solidVoxelCount = 0;
+}
+
+
+void VoxelReconstruction::createRayMarchingPassResource(RenderContext* pRenderContext) {
+    mRayMarchingPassResouce.init();
+    mRayMarchingPassParams.init();
+
+    Sampler::Desc samplerDesc;
+    samplerDesc.setFilterMode(TextureFilteringMode::Point, TextureFilteringMode::Point, TextureFilteringMode::Point)
+        .setAddressingMode(TextureAddressingMode::Wrap, TextureAddressingMode::Wrap, TextureAddressingMode::Wrap);
+    mRayMarchingPassResouce.mpPointSampler = mpDevice->createSampler(samplerDesc);
+
+    {
+        ProgramDesc desc;
+        desc.addShaderLibrary(VoxelPrime::RayMarchingShaderFilePath).psEntry("main");
+        desc.setShaderModel(ShaderModel::SM6_5);
+        desc.addTypeConformances(mpScene->getTypeConformances());
+        mRayMarchingPassResouce.mpFullScreenPass = FullScreenPass::create(mpDevice, desc, mpScene->getSceneDefines());
+    }
+}
+
+void VoxelReconstruction::rayMarchingPass(RenderContext* pRenderContext, const RenderData& renderData) {
+    RayMarchingPassResouce& resource = mRayMarchingPassResouce;
+    RayMarchingPassParams& params = mRayMarchingPassParams;
+
+    auto& dict = renderData.getDictionary();
+    if (params.mOptionsChanged)
+    {
+        auto flags = dict.getValue(kRenderPassRefreshFlags, RenderPassRefreshFlags::None);
+        dict[Falcor::kRenderPassRefreshFlags] = flags | Falcor::RenderPassRefreshFlags::RenderOptionsChanged;
+        params.mOptionsChanged = false;
+    }
+
+    ref<Camera> pCamera = mpScene->getCamera();
+    ref<Texture> pOutputColor = renderData.getTexture(VoxelPrime::kOutputColor);
+    pRenderContext->clearRtv(pOutputColor->getRTV().get(), float4(0));
+
+
+    if (!params.mDisplayNDF)
+    {
+       //resource.mpFullScreenPass->addDefine("CHECK_VISIBILITY", params.mCheckVisibility ? "1" : "0");
+
+
+       resource.mpFullScreenPass->addDefine("CHECK_ELLIPSOID", params.mCheckEllipsoid ? "1" : "0");
+       resource.mpFullScreenPass->addDefine("USE_MIP_MAP", params.mUseMipmap ? "1" : "0");
+
+
+       ref<EnvMap> pEnvMap = mpScene->getEnvMap();
+       resource.mpFullScreenPass->addDefine("USE_ENV_MAP", pEnvMap ? "1" : "0");
+
+        // 必须在addDefine之后获取var
+       auto var = resource.mpFullScreenPass->getRootVar();
+       mpScene->bindShaderData(var["gScene"]);
+
+       var["gGridDataParamBlock"] = mpGridBlock;
+
+
+       auto cb_GridData = var["GridData"];
+       cb_GridData["gridMin"] = mGridResources.gridData.gridMin;
+       cb_GridData["voxelSize"] = mGridResources.gridData.voxelSize;
+       cb_GridData["voxelCount"] = mGridResources.gridData.voxelCount;
+       cb_GridData["solidVoxelCount"] = (uint)mGridResources.gridData.solidVoxelCount;
+
+
+       auto cb = var["CB"];
+       cb["pixelCount"] = params.mOutputResolution;
+       cb["blockCount"] = mGridResources.gridData.blockCount3D();
+       cb["invVP"] = math::inverse(pCamera->getViewProjMatrixNoJitter());
+       //cb["shadowBias"] = mShadowBias100 / 100 / gridData.voxelSize.x;
+       cb["drawMode"] = params.mDrawMode;
+       cb["maxBounce"] = params.mMaxBounce;
+       cb["frameIndex"] = params.mFrameIndex;
+       //cb["minPdf"] = mMinPdf100 / 100;
+       //cb["trasmittanceThreshold"] = mTrasmittanceThreshold100 / 100;
+       //cb["selectedPixel"] = mSelectedPixel;
+       cb["renderBackGround"] = params.mRenderBackGround;
+       cb["clearColor"] = float4(params.mClearColor, 0);
+
+       ref<Fbo> fbo = Fbo::create(mpDevice);
+       fbo->attachColorTarget(pOutputColor, 0);
+       resource.mpFullScreenPass->execute(pRenderContext, fbo);
+    }
+    else
+    {
+
+    }
 }

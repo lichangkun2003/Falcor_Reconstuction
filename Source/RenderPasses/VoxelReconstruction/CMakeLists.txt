@@ -13,6 +13,11 @@ target_sources(VoxelReconstruction PRIVATE
 
     Shader/ReflectTypes.cs.slang
     Shader/ProcessXuData.cs.slang
+    Shader/RayMarchingPass.ps.slang
+
+    Math/Random.h
+    Math/Random.slang
+    Math/AABB.slang
 )
 
 

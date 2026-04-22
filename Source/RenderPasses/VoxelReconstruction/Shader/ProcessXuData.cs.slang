@@ -12,7 +12,8 @@ cbuffer GridData {
 bool isSolidVoxelXu(int3 cellInt, out int offset)
 {
     offset = vBuffer[cellInt];
-    if (offset < 0 || offset > solidVoxelCount)
+    //if (offset < 0 || offset > solidVoxelCount)
+    if (offset < 0 )
         return false;
     return true;
     //return gBuffer[offset].area > 0;

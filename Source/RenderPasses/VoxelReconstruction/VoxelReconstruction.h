@@ -30,10 +30,12 @@
 #include "RenderGraph/RenderPass.h"
 #include "Utils/Debug/PixelDebug.h"
 #include "Core/Pass/FullScreenPass.h"
+#include "RenderGraph/RenderPassStandardFlags.h"
 
 #include "Defines.h"
 #include "Voxel/VoxelData.slang"
 #include "Voxel/VoxelGrid.slang"
+#include "Voxel/ABSDF.slang"
 
 using namespace Falcor;
 
@@ -67,6 +69,7 @@ public:
     void UpdateVoxelGrid(ref<Scene> scene, uint voxelResolution);
 
     void createRayMarchingPassResource(RenderContext* pRenderContext);
+    void rayMarchingPass(RenderContext* pRenderContext, const RenderData& renderData);
 
     struct GridResources
     {
@@ -79,10 +82,11 @@ public:
     {
         ref<FullScreenPass> mpFullScreenPass;
         ref<FullScreenPass> mpDisplayNDFPass;
-
+        ref<Sampler> mpPointSampler;
         void init() {
             mpFullScreenPass = nullptr;
             mpDisplayNDFPass = nullptr;
+            mpPointSampler = nullptr;
         }
     };
     struct RayMarchingPassParams
@@ -90,6 +94,28 @@ public:
         bool mOptionsChanged;
         uint mFrameIndex;
         uint2 mOutputResolution;
+        bool mDisplayNDF;
+        //bool mCheckVisibility;
+        uint mDrawMode;
+        bool mUseMipmap;
+        uint mMaxBounce;
+        bool mRenderBackGround;
+        float3 mClearColor;
+        bool mCheckEllipsoid;
+
+        void init() {
+            mOptionsChanged = false;
+            mFrameIndex = 0;
+            mOutputResolution = uint2(1920, 1080);
+            mDisplayNDF = false;
+            //mCheckVisibility = false;
+            mDrawMode = 0;
+            mUseMipmap = true;
+            mMaxBounce = 1;
+            mRenderBackGround = false;
+            mClearColor = float3(0);
+            mCheckEllipsoid = false;
+        }
     };
 
 private:
@@ -115,7 +141,8 @@ private:
     ref<ParameterBlock> mpGridBlock; // gpu的block
 
     // RayMarchingPass
-
+    RayMarchingPassResouce mRayMarchingPassResouce;
+    RayMarchingPassParams mRayMarchingPassParams;
     uint3 MinFactor = uint3(1, 1, 1);
 
     // UI

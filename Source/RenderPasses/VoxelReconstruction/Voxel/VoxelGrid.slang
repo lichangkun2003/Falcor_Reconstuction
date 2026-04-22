@@ -63,12 +63,12 @@ bool isSolidVoxel(int3 cellInt)
 
 bool isSolidBlock(int3 blockInt)
 {
-    uint2 blockSize = gGridDataParamBlock.blockGridSizeXY();
+    //uint2 blockSize = gGridDataParamBlock.blockGridSizeXY();
 
-    if (blockInt.x < 0 || blockInt.y < 0 || blockInt.z < 0)
-        return false;
-    if (blockInt.x >= blockSize.x || blockInt.y >= blockSize.y || blockInt.z >= 128)
-        return false;
+    //if (blockInt.x < 0 || blockInt.y < 0 || blockInt.z < 0)
+    //    return false;
+    //if (blockInt.x >= blockSize.x || blockInt.y >= blockSize.y || blockInt.z >= 128)
+    //    return false;
 
     uint4 zBits = gGridDataParamBlock.blockOM[blockInt.xy];
     uint bit = 1u << (blockInt.z % 32);
@@ -117,7 +117,58 @@ bool setSolidVoxel(int3 cellInt)
     return true;
 }
 
+// DDA
+float leave(inout float3 cell, inout int3 cellInt, int3 directions, float3 direction, float3 reciprocal_direction)
+{
+    float3 border = cellInt + (directions + 1) / 2;
+    float3 t = (border - cell) * reciprocal_direction;
+    float tMin = 2;
+    int3 selectedDirection = 0;
+    if (direction.x != 0 && t.x < tMin)
+    {
+        tMin = t.x;
+        selectedDirection = int3(directions.x, 0, 0);
+    }
+    if (direction.y != 0 && t.y < tMin)
+    {
+        tMin = t.y;
+        selectedDirection = int3(0, directions.y, 0);
+    }
+    if (direction.z != 0 && t.z < tMin)
+    {
+        tMin = t.z;
+        selectedDirection = int3(0, 0, directions.z);
+    }
 
+    cell += tMin * direction;
+    cellInt += selectedDirection;
+    return tMin;
+}
+
+float leaveBlockFace(float c, int cInt, float reciprocal)
+{
+    int temp = cInt % BLOCK_TO_VOXEL;
+    float t = -1;
+    if (reciprocal < 0)
+        t = (cInt - temp - c) * reciprocal;
+    if (reciprocal > 0)
+        t = (cInt - temp + BLOCK_TO_VOXEL - c) * reciprocal;
+    return t > 0 ? t : 1e30;
+}
+
+float leaveBlock(inout float3 cell, inout int3 cellInt, int3 directions, float3 direction, float3 reciprocal_direction)
+{
+    float tMin = 2 * BLOCK_TO_VOXEL;
+    float t = leaveBlockFace(cell.x, cellInt.x, reciprocal_direction.x);
+    tMin = min(t, tMin);
+    t = leaveBlockFace(cell.y, cellInt.y, reciprocal_direction.y);
+    tMin = min(t, tMin);
+    t = leaveBlockFace(cell.z, cellInt.z, reciprocal_direction.z);
+    tMin = min(t, tMin);
+    cell += tMin * direction;
+    cellInt = int3(cell + direction * 1e-3);
+    return tMin;
+}
 
 #endif
 

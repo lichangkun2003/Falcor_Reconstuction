@@ -20,8 +20,8 @@ def render_graph_Pass():
     g.addEdge("ReadVoxelPass.blockMap","VoxelReconstruction.blockMap")
 
 
-    g.markOutput("VoxelReconstruction.dummy")
-
+    #g.markOutput("VoxelReconstruction.dummy")
+    g.markOutput("VoxelReconstruction.color")
     return g
 
 Graph = render_graph_Pass()
