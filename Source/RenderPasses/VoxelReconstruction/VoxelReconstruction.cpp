@@ -80,7 +80,7 @@ VoxelReconstruction::VoxelReconstruction(ref<Device> pDevice, const Properties& 
         mpPathRecordBuffer = mpDevice->createStructuredBuffer(
             sizeof(PathRecord),
             mRayMarchingPassParams.mOutputResolution.x * mRayMarchingPassParams.mOutputResolution.y,
-            ResourceBindFlags::UnorderedAccess
+            ResourceBindFlags::UnorderedAccess | ResourceBindFlags::ShaderResource
         );
     }
 
@@ -152,7 +152,7 @@ void VoxelReconstruction::execute(RenderContext* pRenderContext, const RenderDat
 
         mLossPass.mView = 0;
         runLossPass(pRenderContext, renderData);
-
+        runGradientPass(pRenderContext, renderData);
     }
 
     endFrame(pRenderContext);
@@ -168,6 +168,10 @@ void VoxelReconstruction::setScene(RenderContext* pRenderContext, const ref<Scen
 
     // Loss Pass
     createLossPassResource(pRenderContext);
+
+    // Gradient Pass
+    createGradientPassResource(pRenderContext);
+
 }
 
 void VoxelReconstruction::renderUI(Gui::Widgets& widget) {

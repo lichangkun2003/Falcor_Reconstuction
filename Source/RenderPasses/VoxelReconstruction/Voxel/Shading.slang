@@ -485,4 +485,92 @@ struct PrimitiveBSDF
 #endif
 };
 
+struct PrimitiveBSDF_New
+{
+    SurfaceBRDF surface;
+#if !defined(HOST_CODE)
+    DeltaBTDF delta; // GPU上，没有成员变量的结构体不占空间(人为添加无意义的成员变量也会被优化掉)
+#endif
+    //SphericalFunc primitiveProjAreaFunc;
+    //SphericalFunc polygonsProjAreaFunc; // 所有多边形的可见投影面积
+    //SphericalFunc totalProjAreaFunc;    // 所有多边形的总投影面积
+
+    SphericalFunc coverageFunc;
+    SphericalFunc visibilityFunc;
+    float area;
+
+    float coverage; // 临时变量
+
+#if !defined(HOST_CODE)
+    //[mutating]
+    // void init(VoxelData data)
+    //{
+    //    area = data.ABSDF.area;
+    //    if (area > 0)
+    //    {
+    //        primitiveProjAreaFunc = data.primitiveProjAreaFunc;
+    //        polygonsProjAreaFunc = data.polygonsProjAreaFunc;
+    //        totalProjAreaFunc = data.totalProjAreaFunc;
+    //        surface.init(data.ABSDF);
+    //    }
+    //}
+
+    float calcCoverage(float3 direction)
+    {
+#if !CHECK_COVERAGE
+        return 1;
+#endif
+        float couverage = coverageFunc.calc(direction);
+        return saturate(couverage);
+    }
+    // 采样前必须调用此函数
+    [mutating]
+    void updateCoverage(float3 direction, float threshould)
+    {
+#if !CHECK_COVERAGE
+        coverage = 1;
+        return;
+#endif
+        coverage = calcCoverage(direction);
+        if (1 - coverage < threshould)
+            coverage = 1;
+    }
+
+    // 自遮挡导致入射光减少
+    float calcInternalVisibility(float3 direction)
+    {
+#if !CHECK_VISIBILITY
+        return 1.f;
+#endif
+        float visibility = visibilityFunc.calc(direction);
+        return saturate(visibility);
+    }
+
+    void sample<T : ISampleGenerator>(float3 v, out float3 l, out float3 h, inout T sg)
+    {
+        if (coverage == 1 || Next(sg) <= coverage)
+            surface.sample(v, l, h, sg);
+        else
+            delta.sample(v, l, h, sg);
+    }
+
+    float3 eval(float3 l, float3 v, float3 h)
+    {
+        if (coverage < 1 && all(h == 0))
+            return (1 - coverage) * delta.eval(l, v, h);
+        return coverage * surface.eval(l, v, h) * calcInternalVisibility(l);
+    }
+
+    float evalPdf(float3 l, float3 v, float3 h)
+    {
+        if (coverage < 1 && all(h == 0))
+            return (1 - coverage) * delta.evalPdf(l, v, h);
+        return coverage * surface.evalPdf(l, v, h);
+    }
+#endif
+};
+
+
+
+
 END_NAMESPACE_FALCOR

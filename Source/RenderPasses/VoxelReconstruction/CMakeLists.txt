@@ -25,14 +25,17 @@ target_sources(VoxelReconstruction PRIVATE
     LossPass.cpp
     RayMarchingPass.cpp
     Defines.h
+    GradientPass.cpp
 
     Shader/ReflectTypes.cs.slang
     Shader/ProcessXuData.cs.slang
     Shader/RayMarchingPass.ps.slang
     Shader/LossPass.cs.slang
+    Shader/GradientPass.cs.slang
 
     MixLightSampler.slang
     PathRecord.slang
+    GradRecord.slang
 
 )
 

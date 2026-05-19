@@ -40,6 +40,7 @@
 
 #include "Voxel/Shading.slang"
 #include "PathRecord.slang"
+#include "GradRecord.slang"
 
 using namespace Falcor;
 
@@ -50,6 +51,7 @@ const std::string ReflectTypesShaderFilePath = "RenderPasses/VoxelReconstruction
 const std::string ProcessXuDataShaderFilePath = "RenderPasses/VoxelReconstruction/Shader/ProcessXuData.cs.slang";
 const std::string RayMarchingShaderFilePath = "RenderPasses/VoxelReconstruction/Shader/RayMarchingPass.ps.slang";
 const std::string LossPassShaderFilePath = "RenderPasses/VoxelReconstruction/Shader/LossPass.cs.slang";
+const std::string GradientPassShaderFilePath = "RenderPasses/VoxelReconstruction/Shader/GradientPass.cs.slang";
 
 inline std::string kGBuffer = "gBuffer";
 inline std::string kVBuffer = "vBuffer";
@@ -92,6 +94,9 @@ public:
 
     void createLossPassResource(RenderContext* pRenderContext);
     void runLossPass(RenderContext* pRenderContext, const RenderData& renderData);
+
+    void createGradientPassResource(RenderContext* pRenderContext);
+    void runGradientPass(RenderContext* pRenderContext, const RenderData& renderData);
 
     void loadReferenceImages();
 
@@ -140,7 +145,7 @@ public:
             //mCheckVisibility = false;
             mDrawMode = 0;
             mUseMipmap = true;
-            mMaxBounce = 1;
+            mMaxBounce = 0;
             mRenderBackGround = false;
             mClearColor = float3(0);
             //mCheckEllipsoid = false;
@@ -166,6 +171,18 @@ public:
         }
     };
 
+    struct GradientPass{
+        ref<ComputePass> mpComputePass;
+        ref<Buffer> gradBuffer;
+
+        void init()
+        {
+            gradBuffer = nullptr;
+            mpComputePass = nullptr;
+        }
+
+    };
+
 private:
     ref<Device> mpDevice;
     ref<Scene> mpScene;
@@ -182,6 +199,7 @@ private:
     ref<ComputePass> mpReflectTypes;
     ref<ComputePass> mpProcessXuDataPass;
     LossPass mLossPass;
+    GradientPass mGradientPass;
 
 
     // Grid
