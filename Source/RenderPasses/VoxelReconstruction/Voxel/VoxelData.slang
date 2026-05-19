@@ -1,15 +1,22 @@
 #pragma once
 #include "../HostDeviceShared.slang"
 #include "ABSDF.slang"
+#include "../Math/Ellipsoid.slang"
+#include "../Math/SphericalHarmonics.slang"
+#include "../Math/Triangle.slang"
+#include "../Math/DensityPrimitive.slang"
+#include "Shading.slang"
 
 BEGIN_NAMESPACE_FALCOR
 
-//typedef EvenSphericalHarmonics SphericalFunc;
+
 
 struct VoxelData
 {
     uint occupied = 0;
-    //ABSDF ABSDF;
+    // ABSDF ABSDF;
+    PrimitiveBSDF bsdf;
+    DensityPrimitive densityPrimitive;
     //Ellipsoid ellipsoid;
     //SphericalFunc primitiveProjAreaFunc;
     //SphericalFunc polygonsProjAreaFunc; // 所有多边形的可见投影面积
@@ -18,10 +25,11 @@ struct VoxelData
     MUTATING
     void init()
     {
-        //ABSDF.init();
-        //primitiveProjAreaFunc.init();
-        //polygonsProjAreaFunc.init();
-        //totalProjAreaFunc.init();
+        // ABSDF.init();
+        // primitiveProjAreaFunc.init();
+        // polygonsProjAreaFunc.init();
+        // totalProjAreaFunc.init();
+        densityPrimitive.init();
     }
 
     //bool IsSolid() { return ABSDF.area > 0; }

@@ -3,3 +3,9 @@
 
 #define GRID_RESOLUTION 128
 #define BLOCK_TO_VOXEL 8
+
+#define REFERENCE_IMAGES_COUNT 300
+//#define MAX_SOLID_GRID_COUNT 
+
+
+#define MAX_BOUNCE 4

@@ -10,7 +10,7 @@ struct GridData{
     uint3 voxelCount;
     float3 gridMin;
     float3 voxelSize;
-    uint solidVoxelCount;
+    uint solidVoxelCount ;
 
     uint totalVoxelCount()
     {
@@ -97,13 +97,21 @@ bool setSolidBlock(int3 blockInt)
 
     switch (blockInt.z / 32)
     {
-    case 0: gGridDataParamBlock.blockOM[blockInt.xy].x |= bit; break;
-    case 1: gGridDataParamBlock.blockOM[blockInt.xy].y |= bit; break;
-    case 2: gGridDataParamBlock.blockOM[blockInt.xy].z |= bit; break;
-    case 3: gGridDataParamBlock.blockOM[blockInt.xy].w |= bit; break;
-    default: return false;
+        case 0: gGridDataParamBlock.blockOM[blockInt.xy].x |= bit; break;
+        case 1: gGridDataParamBlock.blockOM[blockInt.xy].y |= bit; break;
+        case 2: gGridDataParamBlock.blockOM[blockInt.xy].z |= bit; break;
+        case 3: gGridDataParamBlock.blockOM[blockInt.xy].w |= bit; break;
+        default: return false;
     }
-    //InterlockedOr(gGridDataParamBlock.blockOM[blockInt.xy].x, bit);
+
+    //switch (blockInt.z / 32)
+    //{
+    //case 0: InterlockedOr(gGridDataParamBlock.blockOM[blockInt.xy].x, bit); break;
+    //case 1: InterlockedOr(gGridDataParamBlock.blockOM[blockInt.xy].y, bit); break;
+    //case 2: InterlockedOr(gGridDataParamBlock.blockOM[blockInt.xy].z, bit); break;
+    //case 3: InterlockedOr(gGridDataParamBlock.blockOM[blockInt.xy].w, bit); break;
+    //default: return false;
+    //}
 
     return true;
 }

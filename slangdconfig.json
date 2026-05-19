@@ -1,7 +1,5 @@
 {
     "slang.additionalSearchPaths": [
-        "..",
-        "../..",
-        "../../.."
+        "Source/Falcor"
     ]
 }

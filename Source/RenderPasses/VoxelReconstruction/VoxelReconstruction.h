@@ -31,13 +31,32 @@
 #include "Utils/Debug/PixelDebug.h"
 #include "Core/Pass/FullScreenPass.h"
 #include "RenderGraph/RenderPassStandardFlags.h"
+#include <Rendering/Lights/EnvMapSampler.h>
 
 #include "Defines.h"
 #include "Voxel/VoxelData.slang"
 #include "Voxel/VoxelGrid.slang"
 #include "Voxel/ABSDF.slang"
 
+#include "Voxel/Shading.slang"
+#include "PathRecord.slang"
+
 using namespace Falcor;
+
+// 常用命名（shader路径）
+namespace VoxelPrime
+{
+const std::string ReflectTypesShaderFilePath = "RenderPasses/VoxelReconstruction/Shader/ReflectTypes.cs.slang";
+const std::string ProcessXuDataShaderFilePath = "RenderPasses/VoxelReconstruction/Shader/ProcessXuData.cs.slang";
+const std::string RayMarchingShaderFilePath = "RenderPasses/VoxelReconstruction/Shader/RayMarchingPass.ps.slang";
+const std::string LossPassShaderFilePath = "RenderPasses/VoxelReconstruction/Shader/LossPass.cs.slang";
+
+inline std::string kGBuffer = "gBuffer";
+inline std::string kVBuffer = "vBuffer";
+inline std::string kPBuffer = "pBuffer";
+inline std::string kBlockMap = "blockMap";
+inline std::string kOutputColor = "color";
+} // namespace VoxelPrime
 
 class VoxelReconstruction : public RenderPass
 {
@@ -71,6 +90,11 @@ public:
     void createRayMarchingPassResource(RenderContext* pRenderContext);
     void rayMarchingPass(RenderContext* pRenderContext, const RenderData& renderData);
 
+    void createLossPassResource(RenderContext* pRenderContext);
+    void runLossPass(RenderContext* pRenderContext, const RenderData& renderData);
+
+    void loadReferenceImages();
+
     struct GridResources
     {
         ref<Buffer> gridDataBuffer;
@@ -83,6 +107,7 @@ public:
         ref<FullScreenPass> mpFullScreenPass;
         ref<FullScreenPass> mpDisplayNDFPass;
         ref<Sampler> mpPointSampler;
+        std::unique_ptr<EnvMapSampler> mpEnvMapSampler;
         void init() {
             mpFullScreenPass = nullptr;
             mpDisplayNDFPass = nullptr;
@@ -101,7 +126,11 @@ public:
         uint mMaxBounce;
         bool mRenderBackGround;
         float3 mClearColor;
-        bool mCheckEllipsoid;
+        //bool mCheckEllipsoid;
+        bool mCheckPrimitive;
+        float mTrasmittanceThreshold100;
+        float mShadowBias100;
+        float mMinPdf100;
 
         void init() {
             mOptionsChanged = false;
@@ -114,7 +143,26 @@ public:
             mMaxBounce = 1;
             mRenderBackGround = false;
             mClearColor = float3(0);
-            mCheckEllipsoid = false;
+            //mCheckEllipsoid = false;
+            mCheckPrimitive = false;
+            mTrasmittanceThreshold100 = 5.f;
+            mMinPdf100 = 0.1f;
+            mShadowBias100 = 0.01f;
+        }
+    };
+
+    struct LossPass
+    {
+        uint mView;
+        ref<ComputePass> mpComputePass;
+        ref<Texture> lossBuffer;
+        ref<Texture> dL_dColor;
+        void init()
+        {
+            mView = 0;
+            mpComputePass = nullptr;
+            dL_dColor = nullptr;
+            lossBuffer = nullptr;
         }
     };
 
@@ -133,7 +181,7 @@ private:
     // Passes
     ref<ComputePass> mpReflectTypes;
     ref<ComputePass> mpProcessXuDataPass;
-    
+    LossPass mLossPass;
 
 
     // Grid
@@ -145,9 +193,14 @@ private:
     RayMarchingPassParams mRayMarchingPassParams;
     uint3 MinFactor = uint3(1, 1, 1);
 
-    // UI
-    
+    // Voxel Optimization
+    std::vector<ref<Texture>> mReferenceImages;
+    ref<Buffer> mpPathRecordBuffer;
 
+
+    // UI
+    bool mOptionsChanged = false;
+    bool mEnableReconstruction = false;
 };
 
 

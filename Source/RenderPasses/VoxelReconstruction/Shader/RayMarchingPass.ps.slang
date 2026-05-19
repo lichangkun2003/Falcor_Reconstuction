@@ -8,7 +8,10 @@ import Scene.Scene;
 
 #include "../Math/AABB.slang"
 #include "../Math/Random.slang"
+#include "../Voxel/Shading.slang"
 #include "../Voxel/VoxelGrid.slang"
+#include "../MixLightSampler.slang"
+#include "../PathRecord.slang"
 
 cbuffer GridData
 {
@@ -23,17 +26,21 @@ cbuffer CB
     uint2 pixelCount;
     uint3 blockCount;
     float4x4 invVP;
-    //float shadowBias;
+    float shadowBias;
     uint drawMode;
     //uint sampleStrategy;
     uint maxBounce;
     uint frameIndex;
-    //float minPdf;
-    //float trasmittanceThreshold;
+    float minPdf;
+    float trasmittanceThreshold;
     bool renderBackGround;
     float4 clearColor;
-    //uint2 selectedPixel;
+    // uint2 selectedPixel;
+    bool enableReconstruction;
 }
+
+RWStructuredBuffer<PathRecord> gPathRecordBuffer;
+
 
 struct PsOut
 {
@@ -72,6 +79,70 @@ float4 renderBackground(float3 direction){
     return clearColor;
 }
 
+// 与体素内部primitive求交，即判断from-to线段上有无高密度点
+HitResult checkPrimitive(DensityPrimitive prim, float3 cell, float3 direction, int3 cellInt)
+{
+    // voxel-local entry point
+    float3 from = cell - float3(cellInt);
+
+    int3 directions = int3(sign(direction));
+    float3 border = float3((directions + 1) / 2);
+
+    float3 t = (border - from) / direction;
+
+    float tMin = 2.0f;
+    if (direction.x != 0 && t.x < tMin)
+        tMin = t.x;
+    if (direction.y != 0 && t.y < tMin)
+        tMin = t.y;
+    if (direction.z != 0 && t.z < tMin)
+        tMin = t.z;
+
+    float3 to = from + tMin * direction;
+
+    float segLen = length(to - from);
+
+    const int SAMPLE_COUNT = 8;
+    // const float hitAlpha = 0.1f;
+    const float hitAlpha = (randomJitter() * pixelCount).x + 0.5;
+
+    float targetTau = -log(1.0f - hitAlpha);
+    float tau = 0.0f;
+
+    float3 localHit = to;
+    bool hit = false;
+
+    [unroll]
+    for (int i = 0; i < SAMPLE_COUNT; i++)
+    {
+        float u0 = float(i) / float(SAMPLE_COUNT);
+        float u1 = float(i + 1) / float(SAMPLE_COUNT);
+        float um = 0.5f * (u0 + u1);
+
+        float3 p = lerp(from, to, um);
+
+        float sigma = prim.evalDensity(p);
+        float dt = segLen / float(SAMPLE_COUNT);
+
+        tau += sigma * dt;
+
+        if (!hit && tau >= targetTau)
+        {
+            localHit = p;
+            hit = true;
+            break;
+        }
+    }
+
+    HitResult result = {
+        hit,
+        cellInt,
+        float3(cellInt) + localHit
+    };
+
+    return result;
+}
+
 HitResult rayMarching_Mipmap(float3 from, float3 direction, bool ignoreFirst)
 {
     float3 cell = from;
@@ -99,14 +170,16 @@ HitResult rayMarching_Mipmap(float3 from, float3 direction, bool ignoreFirst)
                 //int offset;
                 if (isSolidVoxel(cellInt)) // 理论上不会出现面积为0的情况
                 {
-#if !CHECK_ELLIPSOID
+#if !CHECK_PRIMITIVE
                     HitResult hit = { true, cellInt, cellInt + 0.5f };
                     return hit;
 #else
-                    //Ellipsoid ellipsoid = pBuffer[offset];
-                    //HitResult hit = checkPrimitive(ellipsoid, cell, direction, cellInt);
-                    //if (hit.hit)
-                    //    return hit;
+                    // Ellipsoid ellipsoid ;
+                    // HitResult hit = checkPrimitive(ellipsoid, cell, direction, cellInt);
+                    uint offset = CellToIndex(cellInt, gGridDataParamBlock.voxelCount);
+                    HitResult hit = checkPrimitive(gGridDataParamBlock.gridDataBuffer[offset].densityPrimitive, cell, direction, cellInt);
+                    if (hit.hit)
+                        return hit;
 #endif
                 }
                 leave(cell, cellInt, directions, direction, reciprocal_direction);
@@ -154,14 +227,16 @@ HitResult rayMarching_Mipmap(float3 from, float3 direction, float maxDistance, b
                 //int offset;
                 if (isSolidVoxel(cellInt)) // 理论上不会出现面积为0的情况
                 {
-#if !CHECK_ELLIPSOID
+#if !CHECK_PRIMITIVE
                     HitResult hit = { true, cellInt, cellInt + 0.5f };
                     return hit;
 #else
-                    //Ellipsoid ellipsoid = pBuffer[offset];
+                    //Ellipsoid ellipsoid ;
                     //HitResult hit = checkPrimitive(ellipsoid, cell, direction, cellInt);
-                    //if (hit.hit)
-                    //    return hit;
+                    uint offset = CellToIndex(cellInt, gGridDataParamBlock.voxelCount);
+                    HitResult hit = checkPrimitive(gGridDataParamBlock.gridDataBuffer[offset].densityPrimitive, cell, direction, cellInt);
+                    if (hit.hit)
+                        return hit;
 #endif
                 }
                 distance += leave(cell, cellInt, directions, direction, reciprocal_direction);
@@ -197,6 +272,139 @@ HitResult rayMarching(float3 from, float3 direction, float maxDistance, bool ign
 #endif
 }
 
+float3 shading(uint offset, float3 l, float3 v, float3 h, float3 lightColor)
+{
+    PrimitiveBSDF BSDF = gGridDataParamBlock.gridDataBuffer[offset].bsdf;
+    BSDF.updateCoverage(v, trasmittanceThreshold);
+    return lightColor * BSDF.eval(l, v, h);
+}
+
+float calcLightVisibility(HitResult hit, float3 direction, float3 mainNormal, float distance)
+{
+    float ignoreDistance = 2; // 忽略光源附近的体素
+    if (distance >= 0 && distance <= ignoreDistance)
+        return 1;
+    float3 from = hit.cell + shadowBias * mainNormal;
+    hit = rayMarching(from, direction, distance - ignoreDistance, true);
+    return hit.hit ? 0 : 1;
+}
+
+
+// 随机采样方向，不确定光源是否可见
+float3 shadingDirect(HitResult hit, uint offset, float3 v, uint2 pixel,inout UniformSampleGenerator sg)
+{
+    PrimitiveBSDF BSDF = gGridDataParamBlock.gridDataBuffer[offset].bsdf;
+    float3 posW = gridMin + hit.cell * voxelSize;
+    LightSample ls = {};
+    bool valid = sampleLight(posW, v, BSDF, sg, ls);
+
+    if (!valid || ls.pdf <= 0 || all(ls.h == 0))
+        return 0;
+
+    ls.pdf = max(ls.pdf, minPdf);
+    float3 mainNormal = BSDF.surface.getMainNormal(ls.l);
+    float visibility = calcLightVisibility(hit, ls.l, mainNormal, ls.distance / voxelSize.x);
+
+    if (enableReconstruction) {
+        uint bufferIndex = PixelToIndex(pixel, pixelCount);
+        gPathRecordBuffer[bufferIndex].lightDirPdf.xyz = ls.l;
+        gPathRecordBuffer[bufferIndex].lightDirPdf.w = ls.pdf;
+        gPathRecordBuffer[bufferIndex].lightColor.xyz = visibility * ls.lightColor;
+        gPathRecordBuffer[bufferIndex].valid = 1;
+        gPathRecordBuffer[bufferIndex].hitCell = float4(hit.cell,0.0f);
+        gPathRecordBuffer[bufferIndex].hitCellInt = hit.cellInt;
+        gPathRecordBuffer[bufferIndex].viewDir = float4(v,0.0f);
+    }
+
+    if (visibility > 0) 
+        return visibility * shading(offset, ls.l, v, ls.h, ls.lightColor) / ls.pdf;
+    return 0;
+}
+
+float3 shadingGlobal(HitResult hit, float3 v, uint bounce, uint2 pixel,inout UniformSampleGenerator sg)
+{
+    // 非递归版本，先计算所有命中点，再倒回来统计
+    HitResult[MAX_BOUNCE + 1] hits;
+    float3[MAX_BOUNCE + 1] ls; // 第i个采样方向即第i个体素指向第i+1个体素的方向
+    float3[MAX_BOUNCE + 1] hs;
+    float[MAX_BOUNCE + 1] pdfs; // 第i个pdf即对第i个体素的BSDF采样得到的权重
+    bounce = min(bounce, MAX_BOUNCE);
+    uint shadingPointCount = bounce + 1; // 要着色的点的个数，未中断时为primary hit + bounce
+    hits[0] = hit;
+    bool leaveGrid = false;
+    for (int i = 0; i < bounce; i++)
+    {
+        uint offset = CellToIndex(hits[i].cellInt, gGridDataParamBlock.voxelCount);
+        PrimitiveBSDF BSDF = gGridDataParamBlock.gridDataBuffer[offset].bsdf;
+        float3 currentV = i == 0 ? v : -ls[i - 1];
+        BSDF.updateCoverage(currentV, trasmittanceThreshold);
+        BSDF.sample(currentV, ls[i], hs[i], sg);
+
+        pdfs[i] = BSDF.evalPdf(ls[i], currentV, hs[i]);
+        if (pdfs[i] <= 0)
+        {
+            shadingPointCount = i + 1; // 0,1,...,i;第i+1个点到第i个点的间接光照无法计算，但仍要计算直接光照
+            break;
+        }
+        pdfs[i] = max(pdfs[i], minPdf);
+        hits[i + 1] = rayMarching(hits[i].cell, ls[i], -1, true);
+        if (!hits[i + 1].hit)
+        {
+            leaveGrid = true;
+            shadingPointCount = i + 1; // 0,1,...,i
+            break;
+        }
+    }
+
+    float3 reflectLights[MAX_BOUNCE + 1];
+    for (int i = shadingPointCount - 1; i >= 0; i--)
+    {
+        reflectLights[i] = 0;
+        HitResult currentHit = hits[i];
+        uint currentOffset = CellToIndex(currentHit.cellInt, gGridDataParamBlock.voxelCount);
+        float3 currentV = i == 0 ? v : -ls[i - 1];
+
+        // direct lighting
+        reflectLights[i] += shadingDirect(currentHit, currentOffset, currentV,pixel,sg);
+
+        //if (enableReconstruction) {
+        //    uint bufferIndex = PixelToIndex(pixel, pixelCount);
+        //    gPathRecordBuffer[bufferIndex].valid = 1;
+        //    gPathRecordBuffer[bufferIndex].hitCell = hits[i].cell;
+        //    gPathRecordBuffer[bufferIndex].hitCellInt = hits[i].cellInt;
+        //    //gPathRecordBuffer[bufferIndex].lightDirPdf.xyz = pdfs[i];
+        //    //gPathRecordBuffer[bufferIndex].lightDirPdf.w = pdfs[i];
+        //    gPathRecordBuffer[bufferIndex].viewDir.xyz = currentV;
+        //}
+
+        if (i == shadingPointCount - 1)                                             // 最后一个着色点不计算间接光照
+        {
+#if USE_ENV_MAP
+            if (leaveGrid && all(hs[i] == 0))
+            {
+                float3 incidentLight = gEnvMapSampler.eval(ls[i]);
+                reflectLights[i] += shading(currentOffset, ls[i], currentV, hs[i], incidentLight) / pdfs[i]; // 透射环境光
+            }
+#endif
+        }
+        else
+        {
+            if (pdfs[i] <= 0)
+                continue;
+            HitResult nextHit = hits[i + 1];
+            if (nextHit.hit)
+            {
+                uint nextOffset = CellToIndex(nextHit.cellInt, gGridDataParamBlock.voxelCount);
+                float3 incidentLight = reflectLights[i + 1];
+                reflectLights[i] += shading(currentOffset, ls[i], currentV, hs[i], incidentLight) / pdfs[i]; // 间接光照
+            }
+        }
+    }
+    return reflectLights[0];
+
+    return float3(0);
+}
+
 PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
 {
     PsOut psOut = {};
@@ -209,6 +417,9 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
     float3 direction = normalize(delta); // 网格/世界空间下的方向相同
     psOut.color = renderBackground(direction);
 
+    uint bufferIndex = PixelToIndex(pixel, pixelCount);
+    gPathRecordBuffer[bufferIndex].init();
+
     float2 inOut = clip(float3(0), float3(voxelCount), from, to);
     if (inOut.x < 0)
         return psOut;
@@ -217,8 +428,19 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
     from = from + (inOut.x + 1e-6) * delta;
     HitResult hit = rayMarching(from, direction, -1, false);
 
+
     if (hit.hit) {
-        psOut.color = float4(hit.cell, 1);
+        float3 color = 0;
+        switch (drawMode)
+        {
+        case ABSDFDrawMode::Default:
+            color = shadingGlobal(hit, -direction, maxBounce, pixel,sg);
+            break;
+        case ABSDFDrawMode::Occupancy:
+            color = hit.cell;
+            break;
+        }
+            psOut.color = float4(color, 1);
     }
 
 

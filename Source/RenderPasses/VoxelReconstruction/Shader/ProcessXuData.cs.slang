@@ -1,9 +1,11 @@
 //import RenderPasses.VoxelReconstruction.Voxel.VoxelGrid;
 
 #include "../Voxel/VoxelGrid.slang"
+#include "../Voxel/Shading.slang"
 
 Texture3D<int> vBuffer;
 Texture2D<uint4> blockMap;
+StructuredBuffer<PrimitiveBSDF> gBuffer;
 
 cbuffer GridData {
     uint solidVoxelCount;
@@ -51,8 +53,11 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
         return;
     int offset;
     if (isSolidVoxelXu(cellInt, offset)) {
-        setSolidBlock(blockInt);
+        //setSolidBlock(blockInt);
         setSolidVoxel(cellInt);
+
+        gGridDataParamBlock.gridDataBuffer[index].bsdf = gBuffer[offset];
+        gGridDataParamBlock.gridDataBuffer[index].init();
     }
 }
 

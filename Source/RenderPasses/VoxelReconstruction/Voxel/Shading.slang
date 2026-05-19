@@ -1,8 +1,17 @@
 #pragma once
-#include "VoxelizationShared.slang"
+// #include "VoxelizationShared.slang"
+#include "../HostDeviceShared.slang"
+#include "../Math/Ellipsoid.slang"
+#include "../Math/SphericalHarmonics.slang"
+#include "../Math/Triangle.slang"
+#include "ABSDF.slang"
+//#include "VoxelData.slang"
+
+
+BEGIN_NAMESPACE_FALCOR
 
 #if !defined(HOST_CODE)
-#include "Math/Random.slang"
+#include "../Math/Random.slang"
 import Utils.Math.MathHelpers;
 
 const static float Pi = 3.14159265359;
@@ -70,6 +79,8 @@ inline float3 sampleGGX_VNDF(float3 v, float alpha, float2 u)
 }
 
 #endif
+
+
 
 struct FrostbiteCosBRDF
 {
@@ -400,18 +411,18 @@ struct PrimitiveBSDF
     float coverage; // 临时变量
 
 #if !defined(HOST_CODE)
-    [mutating]
-    void init(VoxelData data)
-    {
-        area = data.ABSDF.area;
-        if (area > 0)
-        {
-            primitiveProjAreaFunc = data.primitiveProjAreaFunc;
-            polygonsProjAreaFunc = data.polygonsProjAreaFunc;
-            totalProjAreaFunc = data.totalProjAreaFunc;
-            surface.init(data.ABSDF);
-        }
-    }
+    //[mutating]
+    //void init(VoxelData data)
+    //{
+    //    area = data.ABSDF.area;
+    //    if (area > 0)
+    //    {
+    //        primitiveProjAreaFunc = data.primitiveProjAreaFunc;
+    //        polygonsProjAreaFunc = data.polygonsProjAreaFunc;
+    //        totalProjAreaFunc = data.totalProjAreaFunc;
+    //        surface.init(data.ABSDF);
+    //    }
+    //}
 
     float calcCoverage(float3 direction)
     {
@@ -474,3 +485,4 @@ struct PrimitiveBSDF
 #endif
 };
 
+END_NAMESPACE_FALCOR
