@@ -144,15 +144,19 @@ void VoxelReconstruction::execute(RenderContext* pRenderContext, const RenderDat
 
     proccessXuData(pRenderContext, renderData);
 
+    if (mEnableReconstruction)
+    {
+        loadReferenceImages();
+    }
+
     rayMarchingPass(pRenderContext, renderData);
 
     if (mEnableReconstruction)
     {
-        loadReferenceImages();
-
         mLossPass.mView = 0;
         runLossPass(pRenderContext, renderData);
         runGradientPass(pRenderContext, renderData);
+        runUpdatePass(pRenderContext, renderData);
     }
 
     endFrame(pRenderContext);
@@ -172,6 +176,8 @@ void VoxelReconstruction::setScene(RenderContext* pRenderContext, const ref<Scen
     // Gradient Pass
     createGradientPassResource(pRenderContext);
 
+    // Update Pass
+    createUpdatePassResource(pRenderContext);
 }
 
 void VoxelReconstruction::renderUI(Gui::Widgets& widget) {
@@ -183,10 +189,10 @@ void VoxelReconstruction::renderUI(Gui::Widgets& widget) {
     //    mOptionsChanged = true;
     if (widget.checkbox("Check Primitive", mRayMarchingPassParams.mCheckPrimitive))
         mRayMarchingPassParams.mOptionsChanged = true;
-    //if (widget.checkbox("Check Visibility", mRayMarchingPassParams.mCheckVisibility))
-    //    mOptionsChanged = true;
-    //if (widget.checkbox("Check Coverage", mRayMarchingPassParams.mCheckCoverage))
-    //    mOptionsChanged = true;
+    if (widget.checkbox("Check Visibility", mRayMarchingPassParams.mCheckVisibility))
+        mOptionsChanged = true;
+    if (widget.checkbox("Check Coverage", mRayMarchingPassParams.mCheckCoverage))
+        mOptionsChanged = true;
     if (widget.checkbox("Use Mipmap", mRayMarchingPassParams.mUseMipmap))
         mRayMarchingPassParams.mOptionsChanged = true;
     if (widget.slider("Shadow Bias(x100)", mRayMarchingPassParams.mShadowBias100, 0.0f, 0.2f))
@@ -206,14 +212,15 @@ void VoxelReconstruction::renderUI(Gui::Widgets& widget) {
     if (widget.checkbox("Render Background", mRayMarchingPassParams.mRenderBackGround))
         mRayMarchingPassParams.mOptionsChanged = true;
 
-
-    widget.checkbox("Enable Reconstruction", mEnableReconstruction);
-
-
     if (widget.var("Solid Voxel Count", mGridResources.gridData.solidVoxelCount))
     {
         requestRecompile();
     }
+
+    widget.checkbox("Enable Reconstruction", mEnableReconstruction);
+
+    renderUIUpdatePass(widget);
+
 
     widget.text("Voxel Size: " + ToString(mGridResources.gridData.voxelSize));
     widget.text("Voxel Count: " + ToString((int3)mGridResources.gridData.voxelCount));
@@ -225,6 +232,13 @@ void VoxelReconstruction::renderUI(Gui::Widgets& widget) {
     );
     //widget.text("Max Polygon Count: " + std::to_string(mGridResources.gridData.maxPolygonCount));
     //widget.text("Total Polygon Count: " + std::to_string(mGridResources.gridData.totalPolygonCount));
+
+
+    if (auto group = widget.group("Debugging"))
+    {
+        mpPixelDebug->renderUI(group);
+    }
+
 }
 
 void VoxelReconstruction::beginFrame(RenderContext* pRenderContext, bool forceReset)
@@ -240,6 +254,10 @@ void VoxelReconstruction::endFrame(RenderContext* pRenderContext) {
     mRayMarchingPassParams.mFrameIndex = mFrameCount;
 }
 
+bool VoxelReconstruction::onMouseEvent(const MouseEvent& mouseEvent) {
+    bool dirty = mpPixelDebug->onMouseEvent(mouseEvent);
+    return dirty;
+}
 
 
 void VoxelReconstruction::setupGridResouce(RenderContext* pRenderContext, bool forceReset) {
@@ -299,6 +317,16 @@ void VoxelReconstruction::proccessXuData(RenderContext* pRenderContext, const Re
     var[VoxelPrime::kGBuffer] = renderData.getResource(VoxelPrime::kGBuffer)->asBuffer();
     var[VoxelPrime::kBlockMap] = renderData.getTexture(VoxelPrime::kBlockMap);
     var["gGridDataParamBlock"] = mpGridBlock;
+
+
+    auto cb = var["GridData"];
+    cb["gLrDiffuse"] = mUpdatePass.mLrDiffuse;
+    cb["gLrSpecular"] = mUpdatePass.mLrSpecular;
+    cb["gLrRough"] = mUpdatePass.mLrRough;
+    cb["gLrWeight"] = mUpdatePass.mLrWeight;
+    cb["gLrNormal"] = mUpdatePass.mLrNormal;
+    cb["gLrCoverageFunc"] = mUpdatePass.mLrCoverageFunc;
+    cb["gLrVisibilityFunc"] = mUpdatePass.mLrVisibilityFunc;
 
 
     ShaderVar gridBlock = mpGridBlock->getRootVar();

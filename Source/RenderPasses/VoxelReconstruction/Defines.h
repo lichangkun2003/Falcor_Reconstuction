@@ -9,3 +9,6 @@
 
 
 #define MAX_BOUNCE 4
+
+
+#define LOBE_COUNT 4

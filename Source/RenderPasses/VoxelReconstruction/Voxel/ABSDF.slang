@@ -1,9 +1,9 @@
 #pragma once
 #include "../HostDeviceShared.slang"
-
+#include "../Defines.h"
 BEGIN_NAMESPACE_FALCOR
 
-#define LOBE_COUNT 4
+
 
 // 恰好和坐标轴平行的情况必须特殊处理，以免相隔90°的法线落入同一个lobe
 inline uint NormalIndex(float3 n)

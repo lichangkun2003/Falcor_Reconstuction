@@ -15,7 +15,8 @@ struct VoxelData
 {
     uint occupied = 0;
     // ABSDF ABSDF;
-    PrimitiveBSDF bsdf;
+    // PrimitiveBSDF bsdf;
+    PrimitiveBSDF_New bsdf;
     DensityPrimitive densityPrimitive;
     //Ellipsoid ellipsoid;
     //SphericalFunc primitiveProjAreaFunc;

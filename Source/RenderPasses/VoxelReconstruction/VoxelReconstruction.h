@@ -52,6 +52,9 @@ const std::string ProcessXuDataShaderFilePath = "RenderPasses/VoxelReconstructio
 const std::string RayMarchingShaderFilePath = "RenderPasses/VoxelReconstruction/Shader/RayMarchingPass.ps.slang";
 const std::string LossPassShaderFilePath = "RenderPasses/VoxelReconstruction/Shader/LossPass.cs.slang";
 const std::string GradientPassShaderFilePath = "RenderPasses/VoxelReconstruction/Shader/GradientPass.cs.slang";
+const std::string UpdatePassShaderFilePath = "RenderPasses/VoxelReconstruction/Shader/UpdatePass.cs.slang";
+
+
 
 inline std::string kGBuffer = "gBuffer";
 inline std::string kVBuffer = "vBuffer";
@@ -78,7 +81,7 @@ public:
     virtual void execute(RenderContext* pRenderContext, const RenderData& renderData) override;
     virtual void renderUI(Gui::Widgets& widget) override;
     virtual void setScene(RenderContext* pRenderContext, const ref<Scene>& pScene) override;
-    virtual bool onMouseEvent(const MouseEvent& mouseEvent) override { return false; }
+    virtual bool onMouseEvent(const MouseEvent& mouseEvent) override;
     virtual bool onKeyEvent(const KeyboardEvent& keyEvent) override { return false; }
 
     void beginFrame(RenderContext* pRenderContext, bool forceReset = false);
@@ -97,6 +100,10 @@ public:
 
     void createGradientPassResource(RenderContext* pRenderContext);
     void runGradientPass(RenderContext* pRenderContext, const RenderData& renderData);
+
+    void createUpdatePassResource(RenderContext* pRenderContext);
+    void runUpdatePass(RenderContext* pRenderContext, const RenderData& renderData);
+    void renderUIUpdatePass(Gui::Widgets& widget);
 
     void loadReferenceImages();
 
@@ -125,7 +132,8 @@ public:
         uint mFrameIndex;
         uint2 mOutputResolution;
         bool mDisplayNDF;
-        //bool mCheckVisibility;
+        bool mCheckVisibility;
+        bool mCheckCoverage;
         uint mDrawMode;
         bool mUseMipmap;
         uint mMaxBounce;
@@ -142,7 +150,8 @@ public:
             mFrameIndex = 0;
             mOutputResolution = uint2(1920, 1080);
             mDisplayNDF = false;
-            //mCheckVisibility = false;
+            mCheckVisibility = false;
+            mCheckCoverage = false;
             mDrawMode = 0;
             mUseMipmap = true;
             mMaxBounce = 0;
@@ -174,6 +183,7 @@ public:
     struct GradientPass{
         ref<ComputePass> mpComputePass;
         ref<Buffer> gradBuffer;
+        //ref<Buffer> mpVoxelGradAccumBuffer;
 
         void init()
         {
@@ -181,6 +191,42 @@ public:
             mpComputePass = nullptr;
         }
 
+    };
+
+    struct UpdatePass
+    {
+        ref<ComputePass> mpComputePass;
+
+            // 是否按当前 voxel 命中的 pixel 数做平均
+        bool mUseGradCountNormalize;
+
+        // 全局梯度缩放，第一版可以设为 1.0
+        float mGradScale;
+
+        float mLrDiffuse;
+        float mLrSpecular;
+        float mLrRough;
+        float mLrWeight;
+        float mLrNormal;
+        float mLrCoverageFunc;
+        float mLrVisibilityFunc;
+
+
+        void init() {
+            mpComputePass = nullptr;
+
+            mUseGradCountNormalize = true;
+            mGradScale = 1.0f;
+
+            mLrDiffuse = 0.0f;
+            mLrSpecular = 0.0f;
+            mLrRough = 0.0f;
+            mLrWeight = 0.0f;
+            mLrNormal = 0.0f;
+            mLrCoverageFunc = 0.0f;
+            mLrVisibilityFunc = 0.0f;
+
+        }
     };
 
 private:
@@ -200,7 +246,7 @@ private:
     ref<ComputePass> mpProcessXuDataPass;
     LossPass mLossPass;
     GradientPass mGradientPass;
-
+    UpdatePass mUpdatePass;
 
     // Grid
     GridResources mGridResources;  // cpu中的对应gpu中的资源，变量赋值，buffer绑定

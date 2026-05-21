@@ -274,7 +274,7 @@ HitResult rayMarching(float3 from, float3 direction, float maxDistance, bool ign
 
 float3 shading(uint offset, float3 l, float3 v, float3 h, float3 lightColor)
 {
-    PrimitiveBSDF BSDF = gGridDataParamBlock.gridDataBuffer[offset].bsdf;
+    PrimitiveBSDF_New BSDF = gGridDataParamBlock.gridDataBuffer[offset].bsdf;
     BSDF.updateCoverage(v, trasmittanceThreshold);
     return lightColor * BSDF.eval(l, v, h);
 }
@@ -293,7 +293,7 @@ float calcLightVisibility(HitResult hit, float3 direction, float3 mainNormal, fl
 // 随机采样方向，不确定光源是否可见
 float3 shadingDirect(HitResult hit, uint offset, float3 v, uint2 pixel,inout UniformSampleGenerator sg)
 {
-    PrimitiveBSDF BSDF = gGridDataParamBlock.gridDataBuffer[offset].bsdf;
+    PrimitiveBSDF_New BSDF = gGridDataParamBlock.gridDataBuffer[offset].bsdf;
     float3 posW = gridMin + hit.cell * voxelSize;
     LightSample ls = {};
     bool valid = sampleLight(posW, v, BSDF, sg, ls);
@@ -335,7 +335,7 @@ float3 shadingGlobal(HitResult hit, float3 v, uint bounce, uint2 pixel,inout Uni
     for (int i = 0; i < bounce; i++)
     {
         uint offset = CellToIndex(hits[i].cellInt, gGridDataParamBlock.voxelCount);
-        PrimitiveBSDF BSDF = gGridDataParamBlock.gridDataBuffer[offset].bsdf;
+        PrimitiveBSDF_New BSDF = gGridDataParamBlock.gridDataBuffer[offset].bsdf;
         float3 currentV = i == 0 ? v : -ls[i - 1];
         BSDF.updateCoverage(currentV, trasmittanceThreshold);
         BSDF.sample(currentV, ls[i], hs[i], sg);

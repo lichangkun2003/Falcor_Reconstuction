@@ -66,7 +66,8 @@ void VoxelReconstruction::rayMarchingPass(RenderContext* pRenderContext, const R
 
     if (!params.mDisplayNDF)
     {
-        // resource.mpFullScreenPass->addDefine("CHECK_VISIBILITY", params.mCheckVisibility ? "1" : "0");
+        resource.mpFullScreenPass->addDefine("CHECK_VISIBILITY", params.mCheckVisibility ? "1" : "0");
+        resource.mpFullScreenPass->addDefine("CHECK_COVERAGE", params.mCheckCoverage ? "1" : "0");
 
         resource.mpFullScreenPass->addDefine("CHECK_PRIMITIVE", params.mCheckPrimitive ? "1" : "0");
         resource.mpFullScreenPass->addDefine("USE_MIP_MAP", params.mUseMipmap ? "1" : "0");

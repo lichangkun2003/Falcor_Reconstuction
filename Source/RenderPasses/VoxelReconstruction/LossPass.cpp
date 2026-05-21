@@ -41,7 +41,7 @@ void VoxelReconstruction::createLossPassResource(RenderContext* pRenderContext)
     mLossPass.lossBuffer = mpDevice->createTexture2D(
         mRayMarchingPassParams.mOutputResolution.x,
         mRayMarchingPassParams.mOutputResolution.y,
-        ResourceFormat::R32Uint,
+        ResourceFormat::R32Float,
         1u,
         1u,
         nullptr,
@@ -51,7 +51,7 @@ void VoxelReconstruction::createLossPassResource(RenderContext* pRenderContext)
     mLossPass.dL_dColor = mpDevice->createTexture2D(
         mRayMarchingPassParams.mOutputResolution.x,
         mRayMarchingPassParams.mOutputResolution.y,
-        ResourceFormat::RGBA32Uint,
+        ResourceFormat::RGBA32Float,
         1u,
         1u,
         nullptr,
@@ -61,6 +61,9 @@ void VoxelReconstruction::createLossPassResource(RenderContext* pRenderContext)
 
 void VoxelReconstruction::runLossPass(RenderContext* pRenderContext, const RenderData& renderData)
 {
+    pRenderContext->clearTexture(mLossPass.lossBuffer.get());
+    pRenderContext->clearTexture(mLossPass.dL_dColor.get());
+
     auto var = mLossPass.mpComputePass->getRootVar();
 
     var["gRenderedColor"] = renderData.getTexture(VoxelPrime::kOutputColor);

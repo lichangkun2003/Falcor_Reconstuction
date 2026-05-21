@@ -1,15 +1,36 @@
 #pragma once
 #include "HostDeviceShared.slang"
+#include "Defines.h"
+
+#include "Math/SphericalHarmonics.slang"
 
 BEGIN_NAMESPACE_FALCOR
 
 struct GradRecord
 {
-    float3 diffuseGrad;
+    float3 diffuse[LOBE_COUNT];
+    float3 specular[LOBE_COUNT];
+    float rough[LOBE_COUNT];
+    float weight[LOBE_COUNT];
+    float3 normal[LOBE_COUNT];
+    SphericalFunc coverageFunc;
+    SphericalFunc visibilityFunc;
+
+    uint valid;
+
 
     MUTATING
     void init() {
-
+        valid = 0;
+        for (uint i = 0; i < LOBE_COUNT; i++) {
+            diffuse[i] = float3(0.0f);
+            specular[i] = float3(0.0f);
+            normal[i] = float3(0.0f);
+            rough[i] = float(0.0f);
+            weight[i] = float(0.0f);
+            coverageFunc.init();
+            visibilityFunc.init();
+        }
     }
 };
 

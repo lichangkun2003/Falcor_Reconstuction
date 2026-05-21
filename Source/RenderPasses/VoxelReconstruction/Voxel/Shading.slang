@@ -203,6 +203,12 @@ struct LobeBRDF
         specularWeight = evalSpecularWeight();
     }
 
+    [mutating]
+    void update(float3 normal) {
+        n = normal;
+        buildTBN(t, b, n);
+    }
+
     // 只有l,v在平面两侧时，才会返回0
     float3 eval(float3 l, float3 v, float3 h)
     {
