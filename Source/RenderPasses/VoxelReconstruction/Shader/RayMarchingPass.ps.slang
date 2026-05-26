@@ -143,6 +143,26 @@ HitResult checkPrimitive(DensityPrimitive prim, float3 cell, float3 direction, i
     return result;
 }
 
+// 先后用体素和椭球裁剪线段
+HitResult checkPrimitive(Ellipsoid ellipsoid, float3 cell, float3 direction, int3 cellInt)
+{
+    float3 from = cell - cellInt;
+    int3 directions = int3(sign(direction));
+    float3 border = (directions + 1) / 2;
+    float3 t = (border - from) / direction;
+    float tMin = 2.0f;
+    if (direction.x != 0 && t.x < tMin)
+        tMin = t.x;
+    if (direction.y != 0 && t.y < tMin)
+        tMin = t.y;
+    if (direction.z != 0 && t.z < tMin)
+        tMin = t.z;
+    float3 to = from + tMin * direction;
+    float2 inOut = ellipsoid.clip(from, to);
+    HitResult result = { inOut.x >= 0, cellInt, cell + inOut.x * (to - from) };
+    return result;
+}
+
 HitResult rayMarching_Mipmap(float3 from, float3 direction, bool ignoreFirst)
 {
     float3 cell = from;
@@ -174,10 +194,10 @@ HitResult rayMarching_Mipmap(float3 from, float3 direction, bool ignoreFirst)
                     HitResult hit = { true, cellInt, cellInt + 0.5f };
                     return hit;
 #else
-                    // Ellipsoid ellipsoid ;
-                    // HitResult hit = checkPrimitive(ellipsoid, cell, direction, cellInt);
                     uint offset = CellToIndex(cellInt, gGridDataParamBlock.voxelCount);
-                    HitResult hit = checkPrimitive(gGridDataParamBlock.gridDataBuffer[offset].densityPrimitive, cell, direction, cellInt);
+                    Ellipsoid ellipsoid = gGridDataParamBlock.gridDataBuffer[offset].ellipsoid;
+                    HitResult hit = checkPrimitive(ellipsoid, cell, direction, cellInt);
+                    //HitResult hit = checkPrimitive(gGridDataParamBlock.gridDataBuffer[offset].densityPrimitive, cell, direction, cellInt);
                     if (hit.hit)
                         return hit;
 #endif
@@ -231,10 +251,10 @@ HitResult rayMarching_Mipmap(float3 from, float3 direction, float maxDistance, b
                     HitResult hit = { true, cellInt, cellInt + 0.5f };
                     return hit;
 #else
-                    //Ellipsoid ellipsoid ;
-                    //HitResult hit = checkPrimitive(ellipsoid, cell, direction, cellInt);
                     uint offset = CellToIndex(cellInt, gGridDataParamBlock.voxelCount);
-                    HitResult hit = checkPrimitive(gGridDataParamBlock.gridDataBuffer[offset].densityPrimitive, cell, direction, cellInt);
+                    Ellipsoid ellipsoid = gGridDataParamBlock.gridDataBuffer[offset].ellipsoid;
+                    HitResult hit = checkPrimitive(ellipsoid, cell, direction, cellInt);
+                    //HitResult hit = checkPrimitive(gGridDataParamBlock.gridDataBuffer[offset].densityPrimitive, cell, direction, cellInt);
                     if (hit.hit)
                         return hit;
 #endif
@@ -443,7 +463,7 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
             psOut.color = float4(color, 1);
     }
 
-
+    //psOut.color = float4(1, 0, 0, 1);
     return psOut;
 
 }

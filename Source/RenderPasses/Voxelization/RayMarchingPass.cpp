@@ -79,6 +79,7 @@ void RayMarchingPass::execute(RenderContext* pRenderContext, const RenderData& r
     if (!mpScene)
         return;
 
+
     auto& dict = renderData.getDictionary();
     if (mOptionsChanged)
     {
@@ -198,6 +199,9 @@ void RayMarchingPass::execute(RenderContext* pRenderContext, const RenderData& r
         fbo->attachColorTarget(pOutputColor, 0);
         mpDisplayNDFPass->execute(pRenderContext, fbo);
     }
+
+
+
 }
 
 void RayMarchingPass::compile(RenderContext* pRenderContext, const CompileData& compileData)

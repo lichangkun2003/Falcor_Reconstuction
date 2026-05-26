@@ -19,7 +19,7 @@ def render_graph_Pass():
 
     g.addEdge("ReadVoxelPass.vBuffer","VoxelReconstruction.vBuffer")
     g.addEdge("ReadVoxelPass.gBuffer","VoxelReconstruction.gBuffer")
-    #g.addEdge("ReadVoxelPass.pBuffer","VoxelReconstruction.pBuffer")
+    g.addEdge("ReadVoxelPass.pBuffer","VoxelReconstruction.pBuffer")
     g.addEdge("ReadVoxelPass.blockMap","VoxelReconstruction.blockMap")
 
 

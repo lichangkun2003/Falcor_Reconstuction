@@ -44,7 +44,7 @@ VoxelReconstruction::VoxelReconstruction(ref<Device> pDevice, const Properties& 
 
     // Initial Data
     {
-        mGridResources.gridData.solidVoxelCount = 16582;
+        mGridResources.gridData.solidVoxelCount = 92562;
     }
 
     // Create Grid pass
@@ -108,10 +108,10 @@ RenderPassReflection VoxelReconstruction::reflect(const CompileData& compileData
         .format(ResourceFormat::Unknown)
         .rawBuffer(mGridResources.gridData.solidVoxelCount * sizeof(PrimitiveBSDF));
 
-    //reflector.addInput(kPBuffer, kPBuffer)
-    //    .bindFlags(ResourceBindFlags::ShaderResource)
-    //    .format(ResourceFormat::Unknown)
-    //    .rawBuffer(VoxelizationBase::GlobalGridData.solidVoxelCount * sizeof(Ellipsoid));
+    reflector.addInput(VoxelPrime::kPBuffer, VoxelPrime::kPBuffer)
+        .bindFlags(ResourceBindFlags::ShaderResource)
+        .format(ResourceFormat::Unknown)
+        .rawBuffer(mGridResources.gridData.solidVoxelCount * sizeof(Ellipsoid));
 
     reflector.addInput(VoxelPrime::kBlockMap, VoxelPrime::kBlockMap)
         .bindFlags(ResourceBindFlags::ShaderResource)
@@ -140,24 +140,39 @@ void VoxelReconstruction::execute(RenderContext* pRenderContext, const RenderDat
         return;
     mFrameDim = renderData.getDefaultTextureDims();
     mInvFrameDim = 1.0f / float2(mFrameDim);
-    beginFrame(pRenderContext);
+    beginFrame(pRenderContext,false);
 
-    proccessXuData(pRenderContext, renderData);
-
-    if (mEnableReconstruction)
+    if (mInitVoxelData)
     {
-        loadReferenceImages();
+        proccessXuData(pRenderContext, renderData);
+        mInitVoxelData = false;
     }
+
 
     rayMarchingPass(pRenderContext, renderData);
 
-    if (mEnableReconstruction)
+ 
+    if (mEnableReconstruction && mOptimizerParams.isRunning)
     {
-        mLossPass.mView = 0;
+
+        mLossPass.mView = mOptimizerParams.currentView;
         runLossPass(pRenderContext, renderData);
         runGradientPass(pRenderContext, renderData);
         runUpdatePass(pRenderContext, renderData);
+        runReducePass(pRenderContext, renderData);
+
+        mOptimizerParams.currentView++;
+        if (mOptimizerParams.currentView >= mOptimizerParams.viewsPerIteration)
+        {
+            mOptimizerParams.currentView = 0;
+            mOptimizerParams.currentIteration++;
+            if (mOptimizerParams.currentIteration >= mOptimizerParams.maxIteration)
+            {
+                stopReconstruction();
+            }
+        }
     }
+
 
     endFrame(pRenderContext);
 }
@@ -178,6 +193,11 @@ void VoxelReconstruction::setScene(RenderContext* pRenderContext, const ref<Scen
 
     // Update Pass
     createUpdatePassResource(pRenderContext);
+
+    // Reduce Pass
+    createReducePassResource(pRenderContext);
+
+    loadReferenceImages();
 }
 
 void VoxelReconstruction::renderUI(Gui::Widgets& widget) {
@@ -217,8 +237,20 @@ void VoxelReconstruction::renderUI(Gui::Widgets& widget) {
         requestRecompile();
     }
 
-    widget.checkbox("Enable Reconstruction", mEnableReconstruction);
+    widget.checkbox("Init Voxel Data", mInitVoxelData);
 
+
+
+    //bool enable = mEnableReconstruction;
+    if (widget.checkbox("Enable Reconstruction", mEnableReconstruction))
+    {
+        if (mEnableReconstruction)
+            startReconstruction();
+        else
+            stopReconstruction();
+    }
+    
+        
     renderUIUpdatePass(widget);
 
 
@@ -233,11 +265,20 @@ void VoxelReconstruction::renderUI(Gui::Widgets& widget) {
     //widget.text("Max Polygon Count: " + std::to_string(mGridResources.gridData.maxPolygonCount));
     //widget.text("Total Polygon Count: " + std::to_string(mGridResources.gridData.totalPolygonCount));
 
+    if (auto group = widget.group("Reconstruction"))
+    {
+        widget.text("Current iteration: " + std::to_string(mOptimizerParams.currentIteration));
+        widget.text("Current view: " + std::to_string(mOptimizerParams.currentView));
+        widget.text("Is running: " + std::string(mOptimizerParams.isRunning ? "true" : "false"));
+        widget.text(fmt::format("Mean loss: {:.8f}", mReduceLossPass.meanLoss));
+    }
 
     if (auto group = widget.group("Debugging"))
     {
         mpPixelDebug->renderUI(group);
     }
+
+
 
 }
 
@@ -299,7 +340,7 @@ void VoxelReconstruction::setupGridResouce(RenderContext* pRenderContext, bool f
 
 
     gridBlock["gridDataBuffer"] = mGridResources.gridDataBuffer;
-    gridBlock["blockOM"] = mGridResources.blockOM;
+    //gridBlock["blockOM"] = mGridResources.blockOM;
     gridBlock["voxelCount"] = mGridResources.gridData.voxelCount;
     gridBlock["voxelSize"] = mGridResources.gridData.voxelSize;
     gridBlock["gridMin"] = mGridResources.gridData.gridMin;
@@ -315,6 +356,7 @@ void VoxelReconstruction::proccessXuData(RenderContext* pRenderContext, const Re
     auto var = mpProcessXuDataPass->getRootVar();
     var[VoxelPrime::kVBuffer] = renderData.getTexture(VoxelPrime::kVBuffer);
     var[VoxelPrime::kGBuffer] = renderData.getResource(VoxelPrime::kGBuffer)->asBuffer();
+    var[VoxelPrime::kPBuffer] = renderData.getResource(VoxelPrime::kPBuffer)->asBuffer();
     var[VoxelPrime::kBlockMap] = renderData.getTexture(VoxelPrime::kBlockMap);
     var["gGridDataParamBlock"] = mpGridBlock;
 
@@ -370,6 +412,29 @@ void VoxelReconstruction::UpdateVoxelGrid(ref<Scene> scene, uint voxelResolution
     //mGridResources.gridData.solidVoxelCount = 0;
 }
 
+
+
+
+void VoxelReconstruction::startReconstruction()
+{
+    mEnableReconstruction = true;
+
+    mOptimizerParams.isRunning = true;
+    mOptimizerParams.currentIteration = 0;
+    mOptimizerParams.currentView = 0;
+
+    // 如果希望每次点击开始都重新初始化 voxel 数据
+    //mInitVoxelData = true;
+}
+
+void VoxelReconstruction::stopReconstruction()
+{
+    mEnableReconstruction = false;
+
+    mOptimizerParams.isRunning = false;
+    mOptimizerParams.currentIteration = 0;
+    mOptimizerParams.currentView = 0;
+}
 
 
 

@@ -33,3 +33,5 @@
 *.tlog
 *.bak
 *.swp
+
+/Scene

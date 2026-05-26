@@ -49,6 +49,9 @@ void VoxelReconstruction::createRayMarchingPassResource(RenderContext* pRenderCo
 
 void VoxelReconstruction::rayMarchingPass(RenderContext* pRenderContext, const RenderData& renderData)
 {
+
+    pRenderContext->clearUAV(mpPathRecordBuffer->getUAV().get(), uint4(0));
+
     RayMarchingPassResouce& resource = mRayMarchingPassResouce;
     RayMarchingPassParams& params = mRayMarchingPassParams;
 

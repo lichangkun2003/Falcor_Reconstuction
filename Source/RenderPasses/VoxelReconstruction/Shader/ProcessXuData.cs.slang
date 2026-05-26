@@ -6,6 +6,7 @@
 Texture3D<int> vBuffer;
 Texture2D<uint4> blockMap;
 StructuredBuffer<PrimitiveBSDF> gBuffer;
+StructuredBuffer<Ellipsoid> pBuffer;
 
 cbuffer GridData {
     uint solidVoxelCount;
@@ -69,6 +70,8 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
         data.bsdf.surface = gBuffer[offset].surface;
         data.bsdf.delta = gBuffer[offset].delta;
         data.bsdf.surface.lobeCount = LOBE_COUNT;
+        data.ellipsoid = pBuffer[offset];
+
 
         // 然后根据是否优化，覆盖初始值
         for (uint lobeId = 0; lobeId < LOBE_COUNT; lobeId++)

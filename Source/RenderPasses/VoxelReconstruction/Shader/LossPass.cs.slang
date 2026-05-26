@@ -29,6 +29,7 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
     float3 dL_dColor = 2.0 * diff;
 
     gLossBuffer[pixel] = loss;
+
     gDL_dColorBuffer[pixel] = float4(dL_dColor, 0.0);
 }
 

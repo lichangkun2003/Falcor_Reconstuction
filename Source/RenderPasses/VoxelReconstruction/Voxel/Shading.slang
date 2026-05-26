@@ -577,6 +577,13 @@ struct PrimitiveBSDF_New
 };
 
 
-
-
 END_NAMESPACE_FALCOR
+
+
+
+
+
+
+
+
+

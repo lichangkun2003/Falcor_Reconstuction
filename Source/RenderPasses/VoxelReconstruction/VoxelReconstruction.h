@@ -32,6 +32,13 @@
 #include "Core/Pass/FullScreenPass.h"
 #include "RenderGraph/RenderPassStandardFlags.h"
 #include <Rendering/Lights/EnvMapSampler.h>
+#include "iostream"
+#include <fstream>
+#include <filesystem>
+#include <iomanip>
+#include <sstream>
+
+namespace fs = std::filesystem;
 
 #include "Defines.h"
 #include "Voxel/VoxelData.slang"
@@ -53,7 +60,8 @@ const std::string RayMarchingShaderFilePath = "RenderPasses/VoxelReconstruction/
 const std::string LossPassShaderFilePath = "RenderPasses/VoxelReconstruction/Shader/LossPass.cs.slang";
 const std::string GradientPassShaderFilePath = "RenderPasses/VoxelReconstruction/Shader/GradientPass.cs.slang";
 const std::string UpdatePassShaderFilePath = "RenderPasses/VoxelReconstruction/Shader/UpdatePass.cs.slang";
-
+const std::string ReduceTexturePassShaderFilePath = "RenderPasses/VoxelReconstruction/Shader/ReduceTexturePass.cs.slang";
+const std::string ReduceBufferPassShaderFilePath = "RenderPasses/VoxelReconstruction/Shader/ReduceBufferPass.cs.slang";
 
 
 inline std::string kGBuffer = "gBuffer";
@@ -61,6 +69,11 @@ inline std::string kVBuffer = "vBuffer";
 inline std::string kPBuffer = "pBuffer";
 inline std::string kBlockMap = "blockMap";
 inline std::string kOutputColor = "color";
+
+
+inline std::string ReferenceImageDir = "D:/lck/vs/Reconstruction_Input/lego";
+inline std::string ReferenceCameraFile = "D:/lck/vs/Reconstruction_Input/lego/camera_params.txt";
+
 } // namespace VoxelPrime
 
 class VoxelReconstruction : public RenderPass
@@ -105,7 +118,16 @@ public:
     void runUpdatePass(RenderContext* pRenderContext, const RenderData& renderData);
     void renderUIUpdatePass(Gui::Widgets& widget);
 
+
+    void createReducePassResource(RenderContext* pRenderContext);
+    void runReducePass(RenderContext* pRenderContext, const RenderData& renderData);
+
     void loadReferenceImages();
+    bool loadReferenceCamerasFromFile(const std::string& cameraFile);
+
+
+    void startReconstruction();
+    void stopReconstruction();
 
     struct GridResources
     {
@@ -229,6 +251,40 @@ public:
         }
     };
 
+    struct OptimizerParams
+    {
+        bool isRunning = false;
+
+        // 控制一次优化过程
+        uint32_t maxIteration = 10;
+        uint32_t currentIteration = 0;
+
+        // 每次 iteration 使用多少个 camera/view
+        uint32_t viewsPerIteration = 10;
+        uint32_t currentView = 0;
+
+        void reset()
+        {
+            currentIteration = 0;
+            currentView = 0;
+            isRunning = false;
+        }
+    };
+
+    struct ReduceLossPass
+    {
+        ref<Buffer> mpReduceBufferA;
+        ref<Buffer> mpReduceBufferB;
+        //ref<Buffer> mpTotalLoss;
+        ref<Buffer> mpTotalLossReadback;
+        ref<ComputePass> mpReduceTexturePass;
+        ref<ComputePass> mpReduceBufferPass;
+
+        
+        float meanLoss = 0.0f;
+
+    };
+
 private:
     ref<Device> mpDevice;
     ref<Scene> mpScene;
@@ -239,6 +295,9 @@ private:
     uint2 mFrameDim;
     float2 mInvFrameDim;
     uint mVoxelResolution = GRID_RESOLUTION; // X,Y,Z三个方向中，最长的边被划分的体素数量
+
+
+    OptimizerParams mOptimizerParams;
 
 
     // Passes
@@ -259,12 +318,18 @@ private:
 
     // Voxel Optimization
     std::vector<ref<Texture>> mReferenceImages;
+    std::vector<ref<Camera>> mReferenceCameras;
     ref<Buffer> mpPathRecordBuffer;
+
+    // Reduce Pass
+    ReduceLossPass mReduceLossPass;
 
 
     // UI
     bool mOptionsChanged = false;
     bool mEnableReconstruction = false;
+    bool mInitVoxelData = false;
+    //bool test = false;
 };
 
 

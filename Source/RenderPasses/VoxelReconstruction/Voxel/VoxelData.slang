@@ -18,7 +18,7 @@ struct VoxelData
     // PrimitiveBSDF bsdf;
     PrimitiveBSDF_New bsdf;
     DensityPrimitive densityPrimitive;
-    //Ellipsoid ellipsoid;
+    Ellipsoid ellipsoid;
     //SphericalFunc primitiveProjAreaFunc;
     //SphericalFunc polygonsProjAreaFunc; // 所有多边形的可见投影面积
     //SphericalFunc totalProjAreaFunc;    // 所有多边形的总投影面积
