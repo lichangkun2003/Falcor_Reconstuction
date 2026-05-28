@@ -58,9 +58,11 @@ void VoxelReconstruction::runGradientPass(RenderContext* pRenderContext, const R
 
     auto var = mGradientPass.mpComputePass->getRootVar();
 
+    var["gGridDataParamBlock"] = mpGridBlock;
     var["gDL_dColorBuffer"] = mLossPass.dL_dColor;
     var["gGradBuffer"] = mGradientPass.gradBuffer;
     var["gPathRecordBuffer"] = mpPathRecordBuffer;
+    var["dummy"] = renderData.getTexture("dummy");
 
 
     auto cb = var["CB"];

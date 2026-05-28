@@ -53,6 +53,9 @@ bool isSolidBlockXu(int3 blockInt)
     return value != 0;
 }
 
+
+
+
 [numthreads(8, 8, 1)]
 void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
     uint index = CellToIndex(dispatchThreadId, gGridDataParamBlock.voxelCount);
@@ -69,14 +72,18 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
 
         data.bsdf.surface = gBuffer[offset].surface;
         data.bsdf.delta = gBuffer[offset].delta;
-        data.bsdf.surface.lobeCount = LOBE_COUNT;
+        // data.bsdf.surface.lobeCount = LOBE_COUNT;
         data.ellipsoid = pBuffer[offset];
 
 
         // 然后根据是否优化，覆盖初始值
         for (uint lobeId = 0; lobeId < LOBE_COUNT; lobeId++)
         {
+            if (lobeId >= data.bsdf.surface.lobeCount)
+                break;
+
             LobeBRDF lobe = data.bsdf.surface.lobes[lobeId];
+
 
             if (gLrDiffuse > 0.0f)
             {
@@ -85,7 +92,7 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
 
             if (gLrSpecular > 0.0f)
             {
-                lobe.cookTorrence.specular = float3(1.0f);
+                lobe.cookTorrence.specular = float3(0.2f);
             }
 
             if (gLrRough > 0.0f)
@@ -161,7 +168,7 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
 
         gGridDataParamBlock.gridDataBuffer[index] = data;
 
-        gGridDataParamBlock.gridDataBuffer[index].init();
+        //gGridDataParamBlock.gridDataBuffer[index].init();
     }
 }
 

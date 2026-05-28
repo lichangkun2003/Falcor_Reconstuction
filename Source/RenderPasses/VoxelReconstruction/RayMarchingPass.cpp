@@ -63,7 +63,15 @@ void VoxelReconstruction::rayMarchingPass(RenderContext* pRenderContext, const R
         params.mOptionsChanged = false;
     }
 
-    ref<Camera> pCamera = mpScene->getCamera();
+    ref<Camera> pCamera;
+    if (mEnableReconstruction)
+    {
+        pCamera = mReferenceCameras[mOptimizerParams.currentView];
+    }
+    else
+    {
+        pCamera = mpScene->getCamera();
+    }
     ref<Texture> pOutputColor = renderData.getTexture(VoxelPrime::kOutputColor);
     pRenderContext->clearRtv(pOutputColor->getRTV().get(), float4(0));
 

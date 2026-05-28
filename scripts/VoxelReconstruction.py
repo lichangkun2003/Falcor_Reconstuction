@@ -30,6 +30,7 @@ def render_graph_Pass():
     
     g.markOutput("VoxelReconstruction.color")
     g.markOutput("AccumulatePass.output")
+    g.markOutput("VoxelReconstruction.dummy")
     return g
 
 Graph = render_graph_Pass()

@@ -10,9 +10,10 @@ import Utils.Debug.PixelDebug;
 Texture2D<float4> gDL_dColorBuffer;
 StructuredBuffer<PathRecord> gPathRecordBuffer;
 
+
 // Output
 RWStructuredBuffer<GradRecord> gGradBuffer;
-
+RWTexture2D<float4> dummy;
 
 cbuffer CB {
     uint2 gResolution;
@@ -451,6 +452,7 @@ float3 calc_dPrimitiveBSDF_New_dVisibility(
 void calc_dL_dTheta(PathRecord rec, float3 dL_dC, out GradRecord gradRecord)
 {
     gradRecord.init();
+
     if (rec.valid == 0)
         return ;
 
@@ -462,6 +464,7 @@ void calc_dL_dTheta(PathRecord rec, float3 dL_dC, out GradRecord gradRecord)
 
     if (pdf <= 0.0f)
         return ;
+
 
     uint voxelId = CellToIndex(rec.hitCellInt, gGridDataParamBlock.voxelCount);
 
@@ -555,6 +558,7 @@ void calc_dL_dTheta(PathRecord rec, float3 dL_dC, out GradRecord gradRecord)
 #endif
 
 
+
     // Lobe Gradient
     for (uint lobeId = 0; lobeId < LOBE_COUNT; lobeId++) {
 
@@ -590,6 +594,7 @@ void calc_dL_dTheta(PathRecord rec, float3 dL_dC, out GradRecord gradRecord)
         * dPrimitive_dSurface
         * dSurface_dLobe
         * dLobe_dDiffuse;
+
 
         // -------------------------
         // rough gradient
@@ -794,12 +799,23 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
     GradRecord gradRecord;
     calc_dL_dTheta(rec, dL_dC, gradRecord);
 
+    // print("gradRecord")
+    print("gradRecord.diffuse[0]", gradRecord.diffuse[0]);
+    print("gradRecord.diffuse[1]", gradRecord.diffuse[1]);
+    print("gradRecord.diffuse[2]", gradRecord.diffuse[2]);
+    print("gradRecord.diffuse[3]", gradRecord.diffuse[3]);
+    print("dL_dC", dL_dC);
+
     uint indexGradBuffer = CellToIndex(rec.hitCellInt, gVoxelCount);
 
     print("Valid", gGradBuffer[indexGradBuffer].valid);
 
     accumulateGradRecord(indexGradBuffer, gradRecord);
-    
+
+
+
+    dummy[pixel] = float4(gradRecord.diffuse[0],1.0f);
+
 }
 
 

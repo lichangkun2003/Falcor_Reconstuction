@@ -460,10 +460,10 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
             color = hit.cell;
             break;
         }
-            psOut.color = float4(color, 1);
+        //color = clamp(color, float3(0.0f), float3(1e4f)); 
+        psOut.color = float4(color, 1);
     }
 
-    //psOut.color = float4(1, 0, 0, 1);
     return psOut;
 
 }

@@ -121,9 +121,9 @@ RenderPassReflection VoxelReconstruction::reflect(const CompileData& compileData
 
     // Output
     reflector.addOutput("dummy", "Dummy")
-        .bindFlags(ResourceBindFlags::RenderTarget)
+        .bindFlags(ResourceBindFlags::UnorderedAccess | ResourceBindFlags::ShaderResource | ResourceBindFlags::RenderTarget)
         .format(ResourceFormat::RGBA32Float)
-        .texture2D(0, 0, 1, 1);
+        .texture2D(mRayMarchingPassParams.mOutputResolution.x, mRayMarchingPassParams.mOutputResolution.y, 1, 1);
     reflector.addOutput(VoxelPrime::kOutputColor, "Color")
         .bindFlags(ResourceBindFlags::RenderTarget)
         .format(ResourceFormat::RGBA32Float)
@@ -151,6 +151,16 @@ void VoxelReconstruction::execute(RenderContext* pRenderContext, const RenderDat
 
     rayMarchingPass(pRenderContext, renderData);
 
+    // test input
+    {
+        ref<Texture> pDummy = renderData.getTexture("dummy");
+        ref<Texture> pRef = mReferenceImages[testIndex];
+
+        if (pDummy && pRef)
+        {
+            pRenderContext->blit(pRef->getSRV(), pDummy->getRTV());
+        }
+    }
  
     if (mEnableReconstruction && mOptimizerParams.isRunning)
     {
@@ -237,9 +247,13 @@ void VoxelReconstruction::renderUI(Gui::Widgets& widget) {
         requestRecompile();
     }
 
+    widget.slider("Camera Index", testIndex, 0u, mOptimizerParams.viewsPerIteration - 1u);
     widget.checkbox("Init Voxel Data", mInitVoxelData);
 
+    
 
+    widget.var("Max Iteration", mOptimizerParams.maxIteration);
+    
 
     //bool enable = mEnableReconstruction;
     if (widget.checkbox("Enable Reconstruction", mEnableReconstruction))

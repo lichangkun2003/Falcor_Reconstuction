@@ -73,6 +73,8 @@ void VoxelReconstruction::runLossPass(RenderContext* pRenderContext, const Rende
 
     auto cb = var["CB"];
     cb["gResolution"] = mRayMarchingPassParams.mOutputResolution;
+
+
     mLossPass.mpComputePass->execute(
         pRenderContext, uint3(mRayMarchingPassParams.mOutputResolution.x, mRayMarchingPassParams.mOutputResolution.y, 1)
     );
@@ -150,6 +152,10 @@ bool VoxelReconstruction::loadReferenceCamerasFromFile(const std::string& camera
         }
 
         mReferenceCameras.push_back(cam);
+        if (mReferenceCameras.size() >= mOptimizerParams.viewsPerIteration)
+        {
+            break;
+        }
     }
 
     if (mReferenceCameras.empty())
@@ -183,72 +189,30 @@ void VoxelReconstruction::loadReferenceImages()
 
     const uint32_t imageCount = mOptimizerParams.viewsPerIteration;
 
-    //if (!loadReferenceCamerasFromFile(cameraFile.string()))
-    //{
-    //    throw RuntimeError("Failed to load reference cameras.");
-    //}
+    if (!loadReferenceCamerasFromFile(cameraFile.string()))
+    {
+        throw RuntimeError("Failed to load reference cameras.");
+    }
 
-    //if (mReferenceCameras.size() < imageCount)
-    //{
-    //    std::stringstream err;
-    //    err << "Reference camera count is smaller than image count. camera count = " << mReferenceCameras.size()
-    //        << ", image count = " << imageCount;
+    if (mReferenceCameras.size() < imageCount)
+    {
+        std::stringstream err;
+        err << "Reference camera count is smaller than image count. camera count = " << mReferenceCameras.size()
+            << ", image count = " << imageCount;
 
-    //    throw RuntimeError(err.str().c_str());
-    //}
+        throw RuntimeError(err.str().c_str());
+    }
 
-    //mReferenceImages.reserve(imageCount);
+    mReferenceImages.reserve(imageCount);
 
     for (uint32_t i = 0; i < imageCount; ++i)
     {
         std::stringstream ss;
-        //ss << "picture" << std::setw(3) << std::setfill('0') << i << ".exr";
-        ss << "white.exr";
+        ss << "picture" << std::setw(3) << std::setfill('0') << i << ".exr";
+        //ss << "white.exr";
 
         std::filesystem::path imagePath = imageDir / ss.str();
         imagePath = std::filesystem::weakly_canonical(imagePath);
-
-        //logInfo("Canonical image path: " + imagePath.string());
-
-        //if (!std::filesystem::exists(imagePath))
-        //{
-        //    std::string msg = "Reference image not found: " + imagePath.string();
-        //    throw RuntimeError(msg.c_str());
-        //}
-
-
-        //logInfo("Loading bitmap: " + imagePath.string());
-
-        //Bitmap::UniqueConstPtr pBitmap = Bitmap::createFromFile(imagePath, true, Bitmap::ImportFlags::None);
-        //if (!pBitmap)
-        //{
-        //    std::string msg = "Bitmap::createFromFile failed: " + imagePath.string();
-        //    throw RuntimeError(msg.c_str());
-        //}
-        //ResourceFormat format = pBitmap->getFormat();
-
-        //logInfo("Reference bitmap loaded: size={}x{}, format={}", pBitmap->getWidth(), pBitmap->getHeight(), to_string(format));
-
-        //ref<Texture> image = mpDevice->createTexture2D(
-        //    pBitmap->getWidth(),
-        //    pBitmap->getHeight(),
-        //    format,
-        //    1u, // arraySize
-        //    1u, // mipLevels
-        //    pBitmap->getData(),
-        //    ResourceBindFlags::ShaderResource
-        //);
-
-
-        // if (!image)
-        //{
-        //    std::string msg = "Failed to load reference image: " + imagePath.string();
-        //    throw RuntimeError(msg.c_str());
-        //}
-
-        //logInfo(
-        //    "Reference texture created: size={}x{}, format={}", image->getWidth(), image->getHeight(), to_string(image->getFormat())
-        //);
 
         ref<Texture> image = Texture::createFromFile(mpDevice, imagePath, false, false);
          logInfo(

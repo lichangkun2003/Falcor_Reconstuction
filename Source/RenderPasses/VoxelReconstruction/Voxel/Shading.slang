@@ -96,7 +96,7 @@ struct FrostbiteCosBRDF
     }
 
     float3 eval(float3 l, float3 v, float3 h)
-    {
+    {   
         if (l.z <= 0 || v.z <= 0)
             return 0;
         float VdotH = dot(v, h);

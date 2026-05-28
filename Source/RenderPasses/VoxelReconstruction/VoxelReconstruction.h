@@ -177,7 +177,7 @@ public:
             mDrawMode = 0;
             mUseMipmap = true;
             mMaxBounce = 0;
-            mRenderBackGround = false;
+            mRenderBackGround = true;
             mClearColor = float3(0);
             //mCheckEllipsoid = false;
             mCheckPrimitive = false;
@@ -240,7 +240,7 @@ public:
             mUseGradCountNormalize = true;
             mGradScale = 1.0f;
 
-            mLrDiffuse = 0.0f;
+            mLrDiffuse = 0.1f;
             mLrSpecular = 0.0f;
             mLrRough = 0.0f;
             mLrWeight = 0.0f;
@@ -256,11 +256,11 @@ public:
         bool isRunning = false;
 
         // 控制一次优化过程
-        uint32_t maxIteration = 10;
+        uint32_t maxIteration = 100;
         uint32_t currentIteration = 0;
 
         // 每次 iteration 使用多少个 camera/view
-        uint32_t viewsPerIteration = 10;
+        uint32_t viewsPerIteration = 300;
         uint32_t currentView = 0;
 
         void reset()
@@ -329,7 +329,9 @@ private:
     bool mOptionsChanged = false;
     bool mEnableReconstruction = false;
     bool mInitVoxelData = false;
+    //bool mVisualizeDataset = false;
     //bool test = false;
+    uint testIndex = 0;
 };
 
 

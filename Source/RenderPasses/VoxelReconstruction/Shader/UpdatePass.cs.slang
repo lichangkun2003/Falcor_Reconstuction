@@ -109,6 +109,10 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
     {
         LobeBRDF lobe = bsdf.surface.lobes[lobeId];
 
+        if (lobeId >= bsdf.surface.lobeCount)
+            break;
+
+
         float3 gradDiffuse =
             grad.diffuse[lobeId] * gradScale;
 
@@ -129,6 +133,7 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
         {
             lobe.frostBite.diffuse -= gLrDiffuse * gradDiffuse;
             lobe.frostBite.diffuse = saturate(lobe.frostBite.diffuse);
+
         }
 
         // specular
@@ -136,6 +141,7 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
         {
             lobe.cookTorrence.specular -= gLrSpecular * gradSpecular;
             lobe.cookTorrence.specular = saturate(lobe.cookTorrence.specular);
+            lobe.specularWeight = lobe.evalSpecularWeight();
         }
 
         // rough
