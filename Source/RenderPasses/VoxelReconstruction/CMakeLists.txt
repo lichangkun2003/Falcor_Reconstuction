@@ -28,6 +28,7 @@ target_sources(VoxelReconstruction PRIVATE
     GradientPass.cpp
     UpdatePass.cpp
     ReducePass.cpp
+    DataProcess.cpp
 
     Shader/ReflectTypes.cs.slang
     Shader/ProcessXuData.cs.slang

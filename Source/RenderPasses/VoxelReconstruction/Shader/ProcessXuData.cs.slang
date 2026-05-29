@@ -53,7 +53,28 @@ bool isSolidBlockXu(int3 blockInt)
     return value != 0;
 }
 
+float3 getWorldUpperHemisphereLobeCenter(uint lobeId, uint lobeCount)
+{
+    float n = max(1.0f, float(lobeCount));
 
+    // z/y 轴选择：
+    // 这里我用 y 作为世界上方向，即 y >= 0 的上半球。
+    // 如果你的世界坐标是 z-up，就把 y 换成 z。
+    float minY = 0.15f;
+
+    float u = (float(lobeId) + 0.5f) / n;
+
+    float y = lerp(1.0f, minY, u);
+    float r = sqrt(max(0.0f, 1.0f - y * y));
+
+    float phi = 2.39996323f * float(lobeId); // golden angle
+
+    return safeNormalize(float3(
+        r * cos(phi),
+        y,
+        r * sin(phi)
+    ));
+}
 
 
 [numthreads(8, 8, 1)]
@@ -72,9 +93,8 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
 
         data.bsdf.surface = gBuffer[offset].surface;
         data.bsdf.delta = gBuffer[offset].delta;
-        // data.bsdf.surface.lobeCount = LOBE_COUNT;
+        //data.bsdf.surface.lobeCount = LOBE_COUNT;
         data.ellipsoid = pBuffer[offset];
-
 
         // 然后根据是否优化，覆盖初始值
         for (uint lobeId = 0; lobeId < LOBE_COUNT; lobeId++)
@@ -104,10 +124,8 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
 
             if (gLrNormal > 0.0f)
             {
-                // 保留原始区域中心也可以；如果你要统一初始化，可以在这里设置
-                float3 n = safeNormalize(lobe.n);
-                if (dot(n, n) > 0.0f)
-                    lobe.update(n);
+                float3 n = getWorldUpperHemisphereLobeCenter(lobeId, LOBE_COUNT);
+                lobe.update(n);
             }
 
             data.bsdf.surface.lobes[lobeId] = lobe;

@@ -460,7 +460,10 @@ void calc_dL_dTheta(PathRecord rec, float3 dL_dC, out GradRecord gradRecord)
     float pdf = rec.lightDirPdf.w;
     float3 Li = rec.lightColor.rgb;
     float3 v = rec.viewDir.xyz;
-    float3 h = normalize(l + v);
+    float3 h = normalizeSafe(l + v);
+
+    if (all(h == float3(0.0f)))
+        return;
 
     if (pdf <= 0.0f)
         return ;

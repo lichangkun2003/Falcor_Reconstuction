@@ -132,7 +132,7 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
         if (gLrDiffuse > 0.0f)
         {
             lobe.frostBite.diffuse -= gLrDiffuse * gradDiffuse;
-            lobe.frostBite.diffuse = saturate(lobe.frostBite.diffuse);
+            lobe.frostBite.diffuse = clamp(lobe.frostBite.diffuse, float3(0.0f), float3(2.0f));
 
         }
 

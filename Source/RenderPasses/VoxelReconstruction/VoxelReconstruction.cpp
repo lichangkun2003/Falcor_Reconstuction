@@ -44,7 +44,7 @@ VoxelReconstruction::VoxelReconstruction(ref<Device> pDevice, const Properties& 
 
     // Initial Data
     {
-        mGridResources.gridData.solidVoxelCount = 92562;
+        mGridResources.gridData.solidVoxelCount = GRID_RESOLUTION == 128 ? 92562 : 545771;
     }
 
     // Create Grid pass
@@ -148,6 +148,29 @@ void VoxelReconstruction::execute(RenderContext* pRenderContext, const RenderDat
         mInitVoxelData = false;
     }
 
+    if (mLoadReconstructionRequested)
+    {
+        if (!mReconstructionFilePaths.empty() && mSelectedReconstructionFile < mReconstructionFilePaths.size())
+        {
+            loadReconstruction(pRenderContext, mReconstructionFilePaths[mSelectedReconstructionFile]);
+        }
+        else
+        {
+            logWarning("Load reconstruction failed: no file selected.");
+        }
+
+        mLoadReconstructionRequested = false;
+
+    }
+
+    if (mSaveReconstructionRequested)
+    {
+        saveReconstruction(pRenderContext);
+        mSaveReconstructionRequested = false;
+
+        // 保存后刷新列表，立刻能在 dropdown 看到新文件
+        mReconstructionFileListDirty = true;
+    }
 
     rayMarchingPass(pRenderContext, renderData);
 
@@ -179,6 +202,7 @@ void VoxelReconstruction::execute(RenderContext* pRenderContext, const RenderDat
             if (mOptimizerParams.currentIteration >= mOptimizerParams.maxIteration)
             {
                 stopReconstruction();
+                mSaveReconstructionRequested = true;
             }
         }
     }
@@ -287,6 +311,43 @@ void VoxelReconstruction::renderUI(Gui::Widgets& widget) {
         widget.text(fmt::format("Mean loss: {:.8f}", mReduceLossPass.meanLoss));
     }
 
+    if (auto group = widget.group("Reconstruction IO"))
+    {
+        if (mReconstructionFileListDirty)
+        {
+            refreshReconstructionFileList();
+            mReconstructionFileListDirty = false;
+        }
+
+        Gui::DropdownList fileList;
+
+        for (uint32_t i = 0; i < mReconstructionFilePaths.size(); i++)
+        {
+            fileList.push_back({i, mReconstructionFilePaths[i].filename().string()});
+        }
+
+        if (!fileList.empty())
+        {
+            widget.dropdown("Reconstruction File", fileList, mSelectedReconstructionFile);
+
+            widget.text("Selected: " + mReconstructionFilePaths[mSelectedReconstructionFile].string());
+
+            if (widget.button("Load Selected Reconstruction"))
+            {
+                mLoadReconstructionRequested = true;
+            }
+        }
+        else
+        {
+            widget.text("No reconstruction .bin files found.");
+        }
+
+        if (widget.button("Save Reconstruction"))
+        {
+            mSaveReconstructionRequested = true;
+        }
+    }
+
     if (auto group = widget.group("Debugging"))
     {
         mpPixelDebug->renderUI(group);
@@ -337,7 +398,8 @@ void VoxelReconstruction::setupGridResouce(RenderContext* pRenderContext, bool f
     {
         mGridResources.gridDataBuffer = mpDevice->createStructuredBuffer(
             sizeof(VoxelData), mGridResources.gridData.totalVoxelCount(),
-            ResourceBindFlags::UnorderedAccess);
+            ResourceBindFlags::UnorderedAccess | ResourceBindFlags::ShaderResource
+        );
         mGridResources.blockOM = mpDevice->createTexture2D(
             mGridResources.gridData.blockGridSizeXY().x,
             mGridResources.gridData.blockGridSizeXY().y,

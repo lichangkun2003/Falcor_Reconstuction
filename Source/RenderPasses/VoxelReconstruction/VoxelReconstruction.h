@@ -73,7 +73,7 @@ inline std::string kOutputColor = "color";
 
 inline std::string ReferenceImageDir = "D:/lck/vs/Reconstruction_Input/lego";
 inline std::string ReferenceCameraFile = "D:/lck/vs/Reconstruction_Input/lego/camera_params.txt";
-
+inline std::string ReconstructionDataDir = "D:/lck/vs/Reconstruction_Output";
 } // namespace VoxelPrime
 
 class VoxelReconstruction : public RenderPass
@@ -128,6 +128,13 @@ public:
 
     void startReconstruction();
     void stopReconstruction();
+
+
+    std::filesystem::path getDefaultReconstructionSavePath() const;
+    std::string getOptimizedParamTag() const;
+    void saveReconstruction(RenderContext* pRenderContext);
+    void loadReconstruction(RenderContext* pRenderContext, const std::filesystem::path& path);
+    void VoxelReconstruction::refreshReconstructionFileList();
 
     struct GridResources
     {
@@ -332,6 +339,11 @@ private:
     //bool mVisualizeDataset = false;
     //bool test = false;
     uint testIndex = 0;
+    bool mSaveReconstructionRequested = false;
+    bool mLoadReconstructionRequested = false;
+    bool mReconstructionFileListDirty = true;
+    std::vector<std::filesystem::path> mReconstructionFilePaths;
+    uint32_t mSelectedReconstructionFile = 0;
 };
 
 
