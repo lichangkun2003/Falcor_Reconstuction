@@ -131,9 +131,17 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
         // diffuse
         if (gLrDiffuse > 0.0f)
         {
-            lobe.frostBite.diffuse -= gLrDiffuse * gradDiffuse;
-            lobe.frostBite.diffuse = clamp(lobe.frostBite.diffuse, float3(0.0f), float3(2.0f));
+            gradDiffuse /= max(1.0f, float(grad.valid));
+            if (any(isnan(gradDiffuse)) || any(isinf(gradDiffuse)))
+            {
+                gradDiffuse = float3(0.0f);
+            }
+            float3 step = gLrDiffuse * gradDiffuse;
 
+            step = clamp(step, float3(-0.003f), float3(0.003f));
+
+            lobe.frostBite.diffuse -= step;
+            lobe.frostBite.diffuse = clamp(lobe.frostBite.diffuse, float3(0.0f), float3(2.0f));
         }
 
         // specular

@@ -71,8 +71,8 @@ inline std::string kBlockMap = "blockMap";
 inline std::string kOutputColor = "color";
 
 
-inline std::string ReferenceImageDir = "D:/lck/vs/Reconstruction_Input/lego";
-inline std::string ReferenceCameraFile = "D:/lck/vs/Reconstruction_Input/lego/camera_params.txt";
+inline std::string ReferenceImageDir = "D:/lck/vs/Reconstruction_Input/lego_white_256";
+inline std::string ReferenceCameraFile = "D:/lck/vs/Reconstruction_Input/lego_white_256/camera_params.txt";
 inline std::string ReconstructionDataDir = "D:/lck/vs/Reconstruction_Output";
 } // namespace VoxelPrime
 
@@ -187,7 +187,7 @@ public:
             mRenderBackGround = true;
             mClearColor = float3(0);
             //mCheckEllipsoid = false;
-            mCheckPrimitive = false;
+            mCheckPrimitive = true;
             mTrasmittanceThreshold100 = 5.f;
             mMinPdf100 = 0.1f;
             mShadowBias100 = 0.01f;
@@ -247,7 +247,7 @@ public:
             mUseGradCountNormalize = true;
             mGradScale = 1.0f;
 
-            mLrDiffuse = 0.1f;
+            mLrDiffuse = 0.005f;
             mLrSpecular = 0.0f;
             mLrRough = 0.0f;
             mLrWeight = 0.0f;
@@ -344,6 +344,7 @@ private:
     bool mReconstructionFileListDirty = true;
     std::vector<std::filesystem::path> mReconstructionFilePaths;
     uint32_t mSelectedReconstructionFile = 0;
+    std::string mReconstructionNameTag = "";
 };
 
 

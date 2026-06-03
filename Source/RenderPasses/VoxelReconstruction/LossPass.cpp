@@ -78,7 +78,9 @@ void VoxelReconstruction::runLossPass(RenderContext* pRenderContext, const Rende
     mLossPass.mpComputePass->execute(
         pRenderContext, uint3(mRayMarchingPassParams.mOutputResolution.x, mRayMarchingPassParams.mOutputResolution.y, 1)
     );
-    
+
+    pRenderContext->uavBarrier(mLossPass.lossBuffer.get());
+    pRenderContext->uavBarrier(mLossPass.dL_dColor.get());
 }
 
 

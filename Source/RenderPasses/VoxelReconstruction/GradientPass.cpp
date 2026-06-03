@@ -52,6 +52,7 @@ void VoxelReconstruction::createGradientPassResource(RenderContext* pRenderConte
 }
 void VoxelReconstruction::runGradientPass(RenderContext* pRenderContext, const RenderData& renderData) {
     pRenderContext->clearUAV(mGradientPass.gradBuffer->getUAV().get(), uint4(0));
+    pRenderContext->uavBarrier(mpPathRecordBuffer.get());
 
     mGradientPass.mpComputePass->addDefine("CHECK_VISIBILITY", mRayMarchingPassParams.mCheckVisibility ? "1" : "0");
     mGradientPass.mpComputePass->addDefine("CHECK_COVERAGE", mRayMarchingPassParams.mCheckCoverage ? "1" : "0");
@@ -76,4 +77,5 @@ void VoxelReconstruction::runGradientPass(RenderContext* pRenderContext, const R
         pRenderContext, uint3(mRayMarchingPassParams.mOutputResolution.x, mRayMarchingPassParams.mOutputResolution.y, 1)
     );
 
+    pRenderContext->uavBarrier(mGradientPass.gradBuffer.get());
 }

@@ -93,7 +93,19 @@ std::filesystem::path VoxelReconstruction::getDefaultReconstructionSavePath() co
 
     std::string dateTag = fmt::format("{}_{}", month, day);
 
-    std::string filename = fmt::format("recon{}_{}_{}.bin", dateTag, GRID_RESOLUTION, paramTag);
+
+    std::string nameTag = mReconstructionNameTag;
+
+    std::string filename;
+
+    if (nameTag.empty())
+    {
+        filename = fmt::format("recon{}_{}_{}.bin", dateTag, GRID_RESOLUTION, paramTag);
+    }
+    else
+    {
+        filename = fmt::format("recon{}_{}_{}_{}.bin", dateTag, nameTag, GRID_RESOLUTION, paramTag);
+    }
 
     return outputDir / filename;
 }

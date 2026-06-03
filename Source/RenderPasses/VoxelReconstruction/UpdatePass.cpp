@@ -68,7 +68,7 @@ void VoxelReconstruction::runUpdatePass(RenderContext* pRenderContext, const Ren
 
     mUpdatePass.mpComputePass->execute(pRenderContext, mGridResources.gridData.voxelCount);
 
-
+    pRenderContext->uavBarrier(mGridResources.gridDataBuffer.get());
 }
 
 void VoxelReconstruction::renderUIUpdatePass(Gui::Widgets& widget)

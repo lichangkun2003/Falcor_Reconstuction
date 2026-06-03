@@ -18,18 +18,37 @@ struct GradRecord
 
     uint valid;
 
+    // geometry gradient
+    float3 center;
+    float B00;
+    float B11;
+    float B22;
+    float B01;
+    float B02;
+    float B12;
+
 
     MUTATING
     void init() {
         valid = 0;
+
+        center = float3(0.0f);
+        B00 = 0.0f;
+        B11 = 0.0f;
+        B22 = 0.0f;
+        B01 = 0.0f;
+        B02 = 0.0f;
+        B12 = 0.0f;
+
+        coverageFunc.init();
+        visibilityFunc.init();
+
         for (uint i = 0; i < LOBE_COUNT; i++) {
             diffuse[i] = float3(0.0f);
             specular[i] = float3(0.0f);
             normal[i] = float3(0.0f);
             rough[i] = float(0.0f);
             weight[i] = float(0.0f);
-            coverageFunc.init();
-            visibilityFunc.init();
         }
     }
 };

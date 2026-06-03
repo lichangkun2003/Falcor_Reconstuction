@@ -677,38 +677,6 @@ void calc_dL_dTheta(PathRecord rec, float3 dL_dC, out GradRecord gradRecord)
     gradRecord.valid = 1;
 }
 
-//bool InterlockedAddFloat(uint indexGradBuffer, float valueToAdd, out float oldValue, out float newValue)
-//{
-//    float expected = gGradBuffer[indexGradBuffer].test;
-//    float original = 0.0f;
-
-//    [allow_uav_condition]
-//    for (uint iter = 0; iter < 64; iter++)
-//    {
-//        float desired = expected + valueToAdd;
-
-//        InterlockedCompareExchangeFloatBitwise(
-//            gGradBuffer[indexGradBuffer].test,
-//            expected,
-//            desired,
-//            original
-//        );
-
-//        if (asuint(original) == asuint(expected))
-//        {
-//            oldValue = original;
-//            newValue = desired;
-//            return true;
-//        }
-
-//        expected = original;
-//    }
-
-//    oldValue = expected;
-//    newValue = expected;
-//    return false;
-//}
-
 void accumulateGradRecord(uint indexGradBuffer, GradRecord gradRecord)
 {
     InterlockedAdd(gGradBuffer[indexGradBuffer].valid, gradRecord.valid);
@@ -803,11 +771,14 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
     calc_dL_dTheta(rec, dL_dC, gradRecord);
 
     // print("gradRecord")
-    print("gradRecord.diffuse[0]", gradRecord.diffuse[0]);
-    print("gradRecord.diffuse[1]", gradRecord.diffuse[1]);
-    print("gradRecord.diffuse[2]", gradRecord.diffuse[2]);
-    print("gradRecord.diffuse[3]", gradRecord.diffuse[3]);
-    print("dL_dC", dL_dC);
+    if (gradRecord.diffuse[0].x != 0.0f) {
+        print("gradRecord.diffuse[0]", gradRecord.diffuse[0].x);
+    }
+    if (gradRecord.diffuse[0].y != 0.0f) {
+        print("gradRecord.diffuse[0]", gradRecord.diffuse[0].x);
+    }
+    
+
 
     uint indexGradBuffer = CellToIndex(rec.hitCellInt, gVoxelCount);
 

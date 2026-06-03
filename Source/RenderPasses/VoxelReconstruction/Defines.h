@@ -1,7 +1,7 @@
 #pragma once
 
 
-#define GRID_RESOLUTION 128
+#define GRID_RESOLUTION 256
 #define BLOCK_TO_VOXEL 8
 
 #define REFERENCE_IMAGES_COUNT 300

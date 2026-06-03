@@ -129,6 +129,11 @@ RenderPassReflection VoxelReconstruction::reflect(const CompileData& compileData
         .format(ResourceFormat::RGBA32Float)
         .texture2D(mRayMarchingPassParams.mOutputResolution.x, mRayMarchingPassParams.mOutputResolution.y, 1, 1);
 
+    reflector.addOutput("lossVis", "Loss Visualization")
+        .bindFlags(ResourceBindFlags::UnorderedAccess | ResourceBindFlags::ShaderResource | ResourceBindFlags::RenderTarget)
+        .format(ResourceFormat::RGBA32Float)
+        .texture2D(mRayMarchingPassParams.mOutputResolution.x, mRayMarchingPassParams.mOutputResolution.y, 1, 1);
+
     return reflector;
 }
 
@@ -342,6 +347,7 @@ void VoxelReconstruction::renderUI(Gui::Widgets& widget) {
             widget.text("No reconstruction .bin files found.");
         }
 
+        widget.textbox("Name Tag", mReconstructionNameTag);
         if (widget.button("Save Reconstruction"))
         {
             mSaveReconstructionRequested = true;
