@@ -451,7 +451,8 @@ void VoxelReconstruction::proccessXuData(RenderContext* pRenderContext, const Re
     cb["gLrNormal"] = mUpdatePass.mLrNormal;
     cb["gLrCoverageFunc"] = mUpdatePass.mLrCoverageFunc;
     cb["gLrVisibilityFunc"] = mUpdatePass.mLrVisibilityFunc;
-
+    cb["gLrCenter"] = mUpdatePass.mLrCenter;
+    cb["gLrB"] = mUpdatePass.mLrB;
 
     ShaderVar gridBlock = mpGridBlock->getRootVar();
     gridBlock["blockOM"] = renderData.getTexture(VoxelPrime::kBlockMap);

@@ -18,6 +18,9 @@ cbuffer GridData {
     float gLrNormal;
     float gLrCoverageFunc;
     float gLrVisibilityFunc;
+
+    float gLrCenter;
+    float gLrB;
 }
 
 bool isSolidVoxelXu(int3 cellInt, out int offset)
@@ -183,6 +186,28 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
                 c / calcEvenSH(0, float3(0.0f, 0.0f, 1.0f));
         }
 
+        // -------------------------
+        // geometry init
+        // -------------------------
+        if (gLrCenter > 0.0f)
+        {
+            data.ellipsoid.center = float3(0.5f, 0.5f, 0.5f);
+        }
+
+        // 如果开启 B 优化，可以把 B 初始化成一个稳定的球。
+        // phi = (x-c)^T B (x-c) - 1
+        // 若半径 r = 0.35，则 B = I / r^2。
+        if (gLrB > 0.0f)
+        {
+            float r = 0.35f;
+            float invR2 = 1.0f / max(r * r, 1e-6f);
+
+            data.ellipsoid.B = float3x3(
+                invR2, 0.0f, 0.0f,
+                0.0f, invR2, 0.0f,
+                0.0f, 0.0f, invR2
+            );
+        }
 
         gGridDataParamBlock.gridDataBuffer[index] = data;
 

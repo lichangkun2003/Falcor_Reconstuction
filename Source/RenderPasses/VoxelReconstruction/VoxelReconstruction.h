@@ -239,6 +239,8 @@ public:
         float mLrNormal;
         float mLrCoverageFunc;
         float mLrVisibilityFunc;
+        float mLrCenter;
+        float mLrB;
 
 
         void init() {
@@ -254,7 +256,8 @@ public:
             mLrNormal = 0.0f;
             mLrCoverageFunc = 0.0f;
             mLrVisibilityFunc = 0.0f;
-
+            mLrCenter = 0.0f;
+            mLrB = 0.0f;
         }
     };
 

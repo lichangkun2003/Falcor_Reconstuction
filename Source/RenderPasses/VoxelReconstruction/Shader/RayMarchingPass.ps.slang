@@ -163,6 +163,96 @@ HitResult checkPrimitive(Ellipsoid ellipsoid, float3 cell, float3 direction, int
     return result;
 }
 
+float ellipsoidPhi(Ellipsoid ellipsoid, float3 p)
+{
+    float3 q = p - ellipsoid.center;
+    return dot(q, mul(ellipsoid.B, q)) - 1.0f;
+}
+float computeEllipsoidDistanceApprox(Ellipsoid ellipsoid, float3 p)
+{
+    float3 q = p - ellipsoid.center;
+    float3 Bq = mul(ellipsoid.B, q);
+
+    float phi = dot(q, Bq) - 1.0f;
+    float3 gradPhi = 2.0f * Bq;
+
+    return abs(phi) / max(length(gradPhi), 1e-6f);
+}
+
+HitResult checkPrimitiveWithReparam(Ellipsoid ellipsoid,float3 cell,float3 direction,int3 cellInt,inout ReparamEval reparam)
+{
+    //reparam.init();
+    // 当前 ray 在该 voxel 内的入口点，voxel-local [0,1]^3
+    float3 from = cell - cellInt;
+    int3 directions = int3(sign(direction));
+    float3 border = (directions + 1) / 2;
+    float3 t = (border - from) / direction;
+    float tMin = 2.0f;
+    if (direction.x != 0 && t.x < tMin)
+        tMin = t.x;
+    if (direction.y != 0 && t.y < tMin)
+        tMin = t.y;
+    if (direction.z != 0 && t.z < tMin)
+        tMin = t.z;
+    float3 to = from + tMin * direction;
+    float3 v = to - from;
+
+    // 正常椭球 clip，判断当前 segment 是否 hit 椭球
+    float2 inOut = ellipsoid.clip(from, to);
+    bool hitPrimitive = inOut.x >= 0;
+
+    // 构造 x_eval
+    float uEval = 0.0f;
+
+    if (hitPrimitive)
+    {
+        // hit 情况：用 chord midpoint。
+        // 当 ray 接近相切边界时，uIn ≈ uOut ≈ uEval。
+        uEval = 0.5f * (inOut.x + inOut.y);
+        uEval = clamp(uEval, 0.0f, 1.0f);
+    }
+    else
+    {
+        // miss 情况：用二次型在 segment 上的最近点
+        float3 q0 = from - ellipsoid.center;
+
+        float a = dot(v, mul(ellipsoid.B, v));
+        float b = 2.0f * dot(v, mul(ellipsoid.B, q0));
+
+        if (abs(a) > 1e-8f)
+        {
+            uEval = clamp(-b / (2.0f * a), 0.0f, 1.0f);
+        }
+        else
+        {
+            // segment 退化时兜底
+            uEval = 0.0f;
+        }
+    }
+
+    float3 xEvalLocal = from + uEval * v;
+    float3 xEval = float3(cellInt) + xEvalLocal; 
+
+    // 当前 candidate 的距离分数
+    float score = computeEllipsoidDistanceApprox(ellipsoid, xEvalLocal);
+
+    // 只有当前 candidate 更靠近边界时，才更新 reparam
+    if (score < reparam.score)
+    {
+        reparam.cellInt = cellInt;
+        reparam.xEval = xEval; 
+        reparam.score = score;
+    }
+
+    HitResult result = {
+        hitPrimitive,
+        cellInt,
+        cell + inOut.x * (to - from)
+    };
+
+    return result;
+}
+
 HitResult rayMarching_Mipmap(float3 from, float3 direction, bool ignoreFirst)
 {
     float3 cell = from;
@@ -174,7 +264,7 @@ HitResult rayMarching_Mipmap(float3 from, float3 direction, bool ignoreFirst)
     if (ignoreFirst)
         leave(cell, cellInt, directions, direction, reciprocal_direction);
 
-    while (true)
+    while (true) 
     {
         if (any(cellInt < int3(0)) || any(cellInt >= (int3)voxelCount))
             break;
@@ -420,9 +510,76 @@ float3 shadingGlobal(HitResult hit, float3 v, uint bounce, uint2 pixel,inout Uni
             }
         }
     }
+    if (enableReconstruction) {
+        uint bufferIndex = PixelToIndex(pixel, pixelCount);
+        gPathRecordBuffer[bufferIndex].pathContribution = float4(reflectLights[0], 0.0f);
+    }
+
     return reflectLights[0];
 
     return float3(0);
+}
+
+HitResult rayMarchingReparam(float3 from, float3 direction, bool ignoreFirst, inout ReparamEval reparam)
+{
+    float3 cell = from;
+    int3 cellInt = int3(floor(from));
+
+    float3 reciprocal_direction = 1.0f / direction;
+    // 可选的前进方向
+    int3 directions = int3(sign(direction));
+    if (ignoreFirst)
+        leave(cell, cellInt, directions, direction, reciprocal_direction);
+
+    while (true)
+    {
+        if (any(cellInt < int3(0)) || any(cellInt >= (int3)voxelCount))
+            break;
+
+        int3 blockInt = cellInt / BLOCK_TO_VOXEL;
+        if (isSolidBlock(blockInt))
+        {
+            int3 current = blockInt;
+            while (all(current == blockInt))
+            {
+                if (any(cellInt < int3(0)) || any(cellInt >= (int3)voxelCount))
+                    break;
+                // int offset;
+                if (isSolidVoxel(cellInt)) // 理论上不会出现面积为0的情况
+                {
+#if !CHECK_PRIMITIVE
+                    HitResult hit = { true, cellInt, cellInt + 0.5f };
+                    return hit;
+#else
+                    uint offset = CellToIndex(cellInt, gGridDataParamBlock.voxelCount);
+                    Ellipsoid ellipsoid = gGridDataParamBlock.gridDataBuffer[offset].ellipsoid;
+                    HitResult hit = checkPrimitiveWithReparam(ellipsoid, cell, direction, cellInt, reparam);
+                    if (hit.hit)
+                        return hit;
+#endif
+                }
+                leave(cell, cellInt, directions, direction, reciprocal_direction);
+                current = cellInt / BLOCK_TO_VOXEL;
+            }
+        }
+        else
+        {
+            leaveBlock(cell, cellInt, directions, direction, reciprocal_direction);
+        }
+    }
+    HitResult hit = { false, cellInt, cellInt + 0.5f };
+    return hit;
+}
+
+HitResult rayMarchingReparam(float3 from, float3 direction, float maxDistance, bool ignoreFirst, inout ReparamEval reparam)
+{
+    direction = normalizeSafe(direction);
+    if (all(direction == float3(0)))
+    {
+        HitResult hit = { false, int3(from), from };
+        return hit;
+    }
+    return rayMarchingReparam(from, direction,ignoreFirst, reparam);
 }
 
 PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
@@ -444,9 +601,27 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
     if (inOut.x < 0)
         return psOut;
 
+    ReparamEval primaryReparam;
+    primaryReparam.init();
+    primaryReparam.rayStart = from;
+
     UniformSampleGenerator sg = UniformSampleGenerator(pixel, frameIndex);
     from = from + (inOut.x + 1e-6) * delta;
-    HitResult hit = rayMarching(from, direction, -1, false);
+    HitResult hit;
+
+    if (enableReconstruction) {
+        hit = rayMarchingReparam(from, direction, -1,false,primaryReparam);
+
+        if (primaryReparam.cellInt.x >= 0) {
+            gPathRecordBuffer[bufferIndex].xCellInt = primaryReparam.cellInt;
+            gPathRecordBuffer[bufferIndex].xEval = float4(primaryReparam.xEval, primaryReparam.score);
+            gPathRecordBuffer[bufferIndex].rayStart = float4(primaryReparam.rayStart, 0.0f);
+        }
+
+    } else {
+        hit = rayMarching(from, direction, -1, false);
+    }
+    //HitResult hit = rayMarching(from, direction, -1, false);
 
 
     if (hit.hit) {
@@ -454,7 +629,7 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
         switch (drawMode)
         {
         case ABSDFDrawMode::Default:
-            color = shadingGlobal(hit, -direction, maxBounce, pixel,sg);
+            color = shadingGlobal(hit, -direction, maxBounce, pixel, sg);
             break;
         case ABSDFDrawMode::Occupancy:
             color = hit.cell;
@@ -463,6 +638,7 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
         //color = clamp(color, float3(0.0f), float3(1e4f)); 
         psOut.color = float4(color, 1);
     }
+
 
     return psOut;
 

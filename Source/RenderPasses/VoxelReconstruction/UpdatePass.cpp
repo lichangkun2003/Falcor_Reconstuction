@@ -63,6 +63,8 @@ void VoxelReconstruction::runUpdatePass(RenderContext* pRenderContext, const Ren
     cb["gLrNormal"] = mUpdatePass.mLrNormal;
     cb["gLrCoverageFunc"] = mUpdatePass.mLrCoverageFunc;
     cb["gLrVisibilityFunc"] = mUpdatePass.mLrVisibilityFunc;
+    cb["gLrCenter"] = mUpdatePass.mLrCenter;
+    cb["gLrB"] = mUpdatePass.mLrB;
 
     //mpPixelDebug->prepareProgram(mUpdatePass.mpComputePass->getProgram(), mUpdatePass.mpComputePass->getRootVar());
 
@@ -96,4 +98,12 @@ void VoxelReconstruction::renderUIUpdatePass(Gui::Widgets& widget)
     group.var("LR coverage func", mUpdatePass.mLrCoverageFunc, 0.0f, 1.0f, 1e-6f);
 
     group.var("LR visibility func", mUpdatePass.mLrVisibilityFunc, 0.0f, 1.0f, 1e-6f);
+
+    group.text("Geometry learning rates");
+
+    float mLrCenterScale = 0.0f; // 表示 5e-4
+    group.var("LR center scale", mLrCenterScale, 0.0f, 1.0f, 1e-6f);
+    mUpdatePass.mLrCenter = mLrCenterScale * 1e-4f;
+
+    group.var("LR B", mUpdatePass.mLrB, 0.0f, 1.0f, 1e-7f);
 }

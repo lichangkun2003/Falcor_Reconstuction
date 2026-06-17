@@ -8,6 +8,7 @@ BEGIN_NAMESPACE_FALCOR
 
 struct GradRecord
 {
+    // material
     float3 diffuse[LOBE_COUNT];
     float3 specular[LOBE_COUNT];
     float rough[LOBE_COUNT];
@@ -15,8 +16,7 @@ struct GradRecord
     float3 normal[LOBE_COUNT];
     SphericalFunc coverageFunc;
     SphericalFunc visibilityFunc;
-
-    uint valid;
+    uint valid; 
 
     // geometry gradient
     float3 center;
@@ -26,6 +26,7 @@ struct GradRecord
     float B01;
     float B02;
     float B12;
+    uint geometryValid;
 
 
     MUTATING
@@ -39,6 +40,7 @@ struct GradRecord
         B01 = 0.0f;
         B02 = 0.0f;
         B12 = 0.0f;
+        geometryValid = 0;
 
         coverageFunc.init();
         visibilityFunc.init();
