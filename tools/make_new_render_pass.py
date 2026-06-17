@@ -45,7 +45,7 @@ def create_project(name):
 
 
 def main():
-    success = create_project("VoxelReconstruction")
+    success = create_project("VoxelReconstructionNoLightTransport")
 
     return 0 if success else 1
 

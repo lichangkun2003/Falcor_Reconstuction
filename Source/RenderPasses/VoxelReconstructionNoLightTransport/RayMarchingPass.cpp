@@ -1,0 +1,118 @@
+/***************************************************************************
+ # Copyright (c) 2015-23, NVIDIA CORPORATION. All rights reserved.
+ #
+ # Redistribution and use in source and binary forms, with or without
+ # modification, are permitted provided that the following conditions
+ # are met:
+ #  * Redistributions of source code must retain the above copyright
+ #    notice, this list of conditions and the following disclaimer.
+ #  * Redistributions in binary form must reproduce the above copyright
+ #    notice, this list of conditions and the following disclaimer in the
+ #    documentation and/or other materials provided with the distribution.
+ #  * Neither the name of NVIDIA CORPORATION nor the names of its
+ #    contributors may be used to endorse or promote products derived
+ #    from this software without specific prior written permission.
+ #
+ # THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS "AS IS" AND ANY
+ # EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ # IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ # PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+ # CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ # EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ # PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ # PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ # OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ **************************************************************************/
+#include "VoxelReconstructionNoLightTransport.h"
+
+
+void VoxelReconstructionNoLightTransport::createRayMarchingPassResource(RenderContext* pRenderContext)
+{
+    mRayMarchingPass.init();
+
+    Sampler::Desc samplerDesc;
+    samplerDesc.setFilterMode(TextureFilteringMode::Point, TextureFilteringMode::Point, TextureFilteringMode::Point)
+        .setAddressingMode(TextureAddressingMode::Wrap, TextureAddressingMode::Wrap, TextureAddressingMode::Wrap);
+    mRayMarchingPass.mpPointSampler = mpDevice->createSampler(samplerDesc);
+
+    {
+        ProgramDesc desc;
+        desc.addShaderLibrary(RayMarchingShaderFilePath).psEntry("main");
+        desc.setShaderModel(ShaderModel::SM6_5);
+        desc.addTypeConformances(mpScene->getTypeConformances());
+        mRayMarchingPass.mpFullScreenPass = FullScreenPass::create(mpDevice, desc, mpScene->getSceneDefines());
+    }
+}
+
+
+void VoxelReconstructionNoLightTransport::rayMarchingPass(RenderContext* pRenderContext, const RenderData& renderData)
+{
+    pRenderContext->clearUAV(mpPathRecordBuffer->getUAV().get(), uint4(0));
+
+    RayMarchingPass& pass = mRayMarchingPass;
+
+
+    auto& dict = renderData.getDictionary();
+    if (pass.mOptionsChanged)
+    {
+        auto flags = dict.getValue(kRenderPassRefreshFlags, RenderPassRefreshFlags::None);
+        dict[Falcor::kRenderPassRefreshFlags] = flags | Falcor::RenderPassRefreshFlags::RenderOptionsChanged;
+        pass.mOptionsChanged = false;
+    }
+
+    ref<Camera> pCamera;
+    if (mEnableReconstruction)
+    {
+        pCamera = mReferenceCameras[mOptimizerParams.currentView];
+    }
+    else
+    {
+        pCamera = mpScene->getCamera();
+    }
+    ref<Texture> pOutputColor = renderData.getTexture(kOutputColor);
+    pRenderContext->clearRtv(pOutputColor->getRTV().get(), float4(0));
+
+
+    {
+        pass.mpFullScreenPass->addDefine("CHECK_PRIMITIVE", pass.mCheckPrimitive ? "1" : "0");
+
+
+        ref<EnvMap> pEnvMap = mpScene->getEnvMap();
+        pass.mpFullScreenPass->addDefine("USE_ENV_MAP", pEnvMap ? "1" : "0");
+
+        // 必须在addDefine之后获取var
+        auto var = pass.mpFullScreenPass->getRootVar();
+        mpScene->bindShaderData(var["gScene"]);
+
+        var["gGridDataParamBlock"] = mpGridBlock;
+        var["gPathRecordBuffer"] = mpPathRecordBuffer;
+
+        auto cb_GridData = var["GridData"];
+        cb_GridData["gridMin"] = mGridResources.gridData.gridMin;
+        cb_GridData["voxelSize"] = mGridResources.gridData.voxelSize;
+        cb_GridData["voxelCount"] = mGridResources.gridData.voxelCount;
+        cb_GridData["solidVoxelCount"] = (uint)mGridResources.gridData.solidVoxelCount;
+
+        auto cb = var["CB"];
+        cb["pixelCount"] = pass.mOutputResolution;
+        cb["blockCount"] = mGridResources.gridData.blockCount3D();
+        cb["invVP"] = math::inverse(pCamera->getViewProjMatrixNoJitter());
+        cb["shadowBias"] = pass.mShadowBias100 / 100 / mGridResources.gridData.voxelSize.x;
+        cb["drawMode"] = pass.mDrawMode;
+        //cb["maxBounce"] = pass.mMaxBounce;
+        cb["frameIndex"] = pass.mFrameIndex;
+        //cb["minPdf"] = params.mMinPdf100 / 100;
+        //cb["trasmittanceThreshold"] = pass.mTrasmittanceThreshold100 / 100;
+        //cb["selectedPixel"] = mSelectedPixel;
+        cb["renderBackGround"] = pass.mRenderBackGround;
+        cb["clearColor"] = float4(pass.mClearColor, 0);
+        cb["enableReconstruction"] = mEnableReconstruction;
+
+        ref<Fbo> fbo = Fbo::create(mpDevice);
+        fbo->attachColorTarget(pOutputColor, 0);
+        pass.mpFullScreenPass->execute(pRenderContext, fbo);
+    }
+
+}
