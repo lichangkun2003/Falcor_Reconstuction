@@ -1,6 +1,8 @@
 #pragma once
 #include "../HostDeviceShared.slang"
 
+
+
 BEGIN_NAMESPACE_FALCOR
 
 #define SQRTPI 1.7724538509055160273f

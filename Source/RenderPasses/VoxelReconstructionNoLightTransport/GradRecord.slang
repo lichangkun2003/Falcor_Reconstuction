@@ -42,7 +42,34 @@ struct GradRecord
 };
 
 #if !defined(HOST_CODE)
+bool isBadFloat(float x)
+{
+    return isnan(x) || isinf(x);
+}
 
+bool isBadFloat3(float3 x)
+{
+    return any(isnan(x)) || any(isinf(x));
+}
+
+float sanitizeFloat(float x)
+{
+    if (isBadFloat(x))
+        return 0.0f;
+    return x;
+}
+
+float3 sanitizeFloat3(float3 x)
+{
+    if (isBadFloat3(x))
+        return float3(0.0f);
+    return x;
+}
+
+float sigmoid(float x)
+{
+    return 1.0f / (1.0f + exp(-x));
+}
 
 #endif
 

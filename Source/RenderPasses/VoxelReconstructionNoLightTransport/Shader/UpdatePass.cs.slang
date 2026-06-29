@@ -17,29 +17,7 @@ cbuffer CB {
 }
 
 
-bool isBadFloat(float x)
-{
-    return isnan(x) || isinf(x);
-}
 
-bool isBadFloat3(float3 x)
-{
-    return any(isnan(x)) || any(isinf(x));
-}
-
-float sanitizeFloat(float x)
-{
-    if (isBadFloat(x))
-        return 0.0f;
-    return x;
-}
-
-float3 sanitizeFloat3(float3 x)
-{
-    if (isBadFloat3(x))
-        return float3(0.0f);
-    return x;
-}
 
 void updateEllipsoidCenter(inout Ellipsoid ellipsoid, float3 gradCenter, float lr)
 {
@@ -165,6 +143,8 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
 
     // Voexl Data : gGridDataParamBlock.gridDataBuffer[index]....
     VoxelData voxelData = gGridDataParamBlock.gridDataBuffer[index];
+    if (voxelData.occupied == 0)
+        return;
 
     // -------------------------
     // radiance SH update

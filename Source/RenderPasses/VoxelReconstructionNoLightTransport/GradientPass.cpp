@@ -65,6 +65,8 @@ void VoxelReconstructionNoLightTransport::runGradientPass(RenderContext* pRender
     auto cb = var["CB"];
     cb["gResolution"] = mRayMarchingPass.mOutputResolution;
     cb["gVoxelCount"] = mGridResources.gridData.voxelCount;
+    cb["gGeometryTau"] = mGradientPass.geometryTau;
+    cb["gGeometryGradClamp"] = mGradientPass.geometryGradClamp;
 
     mpPixelDebug->prepareProgram(mGradientPass.mpComputePass->getProgram(), mGradientPass.mpComputePass->getRootVar());
 

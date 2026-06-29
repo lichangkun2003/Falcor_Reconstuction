@@ -82,9 +82,11 @@ void VoxelReconstructionNoLightTransport::renderUIUpdatePass(Gui::Widgets& widge
 
     group.text("Geometry learning rates");
 
-    float mLrCenterScale = 0.0f; // 表示 5e-4
-    group.var("LR center scale", mLrCenterScale, 0.0f, 1.0f, 1e-6f);
-    mUpdatePass.mLrCenter = mLrCenterScale * 1e-4f;
+    
+    group.var("LR center scale(1000x)", mLrCenterScale, 0.0f, 1.0f, 1e-6f);
+    mUpdatePass.mLrCenter = mLrCenterScale * 1e-3f;
 
-    group.var("LR B", mUpdatePass.mLrB, 0.0f, 1.0f, 1e-7f);
+    group.var("LR B scale(10000x)", mLrBScale, 0.0f, 1.0f, 1e-7f);
+    mUpdatePass.mLrB = mLrBScale * 1e-4f;
+    
 }

@@ -71,6 +71,8 @@ float3 getWorldUpperHemisphereLobeCenter(uint lobeId, uint lobeCount)
 }
 
 
+
+
 [numthreads(8, 8, 1)]
 void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
     uint index = CellToIndex(dispatchThreadId, gGridDataParamBlock.voxelCount);
@@ -84,7 +86,7 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
         setSolidVoxel(cellInt);
 
         VoxelData data = gGridDataParamBlock.gridDataBuffer[index];
-        data.init();
+        //data.init();
 
         data.ellipsoid = pBuffer[offset];
 

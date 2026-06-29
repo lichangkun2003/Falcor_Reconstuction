@@ -35,10 +35,10 @@ std::string VoxelReconstructionNoLightTransport::getOptimizedParamTag() const
         tags.push_back("radiance");
 
     if (mUpdatePass.mLrCenter > 0.0f)
-        tags.push_back("specular");
+        tags.push_back("center");
 
     if (mUpdatePass.mLrB > 0.0f)
-        tags.push_back("rough");
+        tags.push_back("B");
 
 
     if (tags.empty())

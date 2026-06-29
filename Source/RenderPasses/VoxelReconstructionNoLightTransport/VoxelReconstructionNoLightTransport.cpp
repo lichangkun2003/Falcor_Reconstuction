@@ -212,6 +212,11 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
     {
         requestRecompile();
     }
+
+
+    widget.var("Geometry Tau", mGradientPass.geometryTau, 0.0f, 0.2f, 1e-4f);
+    widget.var("Geometry Grad Clamp", mGradientPass.geometryTau, 0.0f, 10.0f, 1e-4f);
+
     widget.slider("Camera Index", testIndex, 0u, mOptimizerParams.viewsPerIteration - 1u);
     widget.checkbox("Init Voxel Data", mInitVoxelData);
 
@@ -413,8 +418,8 @@ void VoxelReconstructionNoLightTransport::setupGridResouce(RenderContext* pRende
 
 void VoxelReconstructionNoLightTransport::proccessXuData(RenderContext* pRenderContext, const RenderData& renderData)
 {
-    pRenderContext->clearUAV(mGridResources.gridDataBuffer->getUAV().get(), uint4(0));
-    pRenderContext->clearUAV(mGridResources.blockOM->getUAV().get(), uint4(0));
+    //pRenderContext->clearUAV(mGridResources.gridDataBuffer->getUAV().get(), uint4(0));
+    //pRenderContext->clearUAV(mGridResources.blockOM->getUAV().get(), uint4(0));
 
     auto var = mpProcessXuDataPass->getRootVar();
     var[kVBuffer] = renderData.getTexture(kVBuffer);

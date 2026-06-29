@@ -18,7 +18,9 @@ RWTexture2D<float4> dummy;
 cbuffer CB {
     uint2 gResolution;
     uint3 gVoxelCount;
-    //float trasmittanceThreshold;
+    float gGeometryTau;         // soft-hit sigmoid 温度，越小越接近 hard hit
+    float gGeometryGradClamp;   // 防止几何梯度爆炸
+
 }
 
 #define INTERLOCKED_ADD_FLOAT(DEST, VALUE)                                                                             \
@@ -42,12 +44,10 @@ cbuffer CB {
     }
 
 // theta Gradient
-// theta Gradient
-void calc_dL_dTheta(PathRecord rec,float3 dL_dC,out GradRecord radianceGradRecord,out GradRecord geometryGradRecord)
+void calcRadianceGrad(PathRecord rec,float3 dL_dC,out GradRecord radianceGradRecord)
 {
     radianceGradRecord.init();
-    geometryGradRecord.init();
-
+    
     if (rec.valid == 0)
         return;
 
@@ -56,7 +56,7 @@ void calc_dL_dTheta(PathRecord rec,float3 dL_dC,out GradRecord radianceGradRecor
     if (all(viewDir == float3(0.0f)))
         return;
 
-    // 当前只计算 radiance SH 的梯度
+    // 计算 radiance SH 的梯度
     radianceGradRecord.radianceValid = 1;
 
     for (uint i = 0; i < SH_COUNT; i++)
@@ -68,8 +68,6 @@ void calc_dL_dTheta(PathRecord rec,float3 dL_dC,out GradRecord radianceGradRecor
         radianceGradRecord.radianceGrad.coefficients[i] = dL_dC * Y;
     }
 
-    // geometry 暂时不算
-    geometryGradRecord.geometryValid = 0;
 }
 
 void accumulateRadianceGradRecord(uint indexGradBuffer, GradRecord gradRecord)
@@ -94,6 +92,92 @@ void accumulateRadianceGradRecord(uint indexGradBuffer, GradRecord gradRecord)
         );
     }
 }
+
+void calcGeometryGradFromCandidate(
+    GeometryCandidateRecord cand,
+    float3 dL_dC,
+    out GradRecord geometryGradRecord)
+{
+    geometryGradRecord.init();
+
+    if (cand.valid == 0)
+        return;
+
+    if (any(cand.cellInt < int3(0)) || any(cand.cellInt >= int3(gVoxelCount)))
+        return;
+
+    uint voxelIndex = CellToIndex(uint3(cand.cellInt), gVoxelCount);
+
+    VoxelData voxel = gGridDataParamBlock.gridDataBuffer[voxelIndex];
+
+    if (voxel.occupied == 0)
+        return;
+
+    float tau = max(gGeometryTau, 1e-5f);
+
+    float gmin = cand.gmin;
+
+    if (isBadFloat(gmin))
+        return;
+
+    float w = sigmoid(-gmin / tau);
+
+    float3 LCandidate = cand.radiance.xyz;
+    float3 CBehind = cand.behindColor.xyz;
+
+    LCandidate = sanitizeFloat3(LCandidate);
+    CBehind = sanitizeFloat3(CBehind);
+
+    // dLoss / dw
+    float dL_dW = dot(dL_dC, LCandidate - CBehind);
+
+    // dw / dgmin
+    float dW_dG = -w * (1.0f - w) / tau;
+
+    float dL_dG = dL_dW * dW_dG;
+
+    dL_dG = sanitizeFloat(dL_dG);
+
+    // 防止几何梯度爆炸
+    dL_dG = clamp(dL_dG, -gGeometryGradClamp, gGeometryGradClamp);
+
+    Ellipsoid e = voxel.ellipsoid;
+
+    // xStar 是 global cell-space，转 voxel local
+    float3 xLocal = cand.xStar.xyz - float3(cand.cellInt);
+
+    float3 q = xLocal - e.center;
+
+    q = sanitizeFloat3(q);
+
+    float3 Bq = mul(e.B, q);
+
+    Bq = sanitizeFloat3(Bq);
+
+    geometryGradRecord.geometryValid = 1;
+
+    // dF / dCenter = -2 B q
+    geometryGradRecord.center = dL_dG * (-2.0f * Bq);
+
+    // dF / dB
+    geometryGradRecord.B00 = dL_dG * q.x * q.x;
+    geometryGradRecord.B11 = dL_dG * q.y * q.y;
+    geometryGradRecord.B22 = dL_dG * q.z * q.z;
+
+    // B is symmetric, off-diagonal appears twice
+    geometryGradRecord.B01 = dL_dG * 2.0f * q.x * q.y;
+    geometryGradRecord.B02 = dL_dG * 2.0f * q.x * q.z;
+    geometryGradRecord.B12 = dL_dG * 2.0f * q.y * q.z;
+
+    geometryGradRecord.center = sanitizeFloat3(geometryGradRecord.center);
+    geometryGradRecord.B00 = sanitizeFloat(geometryGradRecord.B00);
+    geometryGradRecord.B11 = sanitizeFloat(geometryGradRecord.B11);
+    geometryGradRecord.B22 = sanitizeFloat(geometryGradRecord.B22);
+    geometryGradRecord.B01 = sanitizeFloat(geometryGradRecord.B01);
+    geometryGradRecord.B02 = sanitizeFloat(geometryGradRecord.B02);
+    geometryGradRecord.B12 = sanitizeFloat(geometryGradRecord.B12);
+}
+
 
 void accumulateGeometryGradRecord(uint indexGradBuffer, GradRecord gradRecord)
 {
@@ -151,25 +235,58 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
 
     PathRecord rec = gPathRecordBuffer[indexPathRecordBuffer];
 
-    if (rec.valid == 0)
+    if (rec.valid == 0 && rec.candidateCount == 0)
         return;
 
     float3 dL_dC = gDL_dColorBuffer.Load(int3(pixel, 0)).rgb;
+    if (all(dL_dC == float3(0.0f)))
+        return;
 
-    GradRecord radianceGradRecord;
-    GradRecord geometryGradRecord;
-    calc_dL_dTheta(rec, dL_dC, radianceGradRecord, geometryGradRecord);
-    uint radianceIndexGradBuffer = CellToIndex(rec.hitCellInt, gVoxelCount);
-    accumulateRadianceGradRecord(radianceIndexGradBuffer, radianceGradRecord);
+    // -------------------------
+    // 1. Radiance gradient
+    // only hard hit
+    // -------------------------
+    if (rec.valid != 0)
+    {
+        if (all(rec.hitCellInt >= int3(0)) && all(rec.hitCellInt < int3(gVoxelCount)))
+        {
+            GradRecord radianceGradRecord;
+            calcRadianceGrad(rec, dL_dC, radianceGradRecord);
 
-    // geormetry
-    if (geometryGradRecord.geometryValid != 0 && all(rec.xCellInt >= int3(0))){
-        uint xIndex = CellToIndex(rec.xCellInt, gVoxelCount);
-        accumulateGeometryGradRecord(xIndex, geometryGradRecord);
+            if (radianceGradRecord.radianceValid != 0)
+            {
+                uint radianceIndexGradBuffer = CellToIndex(uint3(rec.hitCellInt), gVoxelCount);
+                accumulateRadianceGradRecord(radianceIndexGradBuffer, radianceGradRecord);
+            }
+        }
     }
-    
 
-    //dummy[pixel] = float4(materialGradRecord.diffuse[0],1.0f);
+    // -------------------------
+    // 2. Geometry gradient
+    // all candidates
+    // -------------------------
+    for (uint i = 0; i < rec.candidateCount && i < MAX_CANDIDATES; i++)
+    {
+        GeometryCandidateRecord cand = rec.candidates[i];
+
+        if (cand.valid == 0)
+            continue;
+
+        if (any(cand.cellInt < int3(0)) || any(cand.cellInt >= int3(gVoxelCount)))
+            continue;
+
+        GradRecord geometryGradRecord;
+        calcGeometryGradFromCandidate(cand, dL_dC, geometryGradRecord);
+
+        if (geometryGradRecord.geometryValid == 0)
+            continue;
+
+        uint geometryIndexGradBuffer = CellToIndex(uint3(cand.cellInt), gVoxelCount);
+
+        accumulateGeometryGradRecord(geometryIndexGradBuffer, geometryGradRecord);
+    }
+
+    dummy[pixel] = float4(abs(dL_dC), 1.0f);
 }
 
 

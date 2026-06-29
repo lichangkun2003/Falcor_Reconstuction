@@ -183,10 +183,15 @@ public:
     {
         ref<ComputePass> mpComputePass;
         ref<Buffer> gradBuffer;
+        float geometryGradClamp;
+        float geometryTau;
+
         void init()
         {
             gradBuffer = nullptr;
             mpComputePass = nullptr;
+            geometryTau = 0.05f;
+            geometryGradClamp = 5.0f;
         }
     };
 
@@ -293,6 +298,8 @@ private:
     bool mSaveReconstructionRequested = false;
     bool mLoadReconstructionRequested = false;
     bool mReconstructionFileListDirty = true;
+    float mLrCenterScale = 0.0f; 
+    float mLrBScale = 0.0f; 
     std::vector<std::filesystem::path> mReconstructionFilePaths;
     uint32_t mSelectedReconstructionFile = 0;
     std::string mReconstructionNameTag = "";
