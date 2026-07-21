@@ -2,8 +2,10 @@
 #include "../PathRecord.slang"
 //#include "../Voxel/Shading.slang"
 #include "../Voxel/VoxelGrid.slang"
+#include "DiffShading.slang"
 
 import Utils.Debug.PixelDebug;
+import DiffRendering.SceneGradientInfo;
 
 
 // Input
@@ -43,55 +45,6 @@ cbuffer CB {
         }                                                                                                              \
     }
 
-// theta Gradient
-void calcRadianceGrad(PathRecord rec,float3 dL_dC,out GradRecord radianceGradRecord)
-{
-    radianceGradRecord.init();
-    
-    if (rec.valid == 0)
-        return;
-
-    float3 viewDir = normalizeSafe(rec.viewDir.xyz);
-
-    if (all(viewDir == float3(0.0f)))
-        return;
-
-    // 计算 radiance SH 的梯度
-    radianceGradRecord.radianceValid = 1;
-
-    for (uint i = 0; i < SH_COUNT; i++)
-    {
-        float Y = calcSH(i, viewDir);
-
-        // C = sum_i coeff_i * Y_i(viewDir)
-        // dL / d coeff_i = dL / dC * Y_i(viewDir)
-        radianceGradRecord.radianceGrad.coefficients[i] = dL_dC * Y;
-    }
-
-}
-
-void accumulateRadianceGradRecord(uint indexGradBuffer, GradRecord gradRecord)
-{
-    InterlockedAdd(gGradBuffer[indexGradBuffer].radianceValid, gradRecord.radianceValid);
-
-    for (uint i = 0; i < SH_COUNT; i++)
-    {
-        INTERLOCKED_ADD_FLOAT(
-            gGradBuffer[indexGradBuffer].radianceGrad.coefficients[i].x,
-                              gradRecord.radianceGrad.coefficients[i].x
-        );
-
-        INTERLOCKED_ADD_FLOAT(
-            gGradBuffer[indexGradBuffer].radianceGrad.coefficients[i].y,
-                              gradRecord.radianceGrad.coefficients[i].y
-        );
-
-        INTERLOCKED_ADD_FLOAT(
-            gGradBuffer[indexGradBuffer].radianceGrad.coefficients[i].z,
-                              gradRecord.radianceGrad.coefficients[i].z
-        );
-    }
-}
 
 void calcGeometryGradFromCandidate(
     GeometryCandidateRecord cand,
@@ -248,17 +201,18 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
     // -------------------------
     if (rec.valid != 0)
     {
-        if (all(rec.hitCellInt >= int3(0)) && all(rec.hitCellInt < int3(gVoxelCount)))
-        {
-            GradRecord radianceGradRecord;
-            calcRadianceGrad(rec, dL_dC, radianceGradRecord);
+        SceneGradientInfo gradInfo = SceneGradientInfo(
+        SceneGradientFlag.make(GradientMode.Scene),
+            pixel,
+            indexPathRecordBuffer
+        );
 
-            if (radianceGradRecord.radianceValid != 0)
-            {
-                uint radianceIndexGradBuffer = CellToIndex(uint3(rec.hitCellInt), gVoxelCount);
-                accumulateRadianceGradRecord(radianceIndexGradBuffer, radianceGradRecord);
-            }
-        }
+        SceneGradientInfo.Differential dGradInfo;
+        dGradInfo.flag = SceneGradientFlag.make(GradientMode.Scene);
+
+        DifferentialPair<SceneGradientInfo> dpGradInfo = diffPair(gradInfo,dGradInfo);
+
+        bwd_diff(evalPixelColorFromPathAD)(dpGradInfo,rec.hitCellInt,rec.viewDir,gVoxelCount,dL_dC);
     }
 
     // -------------------------
@@ -285,6 +239,16 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
 
         accumulateGeometryGradRecord(geometryIndexGradBuffer, geometryGradRecord);
     }
+
+    GeometryCandidateRecord cand = rec.candidates[0];
+    uint indexGradBuffer = CellToIndex(uint3(cand.cellInt), gVoxelCount);
+    print("grad B00 :", gGradBuffer[indexGradBuffer].B00);
+    print("grad B11 :", gGradBuffer[indexGradBuffer].B11);
+    print("grad B22 :", gGradBuffer[indexGradBuffer].B22);
+    print("grad B01 :", gGradBuffer[indexGradBuffer].B01);
+    print("grad B02 :", gGradBuffer[indexGradBuffer].B02);
+    print("grad B12 :", gGradBuffer[indexGradBuffer].B12);
+
 
     dummy[pixel] = float4(abs(dL_dC), 1.0f);
 }

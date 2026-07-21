@@ -37,6 +37,9 @@ target_sources(VoxelReconstructionNoLightTransport PRIVATE
     Shader/ReduceBufferPass.cs.slang
     Shader/GradientPass.cs.slang
     Shader/UpdatePass.cs.slang
+    Shader/DiffVoxelIO.slang
+    Shader/DiffTools.slang
+    Shader/DiffShading.slang
 
     PathRecord.slang
     GradRecord.slang

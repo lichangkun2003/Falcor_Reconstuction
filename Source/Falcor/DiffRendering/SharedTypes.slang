@@ -56,16 +56,21 @@ enum class GradientType : uint32_t
     MeshPosition,
     MeshNormal,
     MeshTangent,
+
+    VoxelSH,
+
     Count,
 };
 
 FALCOR_ENUM_INFO(
     GradientType,
     {
-        { GradientType::Material, "Material" },
-        { GradientType::MeshPosition, "MeshPosition" },
-        { GradientType::MeshNormal, "MeshNormal" },
-        { GradientType::MeshTangent, "MeshTangent" },
+    { GradientType::Material, "Material" },
+    { GradientType::MeshPosition, "MeshPosition" },
+    { GradientType::MeshNormal, "MeshNormal" },
+    { GradientType::MeshTangent, "MeshTangent" },
+
+    { GradientType::VoxelSH, "VoxelSH" },
     }
 );
 FALCOR_ENUM_REGISTER(GradientType);

@@ -39,7 +39,8 @@ VoxelReconstructionNoLightTransport::VoxelReconstructionNoLightTransport(ref<Dev
 
     // Initial Data
     {
-        mGridResources.gridData.solidVoxelCount = GRID_RESOLUTION == 128 ? 92562 : 545771;
+        //mGridResources.gridData.solidVoxelCount = 92562;    //128
+        mGridResources.gridData.solidVoxelCount = 545771;   //256
     }
 
     // Create Grid pass
@@ -300,7 +301,19 @@ void VoxelReconstructionNoLightTransport::setScene(RenderContext* pRenderContext
     UpdateVoxelGrid(mpScene, mVoxelResolution);
     setupGridResouce(pRenderContext, true);
 
-    //// RayMarching
+
+
+    // Auto Diff
+    mVoxelSHGradDim = mGridResources.gridData.totalVoxelCount() * SH_COUNT * 3;
+    std::vector<SceneGradients::GradConfig> gradConfigs;
+    gradConfigs.push_back(SceneGradients::GradConfig(
+        GradientType::VoxelSH,
+        mVoxelSHGradDim,
+        1 // hashSize，第一版建议先用 1
+    ));
+    mpSceneGradients = make_ref<SceneGradients>(mpDevice, gradConfigs, GradientAggregateMode::Direct);
+
+    // RayMarching
     createRayMarchingPassResource(pRenderContext);
 
     // Loss Pass
@@ -431,6 +444,7 @@ void VoxelReconstructionNoLightTransport::proccessXuData(RenderContext* pRenderC
     auto cb = var["GridData"];
     cb["gLrCenter"] = mUpdatePass.mLrCenter;
     cb["gLrB"] = mUpdatePass.mLrB;
+    cb["gLrRadiance"] = mUpdatePass.mLrRadiance;
 
     ShaderVar gridBlock = mpGridBlock->getRootVar();
     gridBlock["blockOM"] = renderData.getTexture(kBlockMap);
@@ -459,4 +473,11 @@ void VoxelReconstructionNoLightTransport::stopReconstruction()
     mOptimizerParams.isRunning = false;
     mOptimizerParams.currentIteration = 0;
     mOptimizerParams.currentView = 0;
+}
+
+bool VoxelReconstructionNoLightTransport::onMouseEvent(const MouseEvent& mouseEvent) 
+{
+    bool ret = mpPixelDebug->onMouseEvent(mouseEvent);
+
+    return ret;
 }

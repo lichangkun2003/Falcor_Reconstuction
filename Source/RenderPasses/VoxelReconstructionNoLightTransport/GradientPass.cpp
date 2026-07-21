@@ -36,6 +36,7 @@ void VoxelReconstructionNoLightTransport::createGradientPassResource(RenderConte
         desc.addShaderLibrary(GradientPassShaderFilePath).csEntry("main");
         //desc.setShaderModel(Falcor::ShaderModel::SM6_7);
         DefineList defines;
+        defines.add("DIFF_MODE", "1");
         mGradientPass.mpComputePass = ComputePass::create(mpDevice, desc, defines, true);
     }
 
@@ -45,15 +46,20 @@ void VoxelReconstructionNoLightTransport::createGradientPassResource(RenderConte
     );
 
 }
+
 void VoxelReconstructionNoLightTransport::runGradientPass(RenderContext* pRenderContext, const RenderData& renderData)
 {
     pRenderContext->clearUAV(mGradientPass.gradBuffer->getUAV().get(), uint4(0));
     pRenderContext->uavBarrier(mpPathRecordBuffer.get());
 
+    mpSceneGradients->clearGrads(pRenderContext, GradientType::VoxelSH);
+
     //mGradientPass.mpComputePass->addDefine("CHECK_VISIBILITY", mRayMarchingPass.mCheckVisibility ? "1" : "0");
     //mGradientPass.mpComputePass->addDefine("CHECK_COVERAGE", mRayMarchingPass.mCheckCoverage ? "1" : "0");
 
     auto var = mGradientPass.mpComputePass->getRootVar();
+
+    mpSceneGradients->bindShaderData(var["gSceneGradients"]);
 
     var["gGridDataParamBlock"] = mpGridBlock;
     var["gDL_dColorBuffer"] = mLossPass.dL_dColor;
@@ -75,4 +81,7 @@ void VoxelReconstructionNoLightTransport::runGradientPass(RenderContext* pRender
     );
 
     pRenderContext->uavBarrier(mGradientPass.gradBuffer.get());
+
+    mpSceneGradients->aggregateGrads(pRenderContext, GradientType::VoxelSH);
+
 }

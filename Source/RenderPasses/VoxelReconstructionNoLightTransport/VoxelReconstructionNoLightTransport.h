@@ -36,6 +36,8 @@
 #include <filesystem>
 #include <iomanip>
 #include <sstream>
+#include "DiffRendering/SceneGradients.h"
+
 
 #include "Defines.h"
 #include "Voxel/VoxelData.slang"
@@ -87,7 +89,7 @@ public:
     virtual void execute(RenderContext* pRenderContext, const RenderData& renderData) override;
     virtual void renderUI(Gui::Widgets& widget) override;
     virtual void setScene(RenderContext* pRenderContext, const ref<Scene>& pScene) override;
-    virtual bool onMouseEvent(const MouseEvent& mouseEvent) override { return false; }
+    virtual bool onMouseEvent(const MouseEvent& mouseEvent) override;
     virtual bool onKeyEvent(const KeyboardEvent& keyEvent) override { return false; }
 
     void beginFrame(RenderContext* pRenderContext, bool forceReset = false);
@@ -289,6 +291,9 @@ private:
     std::vector<ref<Camera>> mReferenceCameras;
     ref<Buffer> mpPathRecordBuffer;
 
+    // Auto Diff
+    ref<SceneGradients> mpSceneGradients;
+    uint32_t mVoxelSHGradDim = 0;
 
     // UI
     bool mOptionsChanged = false;

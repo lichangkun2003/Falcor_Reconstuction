@@ -12,6 +12,7 @@ cbuffer GridData {
 
     float gLrCenter;
     float gLrB;
+    float gLrRadiance;
 }
 
 bool isSolidVoxelXu(int3 cellInt, out int offset)
@@ -90,6 +91,9 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
 
         data.ellipsoid = pBuffer[offset];
 
+        if (gLrRadiance > 0.0f) {
+            data.radiance.init();
+        }
        
         // -------------------------
         // geometry init
@@ -99,9 +103,7 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
             data.ellipsoid.center = float3(0.5f, 0.5f, 0.5f);
         }
 
-        // 如果开启 B 优化，可以把 B 初始化成一个稳定的球。
         // phi = (x-c)^T B (x-c) - 1
-        // 若半径 r = 0.35，则 B = I / r^2。
         if (gLrB > 0.0f)
         {
             float r = 0.35f;

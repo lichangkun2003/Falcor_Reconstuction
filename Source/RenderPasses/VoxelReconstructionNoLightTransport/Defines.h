@@ -12,5 +12,6 @@
 
 
 #define LOBE_COUNT 4
+#define SH_COUNT 16
 
 #define MAX_CANDIDATES 4

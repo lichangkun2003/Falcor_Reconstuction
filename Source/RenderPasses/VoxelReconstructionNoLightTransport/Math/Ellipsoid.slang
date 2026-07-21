@@ -443,4 +443,84 @@ struct Ellipsoid
 #endif
 };
 
+#if !defined(HOST_CODE)
+bool cholesky3x3SPD(float3x3 B, out float3x3 L)
+{
+    L = float3x3(0.0f);
+
+    float a = B[0][0];
+    float b = B[1][1];
+    float c = B[2][2];
+
+    float d = B[0][1];
+    float e = B[0][2];
+    float f = B[1][2];
+
+    float eps = 1e-6f;
+
+    if (a <= eps)
+        return false;
+
+    float l00 = sqrt(max(a, eps));
+
+    float l10 = d / l00;
+    float l20 = e / l00;
+
+    float s11 = b - l10 * l10;
+    if (s11 <= eps)
+        return false;
+
+    float l11 = sqrt(max(s11, eps));
+
+    float l21 = (f - l20 * l10) / l11;
+
+    float s22 = c - l20 * l20 - l21 * l21;
+    if (s22 <= eps)
+        return false;
+
+    float l22 = sqrt(max(s22, eps));
+
+    L[0][0] = l00;
+    L[0][1] = 0.0f;
+    L[0][2] = 0.0f;
+
+    L[1][0] = l10;
+    L[1][1] = l11;
+    L[1][2] = 0.0f;
+
+    L[2][0] = l20;
+    L[2][1] = l21;
+    L[2][2] = l22;
+
+    return true;
+}
+
+float3x3 buildBFromCholesky(float3x3 L)
+{
+    float3x3 B;
+
+    B[0][0] = L[0][0] * L[0][0];
+
+    B[0][1] = L[0][0] * L[1][0];
+    B[1][0] = B[0][1];
+
+    B[0][2] = L[0][0] * L[2][0];
+    B[2][0] = B[0][2];
+
+    B[1][1] = L[1][0] * L[1][0] + L[1][1] * L[1][1];
+
+    B[1][2] = L[1][0] * L[2][0] + L[1][1] * L[2][1];
+    B[2][1] = B[1][2];
+
+    B[2][2] =
+        L[2][0] * L[2][0] +
+        L[2][1] * L[2][1] +
+        L[2][2] * L[2][2];
+
+    return B;
+}
+
+
+#endif
+
 END_NAMESPACE_FALCOR

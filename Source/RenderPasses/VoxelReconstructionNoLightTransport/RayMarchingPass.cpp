@@ -82,9 +82,13 @@ void VoxelReconstructionNoLightTransport::rayMarchingPass(RenderContext* pRender
         ref<EnvMap> pEnvMap = mpScene->getEnvMap();
         pass.mpFullScreenPass->addDefine("USE_ENV_MAP", pEnvMap ? "1" : "0");
 
+        pass.mpFullScreenPass->addDefine("DIFF_MODE", "1");
+
         // 必须在addDefine之后获取var
         auto var = pass.mpFullScreenPass->getRootVar();
         mpScene->bindShaderData(var["gScene"]);
+
+        //mpSceneGradients->bindShaderData(var["gSceneGradients"]);
 
         var["gGridDataParamBlock"] = mpGridBlock;
         var["gPathRecordBuffer"] = mpPathRecordBuffer;

@@ -4,11 +4,16 @@ import Utils.Math.MathHelpers;
 import Scene.SceneTypes;
 import Scene.Scene;
 
+
+#include "DiffShading.slang"
+
 #include "../Math/AABB.slang"
 #include "../Math/Random.slang"
 //#include "../Voxel/Shading.slang"
 #include "../Voxel/VoxelGrid.slang"
 #include "../PathRecord.slang"
+
+
 
 cbuffer GridData
 {
@@ -299,17 +304,17 @@ HitResult rayMarching_Mipmap(float3 from, float3 direction, bool ignoreFirst)
                 //int offset;
                 if (isSolidVoxel(cellInt)) // 理论上不会出现面积为0的情况
                 {
-#if !CHECK_PRIMITIVE
+    #if !CHECK_PRIMITIVE
                     HitResult hit = { true, cellInt, cellInt + 0.5f };
                     return hit;
-#else
+    #else
                     uint offset = CellToIndex(cellInt, gGridDataParamBlock.voxelCount);
                     Ellipsoid ellipsoid = gGridDataParamBlock.gridDataBuffer[offset].ellipsoid;
                     HitResult hit = checkPrimitive(ellipsoid, cell, direction, cellInt);
                     //HitResult hit = checkPrimitive(gGridDataParamBlock.gridDataBuffer[offset].densityPrimitive, cell, direction, cellInt);
                     if (hit.hit)
                         return hit;
-#endif
+    #endif
                 }
                 leave(cell, cellInt, directions, direction, reciprocal_direction);
                 current = cellInt / BLOCK_TO_VOXEL;
@@ -356,17 +361,17 @@ HitResult rayMarching_Mipmap(float3 from, float3 direction, float maxDistance, b
                 //int offset;
                 if (isSolidVoxel(cellInt)) // 理论上不会出现面积为0的情况
                 {
-#if !CHECK_PRIMITIVE
+    #if !CHECK_PRIMITIVE
                     HitResult hit = { true, cellInt, cellInt + 0.5f };
                     return hit;
-#else
+    #else
                     uint offset = CellToIndex(cellInt, gGridDataParamBlock.voxelCount);
                     Ellipsoid ellipsoid = gGridDataParamBlock.gridDataBuffer[offset].ellipsoid;
                     HitResult hit = checkPrimitive(ellipsoid, cell, direction, cellInt);
                     //HitResult hit = checkPrimitive(gGridDataParamBlock.gridDataBuffer[offset].densityPrimitive, cell, direction, cellInt);
                     if (hit.hit)
                         return hit;
-#endif
+    #endif
                 }
                 distance += leave(cell, cellInt, directions, direction, reciprocal_direction);
                 current = cellInt / BLOCK_TO_VOXEL;
@@ -445,11 +450,11 @@ RayMarchResult rayMarchingCollectCandidates_Mipmap(float3 from, float3 direction
 
                     insertCandidateTopK(result, cand);
 
-#if !CHECK_PRIMITIVE
+    #if !CHECK_PRIMITIVE
                     HitResult hit = { true, cellInt, float3(cellInt) + 0.5f };
                     result.hit = hit;
                     return result;
-#else
+    #else
                     uint offset = CellToIndex(uint3(cellInt), gGridDataParamBlock.voxelCount);
 
                     Ellipsoid ellipsoid = gGridDataParamBlock.gridDataBuffer[offset].ellipsoid;
@@ -461,7 +466,7 @@ RayMarchResult rayMarchingCollectCandidates_Mipmap(float3 from, float3 direction
                         result.hit = hit;
                         return result;
                     }
-#endif
+    #endif
                 }
 
                 leave(cell, cellInt, directions, direction, reciprocal_direction);
@@ -502,6 +507,8 @@ float3 shadeHitOnly(HitResult hit, float3 viewDir)
     return voxel.radiance.calc(viewDir);
 }
 
+
+
 float3 computeNextColorAfterCurrentVoxel(HitResult hit, float3 direction)
 {
     float3 cell = hit.cell;
@@ -530,7 +537,20 @@ float3 computeNextColorAfterCurrentVoxel(HitResult hit, float3 direction)
 
 float3 shadingGlobal(HitResult hit, float3 v, uint bounce, uint2 pixel,inout UniformSampleGenerator sg)
 {
-    return shadeHitOnly(hit, normalizeSafe(v));
+    uint indexPathRecordBuffer = pixel.y * pixelCount.x + pixel.x;
+    SceneGradientInfo gradInfo = SceneGradientInfo(
+        SceneGradientFlag.make(GradientMode.None),
+            pixel,
+            indexPathRecordBuffer
+        );
+
+    SceneGradientInfo.Differential dGradInfo;
+    dGradInfo.flag = SceneGradientFlag.make(GradientMode.None);
+
+    DifferentialPair<SceneGradientInfo> dpGradInfo = diffPair(gradInfo, dGradInfo);
+    return evalPixelColorFromPathAD(gradInfo, hit.cellInt, float4(v, 0.0f), gGridDataParamBlock.voxelCount);
+
+    //return shadeHitOnly(hit, normalizeSafe(v));
 }
 
 void recordPath(

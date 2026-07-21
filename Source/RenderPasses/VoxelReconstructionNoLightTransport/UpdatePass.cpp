@@ -52,12 +52,15 @@ void VoxelReconstructionNoLightTransport::runUpdatePass(RenderContext* pRenderCo
     var["gGridDataParamBlock"] = mpGridBlock;
     var["gGradBuffer"] = mGradientPass.gradBuffer;
 
+    var["gVoxelSHGrads"] = mpSceneGradients->getGradsBuffer(GradientType::VoxelSH);
+
     auto cb = var["CB"];
     cb["gUseGradCountNormalize"] = mUpdatePass.mUseGradCountNormalize;
     cb["gGradScale"] = mUpdatePass.mGradScale;
     cb["gLrRadiance"] = mUpdatePass.mLrRadiance;
     cb["gLrCenter"] = mUpdatePass.mLrCenter;
     cb["gLrB"] = mUpdatePass.mLrB;
+    cb["gVoxelSHGradDim"] = mVoxelSHGradDim;
 
     //mpPixelDebug->prepareProgram(mUpdatePass.mpComputePass->getProgram(), mUpdatePass.mpComputePass->getRootVar());
 
@@ -87,6 +90,6 @@ void VoxelReconstructionNoLightTransport::renderUIUpdatePass(Gui::Widgets& widge
     mUpdatePass.mLrCenter = mLrCenterScale * 1e-3f;
 
     group.var("LR B scale(10000x)", mLrBScale, 0.0f, 1.0f, 1e-7f);
-    mUpdatePass.mLrB = mLrBScale * 1e-4f;
+    mUpdatePass.mLrB = mLrBScale * 1e-1f;
     
 }
