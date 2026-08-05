@@ -240,12 +240,15 @@ GeometryCandidateRecord makeGeometryCandidate(
     if (any(cellInt < int3(0)) || any(cellInt >= int3(gGridDataParamBlock.voxelCount)))
         return cand;
 
-    uint offset = CellToIndex(uint3(cellInt), gGridDataParamBlock.voxelCount);
+    int offset = CellToIndex(uint3(cellInt), gGridDataParamBlock.voxelCount);
 
-    VoxelData voxel = gGridDataParamBlock.gridDataBuffer[offset];
-
-    if (voxel.occupied == 0)
+    if ( offset < 0)
         return cand;
+
+    VoxelData voxel = gGridDataParamBlock.gridDataBuffer[(uint)offset];
+
+    //if (voxel.occupied == 0)
+    //    return cand;
 
     float3 localFrom;
     float3 localTo;
@@ -497,12 +500,15 @@ float3 shadeHitOnly(HitResult hit, float3 viewDir)
     if (any(hit.cellInt < int3(0)) || any(hit.cellInt >= int3(gGridDataParamBlock.voxelCount)))
         return float3(0.0f);
 
+    if (!isSolidVoxel(hit.cellInt))
+        return float3(0.0f);
+
     uint offset = CellToIndex(uint3(hit.cellInt), gGridDataParamBlock.voxelCount);
 
     VoxelData voxel = gGridDataParamBlock.gridDataBuffer[offset];
 
-    if (voxel.occupied == 0)
-        return float3(0.0f);
+    // if (voxel.occupied == 0)
+    //    return float3(0.0f);
 
     return voxel.radiance.calc(viewDir);
 }
@@ -621,6 +627,7 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
 
     uint bufferIndex = PixelToIndex(pixel, pixelCount);
     gPathRecordBuffer[bufferIndex].init();
+    gPathRecordBuffer[bufferIndex].backGroundColor = renderBackground(direction);
 
     float2 inOut = clip(float3(0), float3(voxelCount), from, to);
     if (inOut.x < 0)
@@ -668,6 +675,7 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
         direction
     );
     }
+
 
     return psOut;
 

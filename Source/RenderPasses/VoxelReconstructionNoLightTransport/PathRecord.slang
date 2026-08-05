@@ -30,6 +30,7 @@ struct PathRecord
 
     float4 pathContribution; // L_hit
     float4 nextContribution; // C_behind
+    float4 backGroundColor;
 
     // Geometry
     uint candidateCount;

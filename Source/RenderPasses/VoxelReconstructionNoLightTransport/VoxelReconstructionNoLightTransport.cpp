@@ -39,8 +39,9 @@ VoxelReconstructionNoLightTransport::VoxelReconstructionNoLightTransport(ref<Dev
 
     // Initial Data
     {
-        //mGridResources.gridData.solidVoxelCount = 92562;    //128
-        mGridResources.gridData.solidVoxelCount = 545771;   //256
+        mGridResources.gridData.solidVoxelCount = 17650;        // 64
+        //mGridResources.gridData.solidVoxelCount = 92562;      //128
+        //mGridResources.gridData.solidVoxelCount = 545771;     //256
     }
 
     // Create Grid pass
@@ -184,6 +185,8 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
         runGradientPass(pRenderContext, renderData);
         runUpdatePass(pRenderContext, renderData);
         runReducePass(pRenderContext, renderData);
+
+
 
         mOptimizerParams.currentView++;
         if (mOptimizerParams.currentView >= mOptimizerParams.viewsPerIteration)
@@ -405,6 +408,11 @@ void VoxelReconstructionNoLightTransport::setupGridResouce(RenderContext* pRende
             mGridResources.gridData.totalVoxelCount(),
             ResourceBindFlags::UnorderedAccess | ResourceBindFlags::ShaderResource
         );
+        //mGridResources.gridDataBuffer = mpDevice->createStructuredBuffer(
+        //    sizeof(VoxelData),
+        //    mGridResources.gridData.solidVoxelCount,
+        //    ResourceBindFlags::UnorderedAccess | ResourceBindFlags::ShaderResource
+        //);
         mGridResources.blockOM = mpDevice->createTexture2D(
             mGridResources.gridData.blockGridSizeXY().x,
             mGridResources.gridData.blockGridSizeXY().y,
@@ -415,16 +423,27 @@ void VoxelReconstructionNoLightTransport::setupGridResouce(RenderContext* pRende
             ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess
         );
 
+        mGridResources.vBuffer = mpDevice->createTexture3D(
+            mGridResources.gridData.voxelCount.x, mGridResources.gridData.voxelCount.y, mGridResources.gridData.voxelCount.z,
+            ResourceFormat::R32Int,
+            1u,
+            nullptr,
+            ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess
+        );
+
         pRenderContext->clearUAV(mGridResources.gridDataBuffer->getUAV().get(), uint4(0));
         pRenderContext->clearUAV(mGridResources.blockOM->getUAV().get(), uint4(0));
     }
 
+
     gridBlock["gridDataBuffer"] = mGridResources.gridDataBuffer;
     // gridBlock["blockOM"] = mGridResources.blockOM;
+    gridBlock["vBuffer"] = mGridResources.vBuffer;
     gridBlock["voxelCount"] = mGridResources.gridData.voxelCount;
     gridBlock["voxelSize"] = mGridResources.gridData.voxelSize;
     gridBlock["gridMin"] = mGridResources.gridData.gridMin;
     gridBlock["solidVoxelCount"] = mGridResources.gridData.solidVoxelCount;
+
 }
 
 
@@ -447,7 +466,10 @@ void VoxelReconstructionNoLightTransport::proccessXuData(RenderContext* pRenderC
     cb["gLrRadiance"] = mUpdatePass.mLrRadiance;
 
     ShaderVar gridBlock = mpGridBlock->getRootVar();
-    gridBlock["blockOM"] = renderData.getTexture(kBlockMap);
+    //gridBlock["blockOM"] = renderData.getTexture(kBlockMap);
+
+    pRenderContext->clearUAV(mGridResources.blockOM->getUAV().get(), uint4(0xFFFFFFFFu));
+    gridBlock["blockOM"] = mGridResources.blockOM;
 
     mpProcessXuDataPass->execute(pRenderContext, mGridResources.gridData.voxelCount);
 }

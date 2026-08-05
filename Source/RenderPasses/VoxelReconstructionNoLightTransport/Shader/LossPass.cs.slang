@@ -6,6 +6,7 @@ Texture2D<float4> gReferenceImage;
 // Output
 RWTexture2D<float> gLossBuffer;
 RWTexture2D<float4> gDL_dColorBuffer;
+RWTexture2D<uint> gBackgroundMaskBuffer;
 
 cbuffer CB {
     uint2 gResolution;
@@ -29,6 +30,9 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
     float3 dL_dColor = 2.0 * diff;
 
     gLossBuffer[pixel] = loss;
+    gBackgroundMaskBuffer[pixel] = 0;
+    if (all(R == float3(1.0f)))
+        gBackgroundMaskBuffer[pixel] = 1;
 
     gDL_dColorBuffer[pixel] = float4(dL_dColor, 0.0);
 }

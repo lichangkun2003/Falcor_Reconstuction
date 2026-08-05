@@ -133,6 +133,7 @@ public:
         ref<Buffer> gridDataBuffer;
         ref<Texture> blockOM;
         GridData gridData;
+        ref<Texture> vBuffer;
     };
 
     struct RayMarchingPass
@@ -172,12 +173,14 @@ public:
         ref<ComputePass> mpComputePass;
         ref<Texture> lossBuffer;
         ref<Texture> dL_dColor;
+        ref<Texture> mpBackGroundMask;
         void init()
         {
             mView = 0;
             mpComputePass = nullptr;
             dL_dColor = nullptr;
             lossBuffer = nullptr;
+            mpBackGroundMask = nullptr;
         }
     };
 
@@ -211,6 +214,10 @@ public:
         float mLrCenter;
         float mLrB;
 
+        // Prune Ellipsoid
+        float mEllipsoidPruneThreshold;
+        bool mEnableEllipsoidPruning;
+
         void init()
         {
             mpComputePass = nullptr;
@@ -218,10 +225,13 @@ public:
             mUseGradCountNormalize = true;
             mGradScale = 1.0f;
 
-            mLrRadiance = 0.005f;
+            mLrRadiance = 0.001f;
             
-            mLrCenter = 0.0f;
-            mLrB = 0.0f;
+            mLrCenter = 0.5f;
+            mLrB = 1.0f;
+
+            mEllipsoidPruneThreshold = 0.01f;
+            mEnableEllipsoidPruning = false;
         }
     };
 

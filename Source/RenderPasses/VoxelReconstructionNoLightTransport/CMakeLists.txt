@@ -12,11 +12,13 @@ target_sources(VoxelReconstructionNoLightTransport PRIVATE
     GradientPass.cpp
     UpdatePass.cpp
     DataProcess.cpp
+    BuildSVO.cpp
 
     Voxel/ABSDF.slang
     Voxel/VoxelGrid.slang
     Voxel/VoxelData.slang
     Voxel/Shading.slang
+    Voxel/SVO.slang
 
     Math/AABB.slang
     Math/Projection.slang
@@ -40,6 +42,7 @@ target_sources(VoxelReconstructionNoLightTransport PRIVATE
     Shader/DiffVoxelIO.slang
     Shader/DiffTools.slang
     Shader/DiffShading.slang
+    Shader/BuildSVO.cs.slang
 
     PathRecord.slang
     GradRecord.slang

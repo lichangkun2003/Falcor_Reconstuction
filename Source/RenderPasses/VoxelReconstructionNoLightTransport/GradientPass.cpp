@@ -45,6 +45,11 @@ void VoxelReconstructionNoLightTransport::createGradientPassResource(RenderConte
         ResourceBindFlags::UnorderedAccess | ResourceBindFlags::ShaderResource
     );
 
+    //mGradientPass.gradBuffer = mpDevice->createStructuredBuffer(
+    //    sizeof(GradRecord), mGridResources.gridData.solidVoxelCount,
+    //    ResourceBindFlags::UnorderedAccess | ResourceBindFlags::ShaderResource
+    //);
+
 }
 
 void VoxelReconstructionNoLightTransport::runGradientPass(RenderContext* pRenderContext, const RenderData& renderData)
@@ -66,6 +71,7 @@ void VoxelReconstructionNoLightTransport::runGradientPass(RenderContext* pRender
     var["gGradBuffer"] = mGradientPass.gradBuffer;
     var["gPathRecordBuffer"] = mpPathRecordBuffer;
     var["dummy"] = renderData.getTexture("dummy");
+    var["gBackgroundMaskBuffer"] = mLossPass.mpBackGroundMask;
 
 
     auto cb = var["CB"];

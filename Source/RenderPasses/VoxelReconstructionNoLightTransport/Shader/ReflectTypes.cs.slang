@@ -6,6 +6,6 @@
      Therefore we create this dummy program to make it easier.
  */
 
-import RenderPasses.VoxelReconstruction.Voxel.VoxelGrid;
+import RenderPasses.VoxelReconstructionNoLightTransport.Voxel.VoxelGrid;
 
 void main() {}

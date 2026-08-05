@@ -110,6 +110,7 @@ void VoxelReconstructionNoLightTransport::saveReconstruction(RenderContext* pRen
     std::filesystem::path path = getDefaultReconstructionSavePath();
 
     const uint64_t elementCount = mGridResources.gridData.totalVoxelCount();
+    //const uint64_t elementCount = mGridResources.gridData.solidVoxelCount;
     const uint64_t byteSize = elementCount * sizeof(VoxelData);
 
     std::filesystem::create_directories(path.parent_path());
@@ -209,6 +210,7 @@ void VoxelReconstructionNoLightTransport::loadReconstruction(RenderContext* pRen
     }
 
     const uint64_t elementCount = mGridResources.gridData.totalVoxelCount();
+    //const uint64_t elementCount = mGridResources.gridData.solidVoxelCount;
     const uint64_t byteSize = elementCount * sizeof(VoxelData);
 
     std::vector<uint8_t> data(byteSize);

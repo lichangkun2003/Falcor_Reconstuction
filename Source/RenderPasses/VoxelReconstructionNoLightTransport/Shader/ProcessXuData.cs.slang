@@ -76,20 +76,27 @@ float3 getWorldUpperHemisphereLobeCenter(uint lobeId, uint lobeCount)
 
 [numthreads(8, 8, 1)]
 void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
-    uint index = CellToIndex(dispatchThreadId, gGridDataParamBlock.voxelCount);
+    //uint index = CellToIndex(dispatchThreadId, gGridDataParamBlock.voxelCount);
     int3 cellInt = int3(dispatchThreadId);
     int3 blockInt = cellInt / BLOCK_TO_VOXEL;
-    if (!isSolidBlockXu(blockInt))
-        return;
+
+    gGridDataParamBlock.vBuffer[cellInt] = -1;
+
+    //if (!isSolidBlockXu(blockInt))
+    //   return;
     int offset;
-    if (isSolidVoxelXu(cellInt, offset)) {
-        //setSolidBlock(blockInt);
+    //if (isSolidVoxelXu(cellInt, offset))
+    {
+        // setSolidBlock(blockInt);
+        //gGridDataParamBlock.vBuffer[cellInt] = offset;
+        int index = CellToIndex(dispatchThreadId, gGridDataParamBlock.voxelCount);
+
         setSolidVoxel(cellInt);
 
-        VoxelData data = gGridDataParamBlock.gridDataBuffer[index];
-        //data.init();
 
-        data.ellipsoid = pBuffer[offset];
+        VoxelData data = gGridDataParamBlock.gridDataBuffer[index];
+
+        //data.ellipsoid = pBuffer[offset];
 
         if (gLrRadiance > 0.0f) {
             data.radiance.init();

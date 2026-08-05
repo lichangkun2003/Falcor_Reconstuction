@@ -11,6 +11,7 @@ import DiffRendering.SceneGradientInfo;
 // Input
 Texture2D<float4> gDL_dColorBuffer;
 StructuredBuffer<PathRecord> gPathRecordBuffer;
+Texture2D<uint> gBackgroundMaskBuffer;
 
 
 // Output
@@ -45,10 +46,10 @@ cbuffer CB {
         }                                                                                                              \
     }
 
-
 void calcGeometryGradFromCandidate(
     GeometryCandidateRecord cand,
     float3 dL_dC,
+    bool isReferenceBackground,
     out GradRecord geometryGradRecord)
 {
     geometryGradRecord.init();
@@ -57,6 +58,9 @@ void calcGeometryGradFromCandidate(
         return;
 
     if (any(cand.cellInt < int3(0)) || any(cand.cellInt >= int3(gVoxelCount)))
+        return;
+
+    if (!isSolidVoxel(cand.cellInt))
         return;
 
     uint voxelIndex = CellToIndex(uint3(cand.cellInt), gVoxelCount);
@@ -81,13 +85,27 @@ void calcGeometryGradFromCandidate(
     LCandidate = sanitizeFloat3(LCandidate);
     CBehind = sanitizeFloat3(CBehind);
 
-    // dLoss / dw
-    float dL_dW = dot(dL_dC, LCandidate - CBehind);
+    //// dLoss / dw
+    // float dL_dW = dot(dL_dC, LCandidate - CBehind);
+    //// dw / dgmin
+    // float dW_dG = -w * (1.0f - w) / tau;
+    // float dL_dG = dL_dW * dW_dG;
+    float dL_dG = 0.0f;
+    if (isReferenceBackground)
+    {
+        dL_dG = -0.01 * w / tau;
+    }
+    else
+    {
+        float dL_dW =
+        dot(dL_dC, LCandidate - CBehind);
 
-    // dw / dgmin
-    float dW_dG = -w * (1.0f - w) / tau;
+        float dW_dG =
+        -w * (1.0f - w) / tau;
 
-    float dL_dG = dL_dW * dW_dG;
+        dL_dG = dL_dW * dW_dG;
+    }
+
 
     dL_dG = sanitizeFloat(dL_dG);
 
@@ -192,8 +210,11 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
         return;
 
     float3 dL_dC = gDL_dColorBuffer.Load(int3(pixel, 0)).rgb;
-    if (all(dL_dC == float3(0.0f)))
-        return;
+
+    //if (all(dL_dC == float3(0.0f)))
+    //    return;
+
+    bool isReferenceBackground = gBackgroundMaskBuffer[pixel] == 1;
 
     // -------------------------
     // 1. Radiance gradient
@@ -201,24 +222,36 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
     // -------------------------
     if (rec.valid != 0)
     {
-        SceneGradientInfo gradInfo = SceneGradientInfo(
-        SceneGradientFlag.make(GradientMode.Scene),
+        float3 gRadiance = dL_dC;
+
+
+        if ( !isReferenceBackground ) {
+            SceneGradientInfo gradInfo = SceneGradientInfo(
+            SceneGradientFlag.make(GradientMode.Scene),
             pixel,
             indexPathRecordBuffer
         );
 
-        SceneGradientInfo.Differential dGradInfo;
-        dGradInfo.flag = SceneGradientFlag.make(GradientMode.Scene);
+            SceneGradientInfo.Differential dGradInfo;
+            dGradInfo.flag = SceneGradientFlag.make(GradientMode.Scene);
 
-        DifferentialPair<SceneGradientInfo> dpGradInfo = diffPair(gradInfo,dGradInfo);
+            DifferentialPair<SceneGradientInfo> dpGradInfo = diffPair(gradInfo, dGradInfo);
 
-        bwd_diff(evalPixelColorFromPathAD)(dpGradInfo,rec.hitCellInt,rec.viewDir,gVoxelCount,dL_dC);
+            bwd_diff(evalPixelColorFromPathAD)(dpGradInfo, rec.hitCellInt, rec.viewDir, gVoxelCount, dL_dC);
+        }
+            
+
     }
 
     // -------------------------
     // 2. Geometry gradient
     // all candidates
     // -------------------------
+    //float3 gGeometry = dL_dC;
+    //if (isReferenceBackground) {
+    //    gGeometry = float3(0.2);
+    //}
+
     for (uint i = 0; i < rec.candidateCount && i < MAX_CANDIDATES; i++)
     {
         GeometryCandidateRecord cand = rec.candidates[i];
@@ -230,7 +263,7 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
             continue;
 
         GradRecord geometryGradRecord;
-        calcGeometryGradFromCandidate(cand, dL_dC, geometryGradRecord);
+        calcGeometryGradFromCandidate(cand, dL_dC, isReferenceBackground, geometryGradRecord);
 
         if (geometryGradRecord.geometryValid == 0)
             continue;
@@ -240,14 +273,14 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
         accumulateGeometryGradRecord(geometryIndexGradBuffer, geometryGradRecord);
     }
 
-    GeometryCandidateRecord cand = rec.candidates[0];
-    uint indexGradBuffer = CellToIndex(uint3(cand.cellInt), gVoxelCount);
-    print("grad B00 :", gGradBuffer[indexGradBuffer].B00);
-    print("grad B11 :", gGradBuffer[indexGradBuffer].B11);
-    print("grad B22 :", gGradBuffer[indexGradBuffer].B22);
-    print("grad B01 :", gGradBuffer[indexGradBuffer].B01);
-    print("grad B02 :", gGradBuffer[indexGradBuffer].B02);
-    print("grad B12 :", gGradBuffer[indexGradBuffer].B12);
+    //GeometryCandidateRecord cand = rec.candidates[0];
+    //uint indexGradBuffer = CellToIndex(uint3(cand.cellInt), gVoxelCount);
+    //print("grad B00 :", gGradBuffer[indexGradBuffer].B00);
+    //print("grad B11 :", gGradBuffer[indexGradBuffer].B11);
+    //print("grad B22 :", gGradBuffer[indexGradBuffer].B22);
+    //print("grad B01 :", gGradBuffer[indexGradBuffer].B01);
+    //print("grad B02 :", gGradBuffer[indexGradBuffer].B02);
+    //print("grad B12 :", gGradBuffer[indexGradBuffer].B12);
 
 
     dummy[pixel] = float4(abs(dL_dC), 1.0f);

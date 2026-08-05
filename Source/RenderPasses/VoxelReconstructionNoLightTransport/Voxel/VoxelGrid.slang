@@ -30,6 +30,7 @@ struct GridData{
     }
 
 #if !defined(HOST_CODE)
+    RWTexture3D<int> vBuffer;
     RWStructuredBuffer<VoxelData> gridDataBuffer;
     RWTexture2D<uint4> blockOM;
 #endif
@@ -38,8 +39,10 @@ struct GridData{
 #if !defined(HOST_CODE)
 ParameterBlock<GridData> gGridDataParamBlock;
 
-inline uint CellToIndex(uint3 cell, uint3 size)
+inline int CellToIndex(uint3 cell, uint3 size)
 {
+    // return 0;
+    //return gGridDataParamBlock.vBuffer[cell];
     return uint(cell.x) + uint(cell.y) * size.x + uint(cell.z) * size.x * size.y;
 }
 
@@ -56,7 +59,8 @@ bool isSolidVoxel(int3 cellInt)
 {
     if (any(cellInt < 0) || any(cellInt >= int3(gGridDataParamBlock.voxelCount)) )
         return false;
-    uint offset = CellToIndex(uint3(cellInt), gGridDataParamBlock.voxelCount);
+    int offset = CellToIndex(uint3(cellInt), gGridDataParamBlock.voxelCount);
+    //return offset >= 0;
     return gGridDataParamBlock.gridDataBuffer[offset].occupied != 0;
 }
 

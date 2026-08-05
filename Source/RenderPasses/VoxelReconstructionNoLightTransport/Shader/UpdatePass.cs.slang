@@ -17,6 +17,10 @@ cbuffer CB {
     float gLrCenter;
     float gLrB;
 
+    float gEllipsoidPruneThreshold;
+    bool gEnableEllipsoidPruning;
+
+
     uint gVoxelSHGradDim;
 }
 
@@ -354,6 +358,39 @@ void updateRadianceSH_AD(
     }
 }
 
+float calcEllipsoidVoxelVolumeRatio(Ellipsoid ellipsoid)
+{
+    float detB = determinant(ellipsoid.B);
+
+    if (isBadFloat(detB) || detB <= 1e-12f)
+        return -1.0f;
+
+    // 局部体素为 [0,1]^3，体积为 1
+    float ratio = (4.0f * PI / 3.0f) / sqrt(detB);
+
+    if (isBadFloat(ratio))
+        return -1.0f;
+
+    return ratio;
+}
+
+void pruneEllipsoid(inout VoxelData voxel)
+{
+    if (voxel.occupied == 0)
+        return;
+
+    float ratio = calcEllipsoidVoxelVolumeRatio(voxel.ellipsoid);
+
+    // B异常时暂不删除
+    if (ratio < 0.0f)
+        return;
+
+    if (ratio < gEllipsoidPruneThreshold)
+        voxel.occupied = 0;
+}
+
+
+
 [numthreads(8, 8, 1)]
 void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
     uint3 voxel = dispatchThreadId;
@@ -364,9 +401,12 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
         return;
     }
 
-    uint index = CellToIndex(voxel, gGridDataParamBlock.voxelCount);
+    int index = CellToIndex(voxel, gGridDataParamBlock.voxelCount);
 
-    GradRecord grad = gGradBuffer[index];
+    if (index < 0)
+        return;
+
+    GradRecord grad = gGradBuffer[(uint)index];
 
     // 这里 valid 实际上表示当前 voxel 累计了多少个 pixel contribution
     //if (grad.radianceValid == 0 && grad.geometryValid == 0)
@@ -417,6 +457,12 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
 
         voxelData.ellipsoid = ellipsoid;
     }
+
+    if (gEnableEllipsoidPruning)
+    {
+        pruneEllipsoid(voxelData);
+    }
+
 
     gGridDataParamBlock.gridDataBuffer[index] = voxelData;
 }

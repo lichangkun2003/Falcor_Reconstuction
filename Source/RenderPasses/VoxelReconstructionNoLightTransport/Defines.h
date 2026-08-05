@@ -1,7 +1,7 @@
 #pragma once
 
 
-#define GRID_RESOLUTION 256
+#define GRID_RESOLUTION 64
 #define BLOCK_TO_VOXEL 8
 
 #define REFERENCE_IMAGES_COUNT 300
@@ -14,4 +14,4 @@
 #define LOBE_COUNT 4
 #define SH_COUNT 16
 
-#define MAX_CANDIDATES 4
+#define MAX_CANDIDATES 8

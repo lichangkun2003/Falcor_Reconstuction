@@ -45,6 +45,11 @@ void VoxelReconstructionNoLightTransport::runUpdatePass(RenderContext* pRenderCo
     //mUpdatePass.mpComputePass->addDefine("CHECK_VISIBILITY", mRayMarchingPass.mCheckVisibility ? "1" : "0");
     //mUpdatePass.mpComputePass->addDefine("CHECK_COVERAGE", mRayMarchingPass.mCheckCoverage ? "1" : "0");
 
+    if ((mOptimizerParams.currentIteration + 1) % 10 == 0)
+    {
+        mUpdatePass.mEnableEllipsoidPruning = true;
+    }
+
 
     auto var = mUpdatePass.mpComputePass->getRootVar();
 
@@ -61,12 +66,17 @@ void VoxelReconstructionNoLightTransport::runUpdatePass(RenderContext* pRenderCo
     cb["gLrCenter"] = mUpdatePass.mLrCenter;
     cb["gLrB"] = mUpdatePass.mLrB;
     cb["gVoxelSHGradDim"] = mVoxelSHGradDim;
+    cb["gEllipsoidPruneThreshold"] = mUpdatePass.mEllipsoidPruneThreshold;
+    cb["gEnableEllipsoidPruning"] = mUpdatePass.mEnableEllipsoidPruning;
 
     //mpPixelDebug->prepareProgram(mUpdatePass.mpComputePass->getProgram(), mUpdatePass.mpComputePass->getRootVar());
 
     mUpdatePass.mpComputePass->execute(pRenderContext, mGridResources.gridData.voxelCount);
 
+
     pRenderContext->uavBarrier(mGridResources.gridDataBuffer.get());
+
+    mUpdatePass.mEnableEllipsoidPruning = false;
 }
 
 void VoxelReconstructionNoLightTransport::renderUIUpdatePass(Gui::Widgets& widget)
@@ -89,7 +99,9 @@ void VoxelReconstructionNoLightTransport::renderUIUpdatePass(Gui::Widgets& widge
     group.var("LR center scale(1000x)", mLrCenterScale, 0.0f, 1.0f, 1e-6f);
     mUpdatePass.mLrCenter = mLrCenterScale * 1e-3f;
 
-    group.var("LR B scale(10000x)", mLrBScale, 0.0f, 1.0f, 1e-7f);
+    group.var("LR B scale(10x)", mLrBScale, 0.0f, 1.0f, 1e-7f);
     mUpdatePass.mLrB = mLrBScale * 1e-1f;
+
+    group.var("Ellipsoid Prune Threshold", mUpdatePass.mEllipsoidPruneThreshold, 0.0f, 1.0f, 1e-7f);
     
 }

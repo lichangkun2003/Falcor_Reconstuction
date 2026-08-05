@@ -57,12 +57,23 @@ void VoxelReconstructionNoLightTransport::createLossPassResource(RenderContext* 
         nullptr,
         ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess
     );
+
+    mLossPass.mpBackGroundMask = mpDevice->createTexture2D(
+        mRayMarchingPass.mOutputResolution.x,
+        mRayMarchingPass.mOutputResolution.y,
+        ResourceFormat::R32Uint,
+        1u,
+        1u,
+        nullptr,
+        ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess
+    );
 }
 
 void VoxelReconstructionNoLightTransport::runLossPass(RenderContext* pRenderContext, const RenderData& renderData)
 {
     pRenderContext->clearTexture(mLossPass.lossBuffer.get());
     pRenderContext->clearTexture(mLossPass.dL_dColor.get());
+    pRenderContext->clearTexture(mLossPass.mpBackGroundMask.get());
 
     auto var = mLossPass.mpComputePass->getRootVar();
 
@@ -70,6 +81,7 @@ void VoxelReconstructionNoLightTransport::runLossPass(RenderContext* pRenderCont
     var["gReferenceImage"] = mReferenceImages[mLossPass.mView];
     var["gLossBuffer"] = mLossPass.lossBuffer;
     var["gDL_dColorBuffer"] = mLossPass.dL_dColor;
+    var["gBackgroundMaskBuffer"] = mLossPass.mpBackGroundMask;
 
     auto cb = var["CB"];
     cb["gResolution"] = mRayMarchingPass.mOutputResolution;

@@ -29,7 +29,8 @@
 # Load FBX
 sceneBuilder.importScene('Arcade.fbx')
 
-envMap = EnvMap('../EnvMap/White.exr')
+#envMap = EnvMap('../EnvMap/White.exr')
+envMap = EnvMap('../EnvMap/magenta.exr')
 envMap.intensity = 1.0
 sceneBuilder.envMap = envMap
 
