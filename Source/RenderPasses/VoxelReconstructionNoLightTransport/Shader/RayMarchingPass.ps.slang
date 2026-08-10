@@ -36,9 +36,11 @@ cbuffer CB
     float4 clearColor;
     //uint2 selectedPixel;
     bool enableReconstruction;
+    float invSpp;
 }
 
 RWStructuredBuffer<PathRecord> gPathRecordBuffer;
+RWTexture2D gAccuColor;
 
 
 struct PsOut
@@ -630,8 +632,12 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
     gPathRecordBuffer[bufferIndex].backGroundColor = renderBackground(direction);
 
     float2 inOut = clip(float3(0), float3(voxelCount), from, to);
-    if (inOut.x < 0)
+    if (inOut.x < 0) {
+        gAccuColor[pixel].xyz += psOut.color.xyz * invSpp;
+        gAccuColor[pixel].w = 1.0f;
         return psOut;
+    }
+        
 
 
     UniformSampleGenerator sg = UniformSampleGenerator(pixel, frameIndex);
@@ -676,6 +682,8 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
     );
     }
 
+    gAccuColor[pixel].xyz += psOut.color.xyz * invSpp;
+    gAccuColor[pixel].w = 1.0f;
 
     return psOut;
 

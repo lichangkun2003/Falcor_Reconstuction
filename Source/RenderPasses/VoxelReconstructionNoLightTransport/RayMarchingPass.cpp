@@ -44,14 +44,25 @@ void VoxelReconstructionNoLightTransport::createRayMarchingPassResource(RenderCo
         desc.addTypeConformances(mpScene->getTypeConformances());
         mRayMarchingPass.mpFullScreenPass = FullScreenPass::create(mpDevice, desc, mpScene->getSceneDefines());
     }
+
+
 }
 
 
 void VoxelReconstructionNoLightTransport::rayMarchingPass(RenderContext* pRenderContext, const RenderData& renderData)
 {
+
     pRenderContext->clearUAV(mpPathRecordBuffer->getUAV().get(), uint4(0));
 
     RayMarchingPass& pass = mRayMarchingPass;
+
+
+    if ((pass.mSampleIndex == 0 && mEnableReconstruction) || !mEnableReconstruction)
+    {
+        pRenderContext->clearUAV(renderData.getTexture(kAccumulateOutputColor)->getUAV().get(), float4(0.f));
+    }
+
+
 
 
     auto& dict = renderData.getDictionary();
@@ -92,6 +103,7 @@ void VoxelReconstructionNoLightTransport::rayMarchingPass(RenderContext* pRender
 
         var["gGridDataParamBlock"] = mpGridBlock;
         var["gPathRecordBuffer"] = mpPathRecordBuffer;
+        var["gAccuColor"] = renderData.getTexture(kAccumulateOutputColor);
 
         auto cb_GridData = var["GridData"];
         cb_GridData["gridMin"] = mGridResources.gridData.gridMin;
@@ -113,10 +125,13 @@ void VoxelReconstructionNoLightTransport::rayMarchingPass(RenderContext* pRender
         cb["renderBackGround"] = pass.mRenderBackGround;
         cb["clearColor"] = float4(pass.mClearColor, 0);
         cb["enableReconstruction"] = mEnableReconstruction;
+        cb["invSpp"] = 1.0f / pass.mSpp;
 
         ref<Fbo> fbo = Fbo::create(mpDevice);
         fbo->attachColorTarget(pOutputColor, 0);
         pass.mpFullScreenPass->execute(pRenderContext, fbo);
-    }
 
+        
+    }
+    pass.mSampleIndex++;
 }

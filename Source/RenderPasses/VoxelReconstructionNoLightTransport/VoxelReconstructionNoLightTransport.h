@@ -65,6 +65,7 @@ inline std::string kVBuffer = "vBuffer";
 inline std::string kPBuffer = "pBuffer";
 inline std::string kBlockMap = "blockMap";
 inline std::string kOutputColor = "color";
+inline std::string kAccumulateOutputColor = "AccuColor";
 
 inline std::string ReferenceImageDir = "D:/lck/vs/Reconstruction_Input/lego_white_256";
 inline std::string ReferenceCameraFile = "D:/lck/vs/Reconstruction_Input/lego_white_256/camera_params.txt";
@@ -147,9 +148,13 @@ public:
         uint mDrawMode;
         bool mRenderBackGround;
 
+        uint mSpp = 1;
+        uint mSampleIndex = 0;
+
         ref<FullScreenPass> mpFullScreenPass;
         ref<FullScreenPass> mpDisplayNDFPass;
         ref<Sampler> mpPointSampler;
+        ref<Texture> accuColor;
         void init()
         {
             mpFullScreenPass = nullptr;
@@ -164,6 +169,9 @@ public:
             mShadowBias100 = 0.01f;
             mDrawMode = 0;
             mRenderBackGround = true;
+
+            accuColor = nullptr;
+
         }
     };
 
@@ -227,8 +235,8 @@ public:
 
             mLrRadiance = 0.001f;
             
-            mLrCenter = 0.5f;
-            mLrB = 1.0f;
+            mLrCenter = 0.f;
+            mLrB = 0.f;
 
             mEllipsoidPruneThreshold = 0.01f;
             mEnableEllipsoidPruning = false;

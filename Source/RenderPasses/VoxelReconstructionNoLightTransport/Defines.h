@@ -12,6 +12,10 @@
 
 
 #define LOBE_COUNT 4
+
+// Radiance
 #define SH_COUNT 16
+
+// 
 
 #define MAX_CANDIDATES 8

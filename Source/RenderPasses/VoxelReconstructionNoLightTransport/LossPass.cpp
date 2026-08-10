@@ -77,7 +77,8 @@ void VoxelReconstructionNoLightTransport::runLossPass(RenderContext* pRenderCont
 
     auto var = mLossPass.mpComputePass->getRootVar();
 
-    var["gRenderedColor"] = renderData.getTexture(kOutputColor);
+    //var["gRenderedColor"] = renderData.getTexture(kOutputColor);
+    var["gRenderedColor"] = renderData.getTexture(kAccumulateOutputColor);
     var["gReferenceImage"] = mReferenceImages[mLossPass.mView];
     var["gLossBuffer"] = mLossPass.lossBuffer;
     var["gDL_dColorBuffer"] = mLossPass.dL_dColor;

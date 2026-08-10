@@ -39,9 +39,13 @@ VoxelReconstructionNoLightTransport::VoxelReconstructionNoLightTransport(ref<Dev
 
     // Initial Data
     {
+        // Lego
         mGridResources.gridData.solidVoxelCount = 17650;        // 64
         //mGridResources.gridData.solidVoxelCount = 92562;      //128
         //mGridResources.gridData.solidVoxelCount = 545771;     //256
+
+        // Box
+        //mGridResources.gridData.solidVoxelCount = 94816; // 128
     }
 
     // Create Grid pass
@@ -120,6 +124,10 @@ RenderPassReflection VoxelReconstructionNoLightTransport::reflect(const CompileD
         .bindFlags(ResourceBindFlags::RenderTarget)
         .format(ResourceFormat::RGBA32Float)
         .texture2D(mRayMarchingPass.mOutputResolution.x, mRayMarchingPass.mOutputResolution.y, 1, 1);
+    reflector.addOutput(kAccumulateOutputColor, "AccuColor")
+        .bindFlags(ResourceBindFlags::UnorderedAccess | ResourceBindFlags::ShaderResource)
+        .format(ResourceFormat::RGBA32Float)
+        .texture2D(mRayMarchingPass.mOutputResolution.x, mRayMarchingPass.mOutputResolution.y, 1, 1);
 
 
     return reflector;
@@ -176,9 +184,12 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
         }
     }
 
+    bool isLastSample = mRayMarchingPass.mSpp > 0 && mRayMarchingPass.mSampleIndex == mRayMarchingPass.mSpp - 1u;
+
     rayMarchingPass(pRenderContext, renderData);
 
-    if (mEnableReconstruction && mOptimizerParams.isRunning)
+    
+    if (mEnableReconstruction && mOptimizerParams.isRunning && isLastSample)
     {
         mLossPass.mView = mOptimizerParams.currentView;
         runLossPass(pRenderContext, renderData);
@@ -187,7 +198,7 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
         runReducePass(pRenderContext, renderData);
 
 
-
+        mRayMarchingPass.mSampleIndex = 0;
         mOptimizerParams.currentView++;
         if (mOptimizerParams.currentView >= mOptimizerParams.viewsPerIteration)
         {
@@ -220,6 +231,7 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
 
     widget.var("Geometry Tau", mGradientPass.geometryTau, 0.0f, 0.2f, 1e-4f);
     widget.var("Geometry Grad Clamp", mGradientPass.geometryTau, 0.0f, 10.0f, 1e-4f);
+    widget.var("Spp", mRayMarchingPass.mSpp, 1u, 100u,1u);
 
     widget.slider("Camera Index", testIndex, 0u, mOptimizerParams.viewsPerIteration - 1u);
     widget.checkbox("Init Voxel Data", mInitVoxelData);
@@ -243,6 +255,7 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
     widget.text(
         "Solid Rate: " + std::to_string(mGridResources.gridData.solidVoxelCount / (float)mGridResources.gridData.totalVoxelCount())
     );
+    widget.text("Ray Sample Index: " + std::to_string(mRayMarchingPass.mSampleIndex));
 
     if (auto group = widget.group("Reconstruction"))
     {
@@ -466,10 +479,10 @@ void VoxelReconstructionNoLightTransport::proccessXuData(RenderContext* pRenderC
     cb["gLrRadiance"] = mUpdatePass.mLrRadiance;
 
     ShaderVar gridBlock = mpGridBlock->getRootVar();
-    //gridBlock["blockOM"] = renderData.getTexture(kBlockMap);
+    gridBlock["blockOM"] = renderData.getTexture(kBlockMap);
 
-    pRenderContext->clearUAV(mGridResources.blockOM->getUAV().get(), uint4(0xFFFFFFFFu));
-    gridBlock["blockOM"] = mGridResources.blockOM;
+    //pRenderContext->clearUAV(mGridResources.blockOM->getUAV().get(), uint4(0xFFFFFFFFu));
+    //gridBlock["blockOM"] = mGridResources.blockOM;
 
     mpProcessXuDataPass->execute(pRenderContext, mGridResources.gridData.voxelCount);
 }
@@ -483,6 +496,7 @@ void VoxelReconstructionNoLightTransport::startReconstruction()
     mOptimizerParams.isRunning = true;
     mOptimizerParams.currentIteration = 0;
     mOptimizerParams.currentView = 0;
+    mRayMarchingPass.mSampleIndex = 0;
 
     // 如果希望每次点击开始都重新初始化 voxel 数据
     // mInitVoxelData = true;

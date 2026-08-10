@@ -47,7 +47,7 @@ void VoxelReconstructionNoLightTransport::runUpdatePass(RenderContext* pRenderCo
 
     if ((mOptimizerParams.currentIteration + 1) % 10 == 0)
     {
-        mUpdatePass.mEnableEllipsoidPruning = true;
+        //mUpdatePass.mEnableEllipsoidPruning = true;
     }
 
 
