@@ -16,6 +16,7 @@ cbuffer CB {
     float gLrRadiance;
     float gLrCenter;
     float gLrB;
+    float gLrOpacity;
 
     float gEllipsoidPruneThreshold;
     bool gEnableEllipsoidPruning;
@@ -297,6 +298,37 @@ void updateEllipsoidB(inout Ellipsoid ellipsoid, GradRecord grad, float lr, floa
     
 }
 
+void updateOpacitySH(inout SphericalHarmonicsOpacity opacity,GradRecord grad,float lr,float gradScale)
+{
+    if (lr <= 0.0f)
+        return;
+
+    SH_MAX_ITERS(SH_OPACITY_COUNT)
+    for (uint i = 0; i < SH_OPACITY_COUNT; ++i)
+    {
+        float g =
+            grad.opacityGrad.coefficients[i] *
+            gradScale;
+
+        g = sanitizeFloat(g);
+
+        float step = clamp(
+            lr * g,
+            -0.05f,
+            0.05f
+        );
+
+        // 梯度下降
+        opacity.coefficients[i] -= step;
+
+        //opacity.coefficients[i] = clamp(
+        //    sanitizeFloat(opacity.coefficients[i]),
+        //    -10.0f,
+        //    10.0f
+        //);
+    }
+}
+
 void updateRadianceSH(inout SphericalHarmonicsRGB radiance, GradRecord grad, float lr, float gradScale)
 {
     if (lr <= 0.0f)
@@ -320,43 +352,6 @@ void updateRadianceSH(inout SphericalHarmonicsRGB radiance, GradRecord grad, flo
     }
 }
 
-void updateRadianceSH_AD(
-    inout SphericalHarmonicsRGB radiance,
-    uint voxelLinearID,
-    float lr,
-    float gradScale
-)
-{
-    if (lr <= 0.0f)
-        return;
-
-    [MaxIters(SH_COUNT)]
-    for (uint i = 0; i < SH_COUNT; i++)
-    {
-        uint base = voxelLinearID * SH_COUNT * 3 + i * 3;
-
-        if (base + 2 >= gVoxelSHGradDim)
-            return;
-
-        float3 g = float3(
-            gVoxelSHGrads[base + 0],
-            gVoxelSHGrads[base + 1],
-            gVoxelSHGrads[base + 2]
-        );
-
-        g *= gradScale;
-
-        g = sanitizeFloat3(g);
-
-        float3 step = lr * g;
-
-        step = clamp(step, float3(-0.05f), float3(0.05f));
-
-        radiance.coefficients[i] -= step;
-
-        radiance.coefficients[i] = sanitizeFloat3(radiance.coefficients[i]);
-    }
-}
 
 float calcEllipsoidVoxelVolumeRatio(Ellipsoid ellipsoid)
 {
@@ -412,29 +407,33 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
     //if (grad.radianceValid == 0 && grad.geometryValid == 0)
     //    return;
 
-    float radianceGradScale = gGradScale;
+    float appearanceGradScale = gGradScale;
     float geometryGradScale = gGradScale;
 
     if (gUseGradCountNormalize)
     {
-        radianceGradScale *= 1.0f / max(1.0f, float(grad.radianceValid));
+        appearanceGradScale *= 1.0f / max(1.0f, float(grad.appearanceValid));
         geometryGradScale *= 1.0f / max(1.0f, float(grad.geometryValid));
     }
 
-    // Voexl Data : gGridDataParamBlock.gridDataBuffer[index]....
     VoxelData voxelData = gGridDataParamBlock.gridDataBuffer[index];
     if (voxelData.occupied == 0)
         return;
 
     // -------------------------
-    // radiance SH update
+    // appearance  SH update
     // -------------------------
-    //if (grad.radianceValid > 0)
-    if (gLrRadiance > 0.0f)
+    if (grad.appearanceValid > 0)
     {
-        // updateRadianceSH(voxelData.radiance, grad, gLrRadiance, radianceGradScale);
-        updateRadianceSH_AD(voxelData.radiance, index, gLrRadiance, gGradScale);
+        if (gLrRadiance > 0.0f)
+        {
+            updateRadianceSH(voxelData.radiance,grad,gLrRadiance,appearanceGradScale);
+        }
 
+        if (gLrOpacity > 0.0f)
+        {
+            updateOpacitySH(voxelData.opacity,grad,gLrOpacity,appearanceGradScale);
+        }
     }
 
     // -------------------------

@@ -9,8 +9,9 @@ BEGIN_NAMESPACE_FALCOR
 struct GradRecord
 {
     // radiance
+    uint appearanceValid;
     SphericalHarmonicsRGBGrad radianceGrad;
-    uint radianceValid; 
+    SphericalHarmonicsOpacity opacityGrad;
 
     // geometry gradient
     float3 center;
@@ -25,8 +26,9 @@ struct GradRecord
 
     MUTATING
     void init() {
-        radianceValid = 0;
+        appearanceValid = 0;
         radianceGrad.init();
+        opacityGrad.init();
 
         center = float3(0.0f);
         B00 = 0.0f;

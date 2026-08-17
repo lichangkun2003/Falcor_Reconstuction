@@ -18,6 +18,7 @@ struct VoxelData
     // SphericalHarmonics radianceG;
     // SphericalHarmonics radianceB;
     SphericalHarmonicsRGB radiance;
+    SphericalHarmonicsOpacity opacity;
 
     MUTATING
     void init()
@@ -27,6 +28,7 @@ struct VoxelData
         // polygonsProjAreaFunc.init();
         // totalProjAreaFunc.init();
         radiance.init();
+        opacity.init();
     }
 
 

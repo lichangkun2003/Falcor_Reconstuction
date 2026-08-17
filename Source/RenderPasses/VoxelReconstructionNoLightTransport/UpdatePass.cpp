@@ -65,6 +65,7 @@ void VoxelReconstructionNoLightTransport::runUpdatePass(RenderContext* pRenderCo
     cb["gLrRadiance"] = mUpdatePass.mLrRadiance;
     cb["gLrCenter"] = mUpdatePass.mLrCenter;
     cb["gLrB"] = mUpdatePass.mLrB;
+    cb["gLrOpacity"] = mUpdatePass.mLrOpacity;
     cb["gVoxelSHGradDim"] = mVoxelSHGradDim;
     cb["gEllipsoidPruneThreshold"] = mUpdatePass.mEllipsoidPruneThreshold;
     cb["gEnableEllipsoidPruning"] = mUpdatePass.mEnableEllipsoidPruning;
@@ -89,9 +90,10 @@ void VoxelReconstructionNoLightTransport::renderUIUpdatePass(Gui::Widgets& widge
 
     group.var("Grad scale", mUpdatePass.mGradScale, 0.0f, 10.0f, 0.001f);
 
-    group.text("Radiance Learning rates");
+    group.text("Appearance Learning rates");
 
     group.var("LR radiance", mUpdatePass.mLrRadiance, 0.0f, 1.0f, 1e-4f);
+    group.var("LR opacity", mUpdatePass.mLrOpacity, 0.0f, 100.0f, 1e-4f);
 
     group.text("Geometry learning rates");
 

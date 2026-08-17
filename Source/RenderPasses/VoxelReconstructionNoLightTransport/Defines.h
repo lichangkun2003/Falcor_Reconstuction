@@ -8,14 +8,15 @@
 //#define MAX_SOLID_GRID_COUNT 
 
 
-#define MAX_BOUNCE 4
+#define MAX_CONTRIBUTING_VOXELS_PER_RAY 8
 
 
 #define LOBE_COUNT 4
 
 // Radiance
-#define SH_COUNT 16
+#define SH_COUNT 9
 
-// 
+// Opacity
+#define SH_OPACITY_COUNT 9
 
 #define MAX_CANDIDATES 8

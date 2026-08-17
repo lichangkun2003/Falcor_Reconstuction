@@ -241,15 +241,76 @@ struct SphericalHarmonicsRGBGrad
     }
 
     MUTATING
-    void addGrad(float3 dL_dI, float3 viewDir)
+    void addGrad(float3 dL_dRadiance, float3 viewDir)
     {
         // viewDir 默认已经归一化
         for (int i = 0; i < SH_COUNT; i++)
         {
             float Y = calcSH(i, viewDir);
-            coefficients[i] += dL_dI * Y;
+            coefficients[i] += dL_dRadiance * Y;
         }
     }
 };
+
+struct SphericalHarmonicsOpacity
+{
+    float coefficients[SH_OPACITY_COUNT];
+
+    MUTATING
+    void init()
+    {
+        for (int i = 0; i < SH_OPACITY_COUNT; i++)
+        {
+            coefficients[i] = 0.0f;
+        }
+    }
+
+    // 计算指定方向上的 opacity logit
+    float calcLogit(float3 direction)
+    {
+        float logit = 0.0f;
+
+        SH_MAX_ITERS(SH_OPACITY_COUNT)
+        for (uint i = 0; i < SH_OPACITY_COUNT; ++i)
+        {
+            logit += coefficients[i] * calcSH(i, direction);
+        }
+
+        return logit;
+    }
+
+    // 计算最终透明度
+    float calcOpacity(float3 direction)
+    {
+        //return 1.0f;
+
+        float logit = calcLogit(direction);
+
+        //logit = clamp(logit, -10.0f, 10.0f);
+
+        return 1.0f / (1.0f + exp(-logit));
+    }
+
+    MUTATING
+    void addOpacityGrad(
+    float dL_dOpacity,
+    float opacity,
+    float3 viewDir)
+    {
+        float dL_dLogit =dL_dOpacity *opacity *(1.0f - opacity);
+
+
+        SH_MAX_ITERS(SH_OPACITY_COUNT)
+        for (uint i = 0; i < SH_OPACITY_COUNT; ++i)
+        {
+            float Y = calcSH(i, viewDir);
+
+            coefficients[i] +=
+            dL_dLogit * Y;
+        }
+    }
+
+};
+
 
 END_NAMESPACE_FALCOR

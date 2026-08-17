@@ -189,65 +189,73 @@ bool VoxelReconstructionNoLightTransport::loadReferenceCamerasFromFile(const std
 
 void VoxelReconstructionNoLightTransport::loadReferenceImages()
 {
-    //if (!mReferenceImages.empty() && !mReferenceCameras.empty())
-    //    return;
-
-    if (!mReferenceImages.empty())
-        return;
-
-    mReferenceImages.clear();
-    mReferenceCameras.clear();
-
-    const std::filesystem::path imageDir = ReferenceImageDir;
-    const std::filesystem::path cameraFile = ReferenceCameraFile;
-
     const uint32_t imageCount = mOptimizerParams.viewsPerIteration;
 
-    if (!loadReferenceCamerasFromFile(cameraFile.string()))
+    // 全部图片已经加载完成。
+    if (mReferenceImages.size() >= imageCount)
+        return;
+
+    // 第一帧：读取相机文件并预留图片空间。
+    if (mReferenceImages.empty())
     {
-        throw RuntimeError("Failed to load reference cameras.");
-    }
+        const std::filesystem::path cameraFile = ReferenceCameraFile;
 
-    if (mReferenceCameras.size() < imageCount)
-    {
-        std::stringstream err;
-        err << "Reference camera count is smaller than image count. camera count = " << mReferenceCameras.size()
-            << ", image count = " << imageCount;
+        mReferenceCameras.clear();
 
-        throw RuntimeError(err.str().c_str());
-    }
-
-    mReferenceImages.reserve(imageCount);
-
-    for (uint32_t i = 0; i < imageCount; ++i)
-    {
-        std::stringstream ss;
-        ss << "picture" << std::setw(3) << std::setfill('0') << i << ".exr";
-        //ss << "white.exr";
-
-        std::filesystem::path imagePath = imageDir / ss.str();
-        imagePath = std::filesystem::weakly_canonical(imagePath);
-
-        ref<Texture> image = Texture::createFromFile(mpDevice, imagePath, false, false);
-         logInfo(
-            "Reference texture created: size={}x{}, format={}", image->getWidth(), image->getHeight(), to_string(image->getFormat())
-        );
-
-        if (!image)
+        if (!loadReferenceCamerasFromFile(cameraFile.string()))
         {
-            std::string msg = "Failed to load reference image: " + imagePath.string();
-            throw RuntimeError(msg.c_str());
+            throw RuntimeError("Failed to load reference cameras.");
         }
 
-        mReferenceImages.push_back(image);
+        if (mReferenceCameras.size() < imageCount)
+        {
+            std::stringstream err;
+            err << "Reference camera count is smaller than image count. camera count = " << mReferenceCameras.size()
+                << ", image count = " << imageCount;
+
+            throw RuntimeError(err.str());
+        }
+
+        if (mReferenceCameras.size() > imageCount)
+        {
+            mReferenceCameras.resize(imageCount);
+        }
+
+        mReferenceImages.reserve(imageCount);
     }
 
-    if (mReferenceCameras.size() > imageCount)
+    // 本帧需要读取的图片序号。
+    const uint32_t imageIndex = static_cast<uint32_t>(mReferenceImages.size());
+
+    std::stringstream ss;
+    ss << "picture" << std::setw(3) << std::setfill('0') << imageIndex << ".exr";
+
+    std::filesystem::path imagePath = std::filesystem::path(ReferenceImageDir) / ss.str();
+
+    imagePath = std::filesystem::weakly_canonical(imagePath);
+
+    ref<Texture> image = Texture::createFromFile(mpDevice, imagePath, false, false);
+
+    if (!image)
     {
-        mReferenceCameras.resize(imageCount);
+        throw RuntimeError("Failed to load reference image: " + imagePath.string());
     }
 
-    logInfo("Reference dataset loaded.");
+    logInfo(
+        "Reference image loaded: {}/{}, size={}x{}, format={}",
+        imageIndex + 1,
+        imageCount,
+        image->getWidth(),
+        image->getHeight(),
+        to_string(image->getFormat())
+    );
+
+    mReferenceImages.push_back(image);
+
+    if (mReferenceImages.size() == imageCount)
+    {
+        logInfo("Reference dataset loaded.");
+    }
 }
 
 

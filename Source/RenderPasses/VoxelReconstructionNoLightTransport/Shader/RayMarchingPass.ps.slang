@@ -3,6 +3,7 @@ import Utils.Sampling.UniformSampleGenerator;
 import Utils.Math.MathHelpers;
 import Scene.SceneTypes;
 import Scene.Scene;
+import Utils.Debug.PixelDebug;
 
 
 #include "DiffShading.slang"
@@ -37,6 +38,8 @@ cbuffer CB
     //uint2 selectedPixel;
     bool enableReconstruction;
     float invSpp;
+    uint maxContributingVoxelCount;
+    float transmittanceThreshold;
 }
 
 RWStructuredBuffer<PathRecord> gPathRecordBuffer;
@@ -55,33 +58,6 @@ struct HitResult
     float3 cell;
 };
 
-struct RayMarchResult
-{
-    HitResult hit;
-
-    uint candidateCount;
-    GeometryCandidateRecord candidates[MAX_CANDIDATES];
-
-    MUTATING
-    void init()
-    {
-        hit.hit = false;
-        hit.cellInt = int3(0);
-        hit.cell = float3(0.0f);
-
-        candidateCount = 0;
-
-        for (uint i = 0; i < MAX_CANDIDATES; i++)
-        {
-            candidates[i].valid = 0;
-            candidates[i].cellInt = int3(0);
-            candidates[i].gmin = 1e30f;
-            candidates[i].xStar = float4(0.0f);
-            candidates[i].radiance = float4(0.0f);
-            candidates[i].behindColor = float4(0.0f);
-        }
-    }
-};
 
 float3 screenCoordToCell(float2 screenCoord, float NDCDepth){
     float4 NDC = float4(2 * screenCoord.x - 1, 1 - 2 * screenCoord.y, NDCDepth, 1);
@@ -107,6 +83,7 @@ float4 renderBackground(float3 direction){
     #endif
     return clearColor;
 }
+
 void calcVoxelLocalSegment(float3 cell,float3 direction,int3 cellInt,out float3 localFrom,out float3 localTo)
 {
     localFrom = cell - float3(cellInt);
@@ -190,102 +167,11 @@ void calcEllipsoidGMinOnSegment(
     xStarGlobal = float3(cellInt) + xStarLocal;
 }
 
-// candidate 插入 top-K
-void insertCandidateTopK(
-    inout RayMarchResult result,
-    GeometryCandidateRecord candidate)
-{
-    if (candidate.valid == 0)
-        return;
-
-    if (result.candidateCount < MAX_CANDIDATES)
-    {
-        result.candidates[result.candidateCount] = candidate;
-        result.candidateCount++;
-        return;
-    }
-
-    uint worstIndex = 0;
-    float worstG = result.candidates[0].gmin;
-
-    for (uint i = 1; i < MAX_CANDIDATES; i++)
-    {
-        if (result.candidates[i].gmin > worstG)
-        {
-            worstG = result.candidates[i].gmin;
-            worstIndex = i;
-        }
-    }
-
-    if (candidate.gmin < worstG)
-    {
-        result.candidates[worstIndex] = candidate;
-    }
-}
-
-// 每遇到一个 solid voxel，都可以生成 candidate
-GeometryCandidateRecord makeGeometryCandidate(
-    int3 cellInt,
-    float3 cell,
-    float3 direction,
-    float3 viewDir)
-{
-    GeometryCandidateRecord cand;
-
-    cand.valid = 0;
-    cand.cellInt = cellInt;
-    cand.gmin = 1e30f;
-    cand.xStar = float4(0.0f);
-    cand.radiance = float4(0.0f);
-    cand.behindColor = float4(0.0f);
-
-    if (any(cellInt < int3(0)) || any(cellInt >= int3(gGridDataParamBlock.voxelCount)))
-        return cand;
-
-    int offset = CellToIndex(uint3(cellInt), gGridDataParamBlock.voxelCount);
-
-    if ( offset < 0)
-        return cand;
-
-    VoxelData voxel = gGridDataParamBlock.gridDataBuffer[(uint)offset];
-
-    //if (voxel.occupied == 0)
-    //    return cand;
-
-    float3 localFrom;
-    float3 localTo;
-
-    calcVoxelLocalSegment(cell, direction, cellInt, localFrom, localTo);
-
-    float gmin;
-    float3 xStarGlobal;
-
-    calcEllipsoidGMinOnSegment(
-        voxel.ellipsoid,
-        localFrom,
-        localTo,
-        cellInt,
-        gmin,
-        xStarGlobal
-    );
-
-    float3 L = voxel.radiance.calc(viewDir);
-
-    cand.valid = 1;
-    cand.cellInt = cellInt;
-    cand.gmin = gmin;
-    cand.xStar = float4(xStarGlobal, 1.0f);
-    cand.radiance = float4(L, 1.0f);
-    cand.behindColor = float4(0.0f);
-
-    return cand;
-}
-
-
-HitResult rayMarching_Mipmap(float3 from, float3 direction, bool ignoreFirst)
+HitResult rayMarching_Mipmap(float3 from, float3 direction, bool ignoreFirst, int3 initialCellInt)
 {
     float3 cell = from;
-    int3 cellInt = int3(floor(from));
+    // int3 cellInt = int3(floor(from));
+    int3 cellInt = initialCellInt;
 
     float3 reciprocal_direction = 1.0f / direction;
     // 可选的前进方向
@@ -316,7 +202,6 @@ HitResult rayMarching_Mipmap(float3 from, float3 direction, bool ignoreFirst)
                     uint offset = CellToIndex(cellInt, gGridDataParamBlock.voxelCount);
                     Ellipsoid ellipsoid = gGridDataParamBlock.gridDataBuffer[offset].ellipsoid;
                     HitResult hit = checkPrimitive(ellipsoid, cell, direction, cellInt);
-                    //HitResult hit = checkPrimitive(gGridDataParamBlock.gridDataBuffer[offset].densityPrimitive, cell, direction, cellInt);
                     if (hit.hit)
                         return hit;
     #endif
@@ -334,65 +219,7 @@ HitResult rayMarching_Mipmap(float3 from, float3 direction, bool ignoreFirst)
     return hit;
 }
 
-HitResult rayMarching_Mipmap(float3 from, float3 direction, float maxDistance, bool ignoreFirst)
-{
-    float3 cell = from;
-    int3 cellInt = int3(floor(from));
-    float distance = 0;
-
-    float3 reciprocal_direction = 1.0f / direction;
-    // 可选的前进方向
-    int3 directions = int3(sign(direction));
-    if (ignoreFirst)
-        distance += leave(cell, cellInt, directions, direction, reciprocal_direction);
-
-    while (true)
-    {
-        if (any(cellInt < int3(0)) || any(cellInt >= (int3)voxelCount))
-            break;
-        if (distance > maxDistance) // 非正数表示不限制距离
-            break;
-
-        int3 blockInt = cellInt / BLOCK_TO_VOXEL;
-        if (isSolidBlock(blockInt))
-        {
-            int3 current = blockInt;
-            while (all(current == blockInt))
-            {
-                if (any(cellInt < int3(0)) || any(cellInt >= (int3)voxelCount))
-                    break;
-                if (distance > maxDistance) // 非正数表示不限制距离
-                    break;
-                //int offset;
-                if (isSolidVoxel(cellInt)) // 理论上不会出现面积为0的情况
-                {
-    #if !CHECK_PRIMITIVE
-                    HitResult hit = { true, cellInt, cellInt + 0.5f };
-                    return hit;
-    #else
-                    uint offset = CellToIndex(cellInt, gGridDataParamBlock.voxelCount);
-                    Ellipsoid ellipsoid = gGridDataParamBlock.gridDataBuffer[offset].ellipsoid;
-                    HitResult hit = checkPrimitive(ellipsoid, cell, direction, cellInt);
-                    //HitResult hit = checkPrimitive(gGridDataParamBlock.gridDataBuffer[offset].densityPrimitive, cell, direction, cellInt);
-                    if (hit.hit)
-                        return hit;
-    #endif
-                }
-                distance += leave(cell, cellInt, directions, direction, reciprocal_direction);
-                current = cellInt / BLOCK_TO_VOXEL;
-            }
-        }
-        else
-        {
-            distance += leaveBlock(cell, cellInt, directions, direction, reciprocal_direction);
-        }
-    }
-    HitResult hit = { false, cellInt, cellInt + 0.5f };
-    return hit;
-}
-
-
-HitResult rayMarching(float3 from, float3 direction, float maxDistance, bool ignoreFirst){
+HitResult rayMarching(float3 from, float3 direction, bool ignoreFirst, int3 initialCellInt){
     direction = normalizeSafe(direction);
     if (all(direction == float3(0)))
     {
@@ -400,225 +227,107 @@ HitResult rayMarching(float3 from, float3 direction, float maxDistance, bool ign
         return hit;
     }
 
-    if (maxDistance > 0)
-        return rayMarching_Mipmap(from, direction, maxDistance, ignoreFirst);
-    return rayMarching_Mipmap(from, direction, ignoreFirst);
-
+    return rayMarching_Mipmap(from, direction, ignoreFirst, initialCellInt);
 }
 
-RayMarchResult rayMarchingCollectCandidates_Mipmap(float3 from, float3 direction, bool ignoreFirst)
-{
-    RayMarchResult result;
-    result.init();
-
-    float3 cell = from;
-    int3 cellInt = int3(floor(from));
-
-    direction = normalizeSafe(direction);
-
-    if (all(direction == float3(0.0f)))
-        return result;
-
-    float3 reciprocal_direction = 1.0f / direction;
-    int3 directions = int3(sign(direction));
-
-    float3 viewDir = -direction;
-
-    if (ignoreFirst)
-        leave(cell, cellInt, directions, direction, reciprocal_direction);
-
-    while (true)
-    {
-        if (any(cellInt < int3(0)) || any(cellInt >= int3(voxelCount)))
-            break;
-
-        int3 blockInt = cellInt / BLOCK_TO_VOXEL;
-
-        if (isSolidBlock(blockInt))
-        {
-            int3 current = blockInt;
-
-            while (all(current == blockInt))
-            {
-                if (any(cellInt < int3(0)) || any(cellInt >= int3(voxelCount)))
-                    break;
-
-                if (isSolidVoxel(cellInt))
-                {
-                    // 1. collect geometry candidate first.
-                    GeometryCandidateRecord cand = makeGeometryCandidate(
-                        cellInt,
-                        cell,
-                        direction,
-                        viewDir
-                    );
-
-                    insertCandidateTopK(result, cand);
-
-    #if !CHECK_PRIMITIVE
-                    HitResult hit = { true, cellInt, float3(cellInt) + 0.5f };
-                    result.hit = hit;
-                    return result;
-    #else
-                    uint offset = CellToIndex(uint3(cellInt), gGridDataParamBlock.voxelCount);
-
-                    Ellipsoid ellipsoid = gGridDataParamBlock.gridDataBuffer[offset].ellipsoid;
-
-                    HitResult hit = checkPrimitive(ellipsoid, cell, direction, cellInt);
-
-                    if (hit.hit)
-                    {
-                        result.hit = hit;
-                        return result;
-                    }
-    #endif
-                }
-
-                leave(cell, cellInt, directions, direction, reciprocal_direction);
-
-                current = cellInt / BLOCK_TO_VOXEL;
-            }
-        }
-        else
-        {
-            leaveBlock(cell, cellInt, directions, direction, reciprocal_direction);
-        }
-    }
-
-    return result;
-}
-
-RayMarchResult rayMarchingCollectCandidates(float3 from, float3 direction, float maxDistance, bool ignoreFirst)
-{
-    // 第一版先不处理 maxDistance，和原始 -1 用法一致。
-    return rayMarchingCollectCandidates_Mipmap(from, direction, ignoreFirst);
-}
-
-float3 shadeHitOnly(HitResult hit, float3 viewDir)
-{
-    if (!hit.hit)
-        return float3(0.0f);
-
-    if (any(hit.cellInt < int3(0)) || any(hit.cellInt >= int3(gGridDataParamBlock.voxelCount)))
-        return float3(0.0f);
-
-    if (!isSolidVoxel(hit.cellInt))
-        return float3(0.0f);
-
-    uint offset = CellToIndex(uint3(hit.cellInt), gGridDataParamBlock.voxelCount);
-
-    VoxelData voxel = gGridDataParamBlock.gridDataBuffer[offset];
-
-    // if (voxel.occupied == 0)
-    //    return float3(0.0f);
-
-    return voxel.radiance.calc(viewDir);
-}
-
-
-
-float3 computeNextColorAfterCurrentVoxel(HitResult hit, float3 direction)
-{
-    float3 cell = hit.cell;
-    int3 cellInt = hit.cellInt;
-
-    direction = normalizeSafe(direction);
-
-    if (all(direction == float3(0.0f)))
-        return float3(0.0f);
-
-    float3 reciprocal_direction = 1.0f / direction;
-    int3 directions = int3(sign(direction));
-
-    // leave current voxel explicitly.
-    leave(cell, cellInt, directions, direction, reciprocal_direction);
-
-    cell += 1e-5f * direction;
-
-    HitResult nextHit = rayMarching(cell, direction, -1.0f, false);
-
-    if (!nextHit.hit)
-        return renderBackground(direction).rgb;
-
-    return shadeHitOnly(nextHit, -direction);
-}
-
-float3 shadingGlobal(HitResult hit, float3 v, uint bounce, uint2 pixel,inout UniformSampleGenerator sg)
-{
-    uint indexPathRecordBuffer = pixel.y * pixelCount.x + pixel.x;
-    SceneGradientInfo gradInfo = SceneGradientInfo(
-        SceneGradientFlag.make(GradientMode.None),
-            pixel,
-            indexPathRecordBuffer
-        );
-
-    SceneGradientInfo.Differential dGradInfo;
-    dGradInfo.flag = SceneGradientFlag.make(GradientMode.None);
-
-    DifferentialPair<SceneGradientInfo> dpGradInfo = diffPair(gradInfo, dGradInfo);
-    return evalPixelColorFromPathAD(gradInfo, hit.cellInt, float4(v, 0.0f), gGridDataParamBlock.voxelCount);
-
-    //return shadeHitOnly(hit, normalizeSafe(v));
-}
-
-void recordPath(
-    uint2 pixel,
-    RayMarchResult result,
-    float3 forwardColor,
-    float3 LHit,
-    float3 CBehind,
-    float3 viewDir,
-    float3 rayDir)
+float3 shadingGlobal(HitResult firstHit, float3 direction, uint contributingVoxelCount, uint2 pixel,inout UniformSampleGenerator sg)
 {
     uint bufferIndex = PixelToIndex(pixel, pixelCount);
 
-    gPathRecordBuffer[bufferIndex].valid = result.hit.hit ? 1 : 0;
+    HitResult hits[MAX_CONTRIBUTING_VOXELS_PER_RAY];
+    contributingVoxelCount = min(contributingVoxelCount, (uint)MAX_CONTRIBUTING_VOXELS_PER_RAY);
 
-    gPathRecordBuffer[bufferIndex].viewDir = float4(viewDir, 0.0f);
-    gPathRecordBuffer[bufferIndex].rayDir = float4(rayDir, 0.0f);
+    float3 accumulatedColor = float3(0.0f);
+    float transmittance = 1.0f;
 
-    gPathRecordBuffer[bufferIndex].pathContribution = float4(forwardColor, 1.0f);
-    gPathRecordBuffer[bufferIndex].nextContribution = float4(CBehind, 1.0f);
-
-    if (result.hit.hit)
+    HitResult currentHit = firstHit;
+    uint actualHitCount = 0;
+    for (uint i = 0; i < contributingVoxelCount; ++i)
     {
-        gPathRecordBuffer[bufferIndex].hitCellInt = result.hit.cellInt;
-        gPathRecordBuffer[bufferIndex].hitCell = float4(result.hit.cell, 1.0f);
+        if (!currentHit.hit)
+            break;
+
+        if (any(currentHit.cellInt < int3(0)) ||
+            any(currentHit.cellInt >= int3(voxelCount)))
+        {
+            break;
+        }
+
+        // 保存当前有效命中，后续可用于梯度计算
+        hits[actualHitCount] = currentHit;
+        actualHitCount++;
+
+        uint voxelIndex = CellToIndex(
+            uint3(currentHit.cellInt),
+            gGridDataParamBlock.voxelCount
+        );
+
+        VoxelData data =
+            gGridDataParamBlock.gridDataBuffer[voxelIndex];
+
+        // direction 是相机指向场景；
+        // -direction 是体素指向相机的观察方向
+        float3 radiance = data.radiance.calc(-direction);
+        float opacity = data.opacity.calcOpacity(-direction);
+        opacity = saturate(opacity);
+
+        if (enableReconstruction) {
+            VoxelRecord voxelRecord;
+            voxelRecord.cellInt = currentHit.cellInt;
+            voxelRecord.hitPosition = currentHit.cell;
+            voxelRecord.radiance = radiance;
+            voxelRecord.opacity = opacity;
+            voxelRecord.transmittanceBefore = transmittance;
+
+            gPathRecordBuffer[bufferIndex].voxels[i] = voxelRecord;
+        }
+
+
+        accumulatedColor += transmittance * opacity * radiance;
+        transmittance *= 1.0f - opacity;
+
+        if (transmittance <= transmittanceThreshold)
+            break;
+
+        currentHit = rayMarching(
+            currentHit.cell,
+            direction,
+            true,
+            currentHit.cellInt
+        );
+
+        if (i == 0) {
+            print("first opacitySH0 : ", data.opacity.coefficients[0]);
+            print("first opacity : ", opacity);
+        }
+            
+
     }
 
-    gPathRecordBuffer[bufferIndex].candidateCount = result.candidateCount;
+    accumulatedColor += transmittance * renderBackground(direction).xyz;
 
-    for (uint i = 0; i < MAX_CANDIDATES; i++)
-    {
-        if (i >= result.candidateCount)
-        {
-            gPathRecordBuffer[bufferIndex].candidates[i].valid = 0;
-            continue;
-        }
-
-        GeometryCandidateRecord cand = result.candidates[i];
-
-        if (result.hit.hit)
-        {
-            if (all(cand.cellInt == result.hit.cellInt))
-                cand.behindColor = float4(CBehind, 1.0f);
-            else
-                cand.behindColor = float4(LHit, 1.0f);
-        }
-        else
-        {
-            cand.behindColor = float4(forwardColor, 1.0f);
-        }
-
-        gPathRecordBuffer[bufferIndex].candidates[i] = cand;
+    if (enableReconstruction) {
+        gPathRecordBuffer[bufferIndex].contributingVoxelCount = actualHitCount;
+        gPathRecordBuffer[bufferIndex].viewDir = normalize(-direction);
+        gPathRecordBuffer[bufferIndex].backgroundColor = renderBackground(direction).xyz;
+        gPathRecordBuffer[bufferIndex].finalColor = accumulatedColor;
     }
+
+    print("actualHitCount : ", actualHitCount);
+
+
+    return accumulatedColor;
 }
+
+
 
 
 PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
 {
     PsOut psOut = {};
     uint2 pixel = uint2(texCoord * pixelCount);
+    printSetPixel(pixel);
+
     float2 jitter = randomJitter();
     texCoord = saturate(texCoord + jitter);
     float3 from = screenCoordToCell(texCoord, 0);
@@ -629,7 +338,7 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
 
     uint bufferIndex = PixelToIndex(pixel, pixelCount);
     gPathRecordBuffer[bufferIndex].init();
-    gPathRecordBuffer[bufferIndex].backGroundColor = renderBackground(direction);
+    gPathRecordBuffer[bufferIndex].backgroundColor = renderBackground(direction).xyz;
 
     float2 inOut = clip(float3(0), float3(voxelCount), from, to);
     if (inOut.x < 0) {
@@ -638,48 +347,25 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
         return psOut;
     }
         
-
-
     UniformSampleGenerator sg = UniformSampleGenerator(pixel, frameIndex);
     from = from + (inOut.x + 1e-6) * delta;
 
-    //HitResult hit;
-    //hit = rayMarching(from, direction, -1, false);
+    HitResult hit;
+    hit = rayMarching(from, direction, false,int3(floor(from)));
 
-    RayMarchResult marchResult = rayMarchingCollectCandidates(from, direction, -1.0f, false);
-    HitResult hit = marchResult.hit;
-    float3 forwardColor = psOut.color.rgb;
-    float3 LHit = float3(0.0f);
-    float3 CBehind = forwardColor;
 
     if (hit.hit)
     {
+        gPathRecordBuffer[bufferIndex].valid = 1;
+
+        float3 color = 0;
         switch (drawMode)
         {
         case ABSDFDrawMode::Default:
-            LHit = shadingGlobal(hit, -direction, 0, pixel, sg);
-            CBehind = computeNextColorAfterCurrentVoxel(hit, direction);
-            forwardColor = LHit;
-            break;
-
-        case ABSDFDrawMode::Occupancy:
-            forwardColor = (float3(hit.cellInt) + 0.5f) / float3(voxelCount);
+            color = shadingGlobal(hit, direction, maxContributingVoxelCount, pixel, sg);
+            psOut.color = float4(color, 1.0f);
             break;
         }
-    }
-    psOut.color = float4(forwardColor, 1.0f);
-
-    if (enableReconstruction && drawMode == ABSDFDrawMode::Default)
-    {
-        recordPath(
-        pixel,
-        marchResult,
-        forwardColor,
-        LHit,
-        CBehind,
-        -direction,
-        direction
-    );
     }
 
     gAccuColor[pixel].xyz += psOut.color.xyz * invSpp;

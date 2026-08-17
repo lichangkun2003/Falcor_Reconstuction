@@ -117,10 +117,10 @@ void VoxelReconstructionNoLightTransport::rayMarchingPass(RenderContext* pRender
         cb["invVP"] = math::inverse(pCamera->getViewProjMatrixNoJitter());
         cb["shadowBias"] = pass.mShadowBias100 / 100 / mGridResources.gridData.voxelSize.x;
         cb["drawMode"] = pass.mDrawMode;
-        //cb["maxBounce"] = pass.mMaxBounce;
+        cb["maxContributingVoxelCount"] = pass.mMaxContributingVoxelCount;
         cb["frameIndex"] = pass.mFrameIndex;
         //cb["minPdf"] = params.mMinPdf100 / 100;
-        //cb["trasmittanceThreshold"] = pass.mTrasmittanceThreshold100 / 100;
+        cb["transmittanceThreshold"] = pass.mTransmittanceThreshold;
         //cb["selectedPixel"] = mSelectedPixel;
         cb["renderBackGround"] = pass.mRenderBackGround;
         cb["clearColor"] = float4(pass.mClearColor, 0);
@@ -129,6 +129,8 @@ void VoxelReconstructionNoLightTransport::rayMarchingPass(RenderContext* pRender
 
         ref<Fbo> fbo = Fbo::create(mpDevice);
         fbo->attachColorTarget(pOutputColor, 0);
+
+        mpPixelDebug->prepareProgram(pass.mpFullScreenPass->getProgram(), pass.mpFullScreenPass->getRootVar());
         pass.mpFullScreenPass->execute(pRenderContext, fbo);
 
         

@@ -139,6 +139,7 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
     // auto& pTexture = renderData.getTexture("src");
     if (!mpScene)
         return;
+    loadReferenceImages();
 
     mFrameDim = renderData.getDefaultTextureDims();
     mInvFrameDim = 1.0f / float2(mFrameDim);
@@ -344,7 +345,7 @@ void VoxelReconstructionNoLightTransport::setScene(RenderContext* pRenderContext
     // Reduce Pass
     createReducePassResource(pRenderContext);
 
-    loadReferenceImages();
+
 }
 
 
@@ -477,6 +478,7 @@ void VoxelReconstructionNoLightTransport::proccessXuData(RenderContext* pRenderC
     cb["gLrCenter"] = mUpdatePass.mLrCenter;
     cb["gLrB"] = mUpdatePass.mLrB;
     cb["gLrRadiance"] = mUpdatePass.mLrRadiance;
+    cb["gLrOpacity"] = mUpdatePass.mLrOpacity;
 
     ShaderVar gridBlock = mpGridBlock->getRootVar();
     gridBlock["blockOM"] = renderData.getTexture(kBlockMap);

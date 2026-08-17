@@ -147,6 +147,8 @@ public:
         float mShadowBias100;
         uint mDrawMode;
         bool mRenderBackGround;
+        uint mMaxContributingVoxelCount;
+        float mTransmittanceThreshold;
 
         uint mSpp = 1;
         uint mSampleIndex = 0;
@@ -169,6 +171,8 @@ public:
             mShadowBias100 = 0.01f;
             mDrawMode = 0;
             mRenderBackGround = true;
+            mMaxContributingVoxelCount = MAX_CONTRIBUTING_VOXELS_PER_RAY;
+            mTransmittanceThreshold = 0.01f;
 
             accuColor = nullptr;
 
@@ -221,6 +225,7 @@ public:
         float mLrRadiance;
         float mLrCenter;
         float mLrB;
+        float mLrOpacity;
 
         // Prune Ellipsoid
         float mEllipsoidPruneThreshold;
@@ -233,8 +238,9 @@ public:
             mUseGradCountNormalize = true;
             mGradScale = 1.0f;
 
-            mLrRadiance = 0.001f;
-            
+            mLrRadiance = 0.1f;
+            mLrOpacity = 15.0f;
+
             mLrCenter = 0.f;
             mLrB = 0.f;
 

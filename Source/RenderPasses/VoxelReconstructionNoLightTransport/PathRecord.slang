@@ -19,18 +19,37 @@ struct GeometryCandidateRecord
 
 };
 
+struct VoxelRecord
+{
+    float3 hitPosition;
+    int3 cellInt;
+
+    float3 radiance;
+    float opacity;
+    float transmittanceBefore;
+
+    MUTATING
+    void init() {
+        hitPosition = float3(0);
+        cellInt = int3(0);
+        radiance = float3(0);
+        opacity = 0.0f;
+        transmittanceBefore = 1.0f;
+    }
+};
+
 
 struct PathRecord
 {
     uint valid;
-    int3 hitCellInt; // xyz = hit.cellInt
-    float4 hitCell;     // xyz = hit.cell
-    float4 viewDir;     // xyz = view direction
-    float4 rayDir;     // xyz = view direction
+    float3 viewDir;  // xyz = view direction = - ray direction
+    float3 backgroundColor;
+    float3 finalColor;
 
-    float4 pathContribution; // L_hit
-    float4 nextContribution; // C_behind
-    float4 backGroundColor;
+    // Radiance & Opacity
+    uint contributingVoxelCount;
+    VoxelRecord voxels[MAX_CONTRIBUTING_VOXELS_PER_RAY];
+
 
     // Geometry
     uint candidateCount;
@@ -39,13 +58,15 @@ struct PathRecord
     MUTATING
     void init() {
         valid = 0;
-        hitCellInt = int3(0);
-        hitCell = float4(0);  // xyz = hit.cell
-        viewDir = float4(0);  // xyz = view direction
-        rayDir = float4(0);  // xyz = ray direction
+        viewDir = float3(0); 
+        backgroundColor = float3(0);
+        finalColor = float3(0);
 
-        pathContribution = float4(0);
-        nextContribution = float4(0);
+        contributingVoxelCount = 0;
+        for (uint i = 0; i < MAX_CONTRIBUTING_VOXELS_PER_RAY; i++)
+        {
+            voxels[i].init();
+        }
 
         candidateCount = 0;
         for (uint i = 0; i < MAX_CANDIDATES; i++)

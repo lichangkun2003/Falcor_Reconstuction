@@ -33,6 +33,8 @@ std::string VoxelReconstructionNoLightTransport::getOptimizedParamTag() const
 
     if (mUpdatePass.mLrRadiance > 0.0f)
         tags.push_back("radiance");
+    if (mUpdatePass.mLrOpacity > 0.0f)
+        tags.push_back("opacity");
 
     if (mUpdatePass.mLrCenter > 0.0f)
         tags.push_back("center");

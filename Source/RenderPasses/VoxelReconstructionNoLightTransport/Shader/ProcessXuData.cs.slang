@@ -13,6 +13,7 @@ cbuffer GridData {
     float gLrCenter;
     float gLrB;
     float gLrRadiance;
+    float gLrOpacity;
 }
 
 bool isSolidVoxelXu(int3 cellInt, out int offset)
@@ -94,14 +95,20 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
 
         setSolidVoxel(cellInt);
 
-        
         VoxelData data = gGridDataParamBlock.gridDataBuffer[index];
+        data.opacity.init();
 
         //----------------------------------------------------
         data.ellipsoid = pBuffer[offset];
 
         if (gLrRadiance > 0.0f) {
             data.radiance.init();
+
+            //data.radiance.coefficients[0] = float3(0.15f, 0.35f, 0.65f) / 0.2820948f;
+        }
+
+        if( gLrOpacity > 0.0f) {
+            data.opacity.init();
         }
        
         // -------------------------
