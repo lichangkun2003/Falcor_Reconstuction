@@ -483,8 +483,8 @@ void VoxelReconstructionNoLightTransport::proccessXuData(RenderContext* pRenderC
     ShaderVar gridBlock = mpGridBlock->getRootVar();
     gridBlock["blockOM"] = renderData.getTexture(kBlockMap);
 
-    //pRenderContext->clearUAV(mGridResources.blockOM->getUAV().get(), uint4(0xFFFFFFFFu));
-    //gridBlock["blockOM"] = mGridResources.blockOM;
+    pRenderContext->clearUAV(mGridResources.blockOM->getUAV().get(), uint4(0xFFFFFFFFu));
+    gridBlock["blockOM"] = mGridResources.blockOM;
 
     mpProcessXuDataPass->execute(pRenderContext, mGridResources.gridData.voxelCount);
 }

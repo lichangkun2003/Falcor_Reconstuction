@@ -83,28 +83,26 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
 
     //gGridDataParamBlock.vBuffer[cellInt] = -1;
 
-    if (!isSolidBlockXu(blockInt))
-       return;
+    //if (!isSolidBlockXu(blockInt))
+    //   return;
     int offset;
     //----------------------------------------------------
-    if (isSolidVoxelXu(cellInt, offset))
+    //if (isSolidVoxelXu(cellInt, offset))
     {
-        // setSolidBlock(blockInt);
-        //gGridDataParamBlock.vBuffer[cellInt] = offset;
+
         int index = CellToIndex(dispatchThreadId, gGridDataParamBlock.voxelCount);
 
         setSolidVoxel(cellInt);
 
         VoxelData data = gGridDataParamBlock.gridDataBuffer[index];
         data.opacity.init();
+        data.opacity.coefficients[0] = 16.29f;
 
         //----------------------------------------------------
-        data.ellipsoid = pBuffer[offset];
+        //data.ellipsoid = pBuffer[offset];
 
         if (gLrRadiance > 0.0f) {
             data.radiance.init();
-
-            //data.radiance.coefficients[0] = float3(0.15f, 0.35f, 0.65f) / 0.2820948f;
         }
 
         if( gLrOpacity > 0.0f) {

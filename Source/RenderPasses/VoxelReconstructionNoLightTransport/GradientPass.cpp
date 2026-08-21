@@ -57,14 +57,14 @@ void VoxelReconstructionNoLightTransport::runGradientPass(RenderContext* pRender
     pRenderContext->clearUAV(mGradientPass.gradBuffer->getUAV().get(), uint4(0));
     pRenderContext->uavBarrier(mpPathRecordBuffer.get());
 
-    mpSceneGradients->clearGrads(pRenderContext, GradientType::VoxelSH);
+    //mpSceneGradients->clearGrads(pRenderContext, GradientType::VoxelSH);
 
     //mGradientPass.mpComputePass->addDefine("CHECK_VISIBILITY", mRayMarchingPass.mCheckVisibility ? "1" : "0");
     //mGradientPass.mpComputePass->addDefine("CHECK_COVERAGE", mRayMarchingPass.mCheckCoverage ? "1" : "0");
 
     auto var = mGradientPass.mpComputePass->getRootVar();
 
-    mpSceneGradients->bindShaderData(var["gSceneGradients"]);
+    //mpSceneGradients->bindShaderData(var["gSceneGradients"]);
 
     var["gGridDataParamBlock"] = mpGridBlock;
     var["gDL_dColorBuffer"] = mLossPass.dL_dColor;
@@ -79,8 +79,9 @@ void VoxelReconstructionNoLightTransport::runGradientPass(RenderContext* pRender
     cb["gVoxelCount"] = mGridResources.gridData.voxelCount;
     cb["gGeometryTau"] = mGradientPass.geometryTau;
     cb["gGeometryGradClamp"] = mGradientPass.geometryGradClamp;
+    cb["gBackgroundCarveWeight"] = 0.01f;
 
-    //mpPixelDebug->prepareProgram(mGradientPass.mpComputePass->getProgram(), mGradientPass.mpComputePass->getRootVar());
+    mpPixelDebug->prepareProgram(mGradientPass.mpComputePass->getProgram(), mGradientPass.mpComputePass->getRootVar());
 
     mGradientPass.mpComputePass->execute(
         pRenderContext, uint3(mRayMarchingPass.mOutputResolution.x, mRayMarchingPass.mOutputResolution.y, 1)

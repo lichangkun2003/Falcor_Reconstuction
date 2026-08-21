@@ -13,9 +13,20 @@ struct GeometryCandidateRecord
     float gmin;   // ray vs ellipsoid implicit min value
     float4 xStar; // closest point on ray segment
 
-    float4 radiance; // L_candidate
+    float transmittanceBefore;
+    uint frontHitCount;
 
-    float4 behindColor; // C_next (for loss gradient)
+    MUTATING
+    void init() {
+        valid = 0;
+        cellInt = int3(0);
+
+        gmin = 1e30f;
+        xStar = float4(0.0f);
+
+        transmittanceBefore = 1.0f;
+        frontHitCount = 0;
+    }
 
 };
 
@@ -28,6 +39,10 @@ struct VoxelRecord
     float opacity;
     float transmittanceBefore;
 
+    // Geometry information for this actual hard hit.
+    float gmin;
+    float4 xStar;
+
     MUTATING
     void init() {
         hitPosition = float3(0);
@@ -35,6 +50,8 @@ struct VoxelRecord
         radiance = float3(0);
         opacity = 0.0f;
         transmittanceBefore = 1.0f;
+        gmin = 1e30f;
+        xStar = float4(0);
     }
 };
 
@@ -71,8 +88,7 @@ struct PathRecord
         candidateCount = 0;
         for (uint i = 0; i < MAX_CANDIDATES; i++)
         {
-            candidates[i].valid = 0;
-            candidates[i].gmin = 1e30f;
+            candidates[i].init();
         }
     }
 };

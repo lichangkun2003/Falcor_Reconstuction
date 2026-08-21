@@ -374,8 +374,8 @@ void pruneEllipsoid(inout VoxelData voxel)
     if (voxel.occupied == 0)
         return;
 
+    // 删除截断椭球体积占比较小的voxel
     float ratio = calcEllipsoidVoxelVolumeRatio(voxel.ellipsoid);
-
     // B异常时暂不删除
     if (ratio < 0.0f)
         return;

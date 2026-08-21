@@ -73,7 +73,7 @@ void VoxelReconstructionNoLightTransport::runLossPass(RenderContext* pRenderCont
 {
     pRenderContext->clearTexture(mLossPass.lossBuffer.get());
     pRenderContext->clearTexture(mLossPass.dL_dColor.get());
-    pRenderContext->clearTexture(mLossPass.mpBackGroundMask.get());
+    //pRenderContext->clearTexture(mLossPass.mpBackGroundMask.get());
 
     auto var = mLossPass.mpComputePass->getRootVar();
 
