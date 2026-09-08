@@ -16,6 +16,7 @@
 // Radiance
 #define SH_COUNT 9
 
+
 // Opacity
 #define SH_OPACITY_COUNT 9
 

@@ -35,7 +35,7 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
     if (all(R == float3(1.0f)))
         gBackgroundMaskBuffer[pixel] = 1;
 
-    gBackgroundMaskBuffer[pixel] = 0;
+    //gBackgroundMaskBuffer[pixel] = 0;
 
     gDL_dColorBuffer[pixel] = float4(dL_dColor, 0.0);
 }

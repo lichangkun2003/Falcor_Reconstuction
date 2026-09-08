@@ -396,6 +396,24 @@ float3 shadingGlobal(
         // direction 是相机指向场景；
         // -direction 是体素指向相机的观察方向
         float3 radiance = data.radiance.calc(-direction);
+        radiance = max(radiance, 0.0f);
+        //float3 rawRadiance = data.radiance.calc(-direction);
+        //float3 radiance;
+        //if (any(rawRadiance < 0.0f))
+        //{
+        //    // 紫色：radiance 被优化成负数
+        //    radiance = float3(1.0f, 0.0f, 1.0f);
+        //}
+        //else if (max(rawRadiance.x,max(rawRadiance.y, rawRadiance.z)) < 0.02f)
+        //{
+        //    // 绿色：radiance 基本没学起来
+        //    radiance = float3(0.0f, 1.0f, 0.0f);
+        //}
+        //else
+        //{
+        //    radiance = rawRadiance;
+        //}
+
         float opacity = data.opacity.calcOpacity(-direction);
         opacity = saturate(opacity);
 
