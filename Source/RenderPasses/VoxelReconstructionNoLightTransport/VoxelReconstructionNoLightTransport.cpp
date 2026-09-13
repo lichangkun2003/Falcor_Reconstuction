@@ -95,25 +95,25 @@ RenderPassReflection VoxelReconstructionNoLightTransport::reflect(const CompileD
 
     RenderPassReflection reflector;
     // Input
-    reflector.addInput(kVBuffer, kVBuffer)
-        .bindFlags(ResourceBindFlags::ShaderResource)
-        .format(ResourceFormat::R32Uint)
-        .texture3D();
+    //reflector.addInput(kVBuffer, kVBuffer)
+    //    .bindFlags(ResourceBindFlags::ShaderResource)
+    //    .format(ResourceFormat::R32Uint)
+    //    .texture3D();
 
-    reflector.addInput(kGBuffer, kGBuffer)
-        .bindFlags(ResourceBindFlags::UnorderedAccess | ResourceBindFlags::ShaderResource)
-        .format(ResourceFormat::Unknown)
-        .rawBuffer(mGridResources.gridData.solidVoxelCount * sizeof(PrimitiveBSDF));
+    //reflector.addInput(kGBuffer, kGBuffer)
+    //    .bindFlags(ResourceBindFlags::UnorderedAccess | ResourceBindFlags::ShaderResource)
+    //    .format(ResourceFormat::Unknown)
+    //    .rawBuffer(mGridResources.gridData.solidVoxelCount * sizeof(PrimitiveBSDF));
 
-    reflector.addInput(kPBuffer, kPBuffer)
-        .bindFlags(ResourceBindFlags::ShaderResource)
-        .format(ResourceFormat::Unknown)
-        .rawBuffer(mGridResources.gridData.solidVoxelCount * sizeof(Ellipsoid));
+    //reflector.addInput(kPBuffer, kPBuffer)
+    //    .bindFlags(ResourceBindFlags::ShaderResource)
+    //    .format(ResourceFormat::Unknown)
+    //    .rawBuffer(mGridResources.gridData.solidVoxelCount * sizeof(Ellipsoid));
 
-    reflector.addInput(kBlockMap, kBlockMap)
-        .bindFlags(ResourceBindFlags::ShaderResource)
-        .format(ResourceFormat::RGBA32Uint)
-        .texture2D();
+    //reflector.addInput(kBlockMap, kBlockMap)
+    //    .bindFlags(ResourceBindFlags::ShaderResource)
+    //    .format(ResourceFormat::RGBA32Uint)
+    //    .texture2D();
 
     // Output
     reflector.addOutput("dummy", "Dummy")
@@ -212,6 +212,7 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
             }
         }
     }
+
 
     endFrame(pRenderContext);
 }
@@ -315,20 +316,20 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
 void VoxelReconstructionNoLightTransport::setScene(RenderContext* pRenderContext, const ref<Scene>& pScene)
 {
     mpScene = pScene;
-    UpdateVoxelGrid(mpScene, mVoxelResolution);
+    UpdateVoxelGrid(mVoxelResolution);
     setupGridResouce(pRenderContext, true);
 
 
 
     // Auto Diff
-    mVoxelSHGradDim = mGridResources.gridData.totalVoxelCount() * SH_COUNT * 3;
-    std::vector<SceneGradients::GradConfig> gradConfigs;
-    gradConfigs.push_back(SceneGradients::GradConfig(
-        GradientType::VoxelSH,
-        mVoxelSHGradDim,
-        1 // hashSize，第一版建议先用 1
-    ));
-    mpSceneGradients = make_ref<SceneGradients>(mpDevice, gradConfigs, GradientAggregateMode::Direct);
+    //mVoxelSHGradDim = mGridResources.gridData.totalVoxelCount() * SH_COUNT * 3;
+    //std::vector<SceneGradients::GradConfig> gradConfigs;
+    //gradConfigs.push_back(SceneGradients::GradConfig(
+    //    GradientType::VoxelSH,
+    //    mVoxelSHGradDim,
+    //    1 // hashSize，第一版建议先用 1
+    //));
+    //mpSceneGradients = make_ref<SceneGradients>(mpDevice, gradConfigs, GradientAggregateMode::Direct);
 
     // RayMarching
     createRayMarchingPassResource(pRenderContext);
@@ -362,37 +363,112 @@ void VoxelReconstructionNoLightTransport::endFrame(RenderContext* pRenderContext
     mRayMarchingPass.mFrameIndex = mFrameCount;
 }
 
-void VoxelReconstructionNoLightTransport::UpdateVoxelGrid(ref<Scene> scene, uint voxelResolution)
-{
-    float3 diag;
-    float length;
-    float3 center;
-    if (scene)
-    {
-        AABB aabb = scene->getSceneBounds();
-        diag = aabb.maxPoint - aabb.minPoint;
-        length = std::max(diag.z, std::max(diag.x, diag.y));
-        center = aabb.center();
-        diag *= 1.02f;
-        length *= 1.02f;
-    }
-    else
-    {
-        diag = float3(1);
-        length = 1.f;
-        center = float3(0);
-    }
+//void VoxelReconstructionNoLightTransport::UpdateVoxelGrid(uint voxelResolution)
+//{
+//    float3 diag;
+//    float length;
+//    float3 center;
+//    if (scene)
+//    {
+//        AABB aabb = scene->getSceneBounds();
+//        diag = aabb.maxPoint - aabb.minPoint;
+//        length = std::max(diag.z, std::max(diag.x, diag.y));
+//        center = aabb.center();
+//        diag *= 1.02f;
+//        length *= 1.02f;
+//    }
+//    else
+//    {
+//        diag = float3(1);
+//        length = 1.f;
+//        center = float3(0);
+//    }
+//
+//    mGridResources.gridData.voxelSize = float3(length / voxelResolution);
+//    float3 temp = diag / mGridResources.gridData.voxelSize;
+//
+//    mGridResources.gridData.voxelCount = uint3(
+//        (uint)math::ceil(temp.x / MinFactor.x) * MinFactor.x,
+//        (uint)math::ceil(temp.y / MinFactor.y) * MinFactor.y,
+//        (uint)math::ceil(temp.z / MinFactor.z) * MinFactor.z
+//    );
+//    mGridResources.gridData.gridMin = center - 0.5f * mGridResources.gridData.voxelSize * float3(mGridResources.gridData.voxelCount);
+//    // mGridResources.gridData.solidVoxelCount = 0;
+//}
 
-    mGridResources.gridData.voxelSize = float3(length / voxelResolution);
+void VoxelReconstructionNoLightTransport::UpdateVoxelGrid(uint voxelResolution)
+{
+    //
+    // NeRF synthetic reconstruction domain.
+    //
+    // 手动指定 AABB。
+    //
+    const float3 aabbMin = float3(-1.3f);
+    const float3 aabbMax = float3(1.3f);
+
+    float3 diag = aabbMax - aabbMin;
+    float3 center = 0.5f * (aabbMin + aabbMax);
+
+    //
+    // 最长边划分为 voxelResolution 个 voxel，
+    // 其他方向根据实际 AABB 尺寸决定 voxel 数量。
+    //
+    float length = std::max(diag.x, std::max(diag.y, diag.z));
+
+    //
+    // 给边界留一点余量。
+    //
+    constexpr float padding = 1.02f;
+
+    diag *= padding;
+    length *= padding;
+
+    //
+    // Voxel size.
+    //
+    mGridResources.gridData.voxelSize = float3(length / static_cast<float>(voxelResolution));
+
+    //
+    // Calculate voxel count in XYZ.
+    //
     float3 temp = diag / mGridResources.gridData.voxelSize;
 
     mGridResources.gridData.voxelCount = uint3(
-        (uint)math::ceil(temp.x / MinFactor.x) * MinFactor.x,
-        (uint)math::ceil(temp.y / MinFactor.y) * MinFactor.y,
-        (uint)math::ceil(temp.z / MinFactor.z) * MinFactor.z
+        static_cast<uint>(math::ceil(temp.x / MinFactor.x)) * MinFactor.x,
+
+        static_cast<uint>(math::ceil(temp.y / MinFactor.y)) * MinFactor.y,
+
+        static_cast<uint>(math::ceil(temp.z / MinFactor.z)) * MinFactor.z
     );
+
+    //
+    // Actual voxel grid min position.
+    //
+    // 注意这里不是直接使用 aabbMin，
+    // 因为 voxelCount 经过 ceil / MinFactor 对齐以后，
+    // 实际 grid 大小可能略大于指定的 AABB。
+    //
     mGridResources.gridData.gridMin = center - 0.5f * mGridResources.gridData.voxelSize * float3(mGridResources.gridData.voxelCount);
-    // mGridResources.gridData.solidVoxelCount = 0;
+
+    logInfo(
+        "Reconstruction voxel grid initialized:"
+        " center=({}, {}, {}),"
+        " voxelSize=({}, {}, {}),"
+        " voxelCount=({}, {}, {}),"
+        " gridMin=({}, {}, {})",
+        center.x,
+        center.y,
+        center.z,
+        mGridResources.gridData.voxelSize.x,
+        mGridResources.gridData.voxelSize.y,
+        mGridResources.gridData.voxelSize.z,
+        mGridResources.gridData.voxelCount.x,
+        mGridResources.gridData.voxelCount.y,
+        mGridResources.gridData.voxelCount.z,
+        mGridResources.gridData.gridMin.x,
+        mGridResources.gridData.gridMin.y,
+        mGridResources.gridData.gridMin.z
+    );
 }
 
 
@@ -468,10 +544,10 @@ void VoxelReconstructionNoLightTransport::proccessXuData(RenderContext* pRenderC
     //pRenderContext->clearUAV(mGridResources.blockOM->getUAV().get(), uint4(0));
 
     auto var = mpProcessXuDataPass->getRootVar();
-    var[kVBuffer] = renderData.getTexture(kVBuffer);
-    var[kGBuffer] = renderData.getResource(kGBuffer)->asBuffer();
-    var[kPBuffer] = renderData.getResource(kPBuffer)->asBuffer();
-    var[kBlockMap] = renderData.getTexture(kBlockMap);
+    //var[kVBuffer] = renderData.getTexture(kVBuffer);
+    //var[kGBuffer] = renderData.getResource(kGBuffer)->asBuffer();
+    //var[kPBuffer] = renderData.getResource(kPBuffer)->asBuffer();
+    //var[kBlockMap] = renderData.getTexture(kBlockMap);
     var["gGridDataParamBlock"] = mpGridBlock;
 
     auto cb = var["GridData"];
@@ -481,7 +557,7 @@ void VoxelReconstructionNoLightTransport::proccessXuData(RenderContext* pRenderC
     cb["gLrOpacity"] = mUpdatePass.mLrOpacity;
 
     ShaderVar gridBlock = mpGridBlock->getRootVar();
-    gridBlock["blockOM"] = renderData.getTexture(kBlockMap);
+    //gridBlock["blockOM"] = renderData.getTexture(kBlockMap);
 
     pRenderContext->clearUAV(mGridResources.blockOM->getUAV().get(), uint4(0xFFFFFFFFu));
     gridBlock["blockOM"] = mGridResources.blockOM;

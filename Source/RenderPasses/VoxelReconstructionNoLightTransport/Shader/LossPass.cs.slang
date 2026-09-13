@@ -22,7 +22,10 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
         return;
 
     float3 C = gRenderedColor.Load(int3(pixel, 0)).rgb;
-    float3 R = gReferenceImage.Load(int3(pixel, 0)).rgb;
+
+    float4 ref = gReferenceImage.Load(int3(pixel, 0));
+    float alpha = ref.a;
+    float3 R = ref.rgb * alpha + float3(1.0f) * (1.0f - alpha);
 
     float3 diff = C - R;
 
@@ -32,12 +35,12 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
     gLossBuffer[pixel] = loss;
 
     gBackgroundMaskBuffer[pixel] = 0;
-    if (all(R == float3(1.0f)))
+    if (alpha < 1e-4f )
         gBackgroundMaskBuffer[pixel] = 1;
 
     //gBackgroundMaskBuffer[pixel] = 0;
 
-    gDL_dColorBuffer[pixel] = float4(dL_dColor, 0.0);
+    gDL_dColorBuffer[pixel] = float4(dL_dColor, 0.0f);
 }
 
 

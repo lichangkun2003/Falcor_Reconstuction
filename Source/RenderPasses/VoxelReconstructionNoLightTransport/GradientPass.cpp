@@ -89,6 +89,6 @@ void VoxelReconstructionNoLightTransport::runGradientPass(RenderContext* pRender
 
     pRenderContext->uavBarrier(mGradientPass.gradBuffer.get());
 
-    mpSceneGradients->aggregateGrads(pRenderContext, GradientType::VoxelSH);
+    //mpSceneGradients->aggregateGrads(pRenderContext, GradientType::VoxelSH);
 
 }

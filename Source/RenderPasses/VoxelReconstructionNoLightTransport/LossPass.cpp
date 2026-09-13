@@ -97,144 +97,409 @@ void VoxelReconstructionNoLightTransport::runLossPass(RenderContext* pRenderCont
 
 
 
+//bool VoxelReconstructionNoLightTransport::loadReferenceCamerasFromFile(const std::string& cameraFile)
+//{
+//    std::ifstream file(cameraFile);
+//    if (!file.is_open())
+//    {
+//        logError(std::string("Failed to open reference camera file: ") + cameraFile);
+//        return false;
+//    }
+//
+//    mReferenceCameras.clear();
+//
+//    std::string line;
+//
+//    while (std::getline(file, line))
+//    {
+//        if (line.empty())
+//            continue;
+//
+//        // 跳过注释行
+//        if (line[0] == '#')
+//            continue;
+//
+//        // 只解析这种完整格式：
+//        // Index: 000 Pos: px py pz Tar: tx ty tz Up: ux uy uz
+//        if (line.find("Index:") != 0)
+//            continue;
+//
+//        std::stringstream ss(line);
+//
+//        std::string indexLabel;
+//        std::string posLabel;
+//        std::string tarLabel;
+//        std::string upLabel;
+//
+//        uint32_t index = 0;
+//        float3 pos = float3(0.f);
+//        float3 target = float3(0.f);
+//        float3 up = float3(0.f, 1.f, 0.f);
+//
+//        ss >> indexLabel >> index >> posLabel >> pos.x >> pos.y >> pos.z >> tarLabel >> target.x >> target.y >> target.z >> upLabel >>
+//            up.x >> up.y >> up.z;
+//
+//        if (!ss)
+//        {
+//            logWarning(std::string("Failed to parse camera line: ") + line);
+//            continue;
+//        }
+//
+//        if (indexLabel != "Index:" || posLabel != "Pos:" || tarLabel != "Tar:" || upLabel != "Up:")
+//        {
+//            logWarning(std::string("Invalid camera line format: ") + line);
+//            continue;
+//        }
+//
+//        ref<Camera> cam = Camera::create();
+//
+//        cam->setPosition(pos);
+//        cam->setTarget(target);
+//        cam->setUpVector(up);
+//
+//        if (mpScene && mpScene->getCamera())
+//        {
+//            ref<Camera> sceneCam = mpScene->getCamera();
+//
+//            cam->setAspectRatio(sceneCam->getAspectRatio());
+//            cam->setFocalLength(sceneCam->getFocalLength());
+//        }
+//
+//        mReferenceCameras.push_back(cam);
+//        if (mReferenceCameras.size() >= mOptimizerParams.viewsPerIteration)
+//        {
+//            break;
+//        }
+//    }
+//
+//    if (mReferenceCameras.empty())
+//    {
+//        logError(std::string("No valid cameras loaded from file: ") + cameraFile);
+//        return false;
+//    }
+//
+//    {
+//        std::stringstream msg;
+//        msg << "Loaded " << mReferenceCameras.size() << " reference cameras from " << cameraFile;
+//        logInfo(msg.str());
+//    }
+//
+//    return true;
+//}
+
+//void VoxelReconstructionNoLightTransport::loadReferenceImages()
+//{
+//    const uint32_t imageCount = mOptimizerParams.viewsPerIteration;
+//
+//    // 全部图片已经加载完成。
+//    if (mReferenceImages.size() >= imageCount)
+//        return;
+//
+//    // 第一帧：读取相机文件并预留图片空间。
+//    if (mReferenceImages.empty())
+//    {
+//        const std::filesystem::path cameraFile = ReferenceCameraFile;
+//
+//        mReferenceCameras.clear();
+//
+//        if (!loadReferenceCamerasFromFile(cameraFile.string()))
+//        {
+//            throw RuntimeError("Failed to load reference cameras.");
+//        }
+//
+//        if (mReferenceCameras.size() < imageCount)
+//        {
+//            std::stringstream err;
+//            err << "Reference camera count is smaller than image count. camera count = " << mReferenceCameras.size()
+//                << ", image count = " << imageCount;
+//
+//            throw RuntimeError(err.str());
+//        }
+//
+//        if (mReferenceCameras.size() > imageCount)
+//        {
+//            mReferenceCameras.resize(imageCount);
+//        }
+//
+//        mReferenceImages.reserve(imageCount);
+//    }
+//
+//    // 本帧需要读取的图片序号。
+//    const uint32_t imageIndex = static_cast<uint32_t>(mReferenceImages.size());
+//
+//    std::stringstream ss;
+//    ss << "picture" << std::setw(3) << std::setfill('0') << imageIndex << ".exr";
+//
+//    std::filesystem::path imagePath = std::filesystem::path(ReferenceImageDir) / ss.str();
+//
+//    imagePath = std::filesystem::weakly_canonical(imagePath);
+//
+//    ref<Texture> image = Texture::createFromFile(mpDevice, imagePath, false, false);
+//
+//    if (!image)
+//    {
+//        throw RuntimeError("Failed to load reference image: " + imagePath.string());
+//    }
+//
+//    logInfo(
+//        "Reference image loaded: {}/{}, size={}x{}, format={}",
+//        imageIndex + 1,
+//        imageCount,
+//        image->getWidth(),
+//        image->getHeight(),
+//        to_string(image->getFormat())
+//    );
+//
+//    mReferenceImages.push_back(image);
+//
+//    if (mReferenceImages.size() == imageCount)
+//    {
+//        logInfo("Reference dataset loaded.");
+//    }
+//}
+
+
 bool VoxelReconstructionNoLightTransport::loadReferenceCamerasFromFile(const std::string& cameraFile)
 {
     std::ifstream file(cameraFile);
     if (!file.is_open())
     {
-        logError(std::string("Failed to open reference camera file: ") + cameraFile);
+        logError("Failed to open NeRF transform file: " + cameraFile);
         return false;
     }
 
-    mReferenceCameras.clear();
+    nlohmann::json jsonData;
 
-    std::string line;
-
-    while (std::getline(file, line))
+    try
     {
-        if (line.empty())
-            continue;
+        file >> jsonData;
+    }
+    catch (const std::exception& e)
+    {
+        logError("Failed to parse NeRF transform file: " + std::string(e.what()));
+        return false;
+    }
 
-        // 跳过注释行
-        if (line[0] == '#')
-            continue;
+    if (!jsonData.contains("camera_angle_x"))
+    {
+        logError("NeRF transform file does not contain camera_angle_x.");
+        return false;
+    }
 
-        // 只解析这种完整格式：
-        // Index: 000 Pos: px py pz Tar: tx ty tz Up: ux uy uz
-        if (line.find("Index:") != 0)
-            continue;
+    if (!jsonData.contains("frames") || !jsonData["frames"].is_array())
+    {
+        logError("NeRF transform file does not contain valid frames.");
+        return false;
+    }
 
-        std::stringstream ss(line);
+    const float cameraAngleX = jsonData["camera_angle_x"].get<float>();
 
-        std::string indexLabel;
-        std::string posLabel;
-        std::string tarLabel;
-        std::string upLabel;
+    mReferenceCameras.clear();
+    mReferenceImagePaths.clear();
 
-        uint32_t index = 0;
-        float3 pos = float3(0.f);
-        float3 target = float3(0.f);
-        float3 up = float3(0.f, 1.f, 0.f);
+    const float aspectRatio =
+        static_cast<float>(mRayMarchingPass.mOutputResolution.x) / static_cast<float>(mRayMarchingPass.mOutputResolution.y);
 
-        ss >> indexLabel >> index >> posLabel >> pos.x >> pos.y >> pos.z >> tarLabel >> target.x >> target.y >> target.z >> upLabel >>
-            up.x >> up.y >> up.z;
+    //
+    // Falcor 使用 frameHeight / focalLength 定义相机 FOV。
+    // NeRF 给的是 horizontal FOV，所以需要换算成 Falcor focalLength。
+    //
+    const float frameHeight = Camera::kDefaultFrameHeight;
+    const float frameWidth = frameHeight * aspectRatio;
 
-        if (!ss)
+    const float focalLength = 0.5f * frameWidth / std::tan(0.5f * cameraAngleX);
+
+    const auto& frames = jsonData["frames"];
+
+    for (size_t frameIndex = 0; frameIndex < frames.size(); ++frameIndex)
+    {
+        const auto& frame = frames[frameIndex];
+
+        if (!frame.contains("file_path") || !frame.contains("transform_matrix"))
         {
-            logWarning(std::string("Failed to parse camera line: ") + line);
+            logWarning("Invalid NeRF frame at index " + std::to_string(frameIndex));
             continue;
         }
 
-        if (indexLabel != "Index:" || posLabel != "Pos:" || tarLabel != "Tar:" || upLabel != "Up:")
+        //
+        // ------------------------------------------------------------
+        // 1. Image path
+        // ------------------------------------------------------------
+        //
+        std::string relativeImagePath = frame["file_path"].get<std::string>();
+
+        std::filesystem::path imagePath = std::filesystem::path(ReferenceImageDir) / relativeImagePath;
+
+        // NeRF json 中通常写 "./train/r_0"，没有 .png
+        if (!imagePath.has_extension())
         {
-            logWarning(std::string("Invalid camera line format: ") + line);
+            imagePath += ".png";
+        }
+
+        imagePath = std::filesystem::weakly_canonical(imagePath);
+
+        //
+        // ------------------------------------------------------------
+        // 2. Camera transform
+        // ------------------------------------------------------------
+        //
+        const auto& matrix = frame["transform_matrix"];
+
+        if (!matrix.is_array() || matrix.size() != 4)
+        {
+            logWarning("Invalid transform_matrix at frame " + std::to_string(frameIndex));
             continue;
         }
 
+        bool validMatrix = true;
+
+        for (uint32_t row = 0; row < 4; ++row)
+        {
+            if (!matrix[row].is_array() || matrix[row].size() != 4)
+            {
+                validMatrix = false;
+                break;
+            }
+        }
+
+        if (!validMatrix)
+        {
+            logWarning("Invalid 4x4 transform_matrix at frame " + std::to_string(frameIndex));
+            continue;
+        }
+
+        //
+        // NeRF synthetic / Blender:
+        //
+        // transform_matrix 是 Camera-to-World。
+        //
+        // column 0 : camera right
+        // column 1 : camera up
+        // column 2 : camera backward
+        // column 3 : camera position
+        //
+        // 因此：
+        //
+        // position = column 3
+        // up       = column 1
+        // forward  = -column 2
+        //
+
+        float3 position = float3(matrix[0][3].get<float>(), matrix[1][3].get<float>(), matrix[2][3].get<float>());
+
+        float3 up = float3(matrix[0][1].get<float>(), matrix[1][1].get<float>(), matrix[2][1].get<float>());
+
+        float3 forward = float3(-matrix[0][2].get<float>(), -matrix[1][2].get<float>(), -matrix[2][2].get<float>());
+
+        auto nerfToFalcor = [](const float3& v) { return float3(v.x, v.z, -v.y); };
+
+        position = nerfToFalcor(position);
+        up = math::normalize(nerfToFalcor(up));
+        forward = math::normalize(nerfToFalcor(forward));
+
+        float3 target = position + forward;
+
+        //
+        // ------------------------------------------------------------
+        // 3. Create Falcor camera
+        // ------------------------------------------------------------
+        //
         ref<Camera> cam = Camera::create();
 
-        cam->setPosition(pos);
+        cam->setPosition(position);
         cam->setTarget(target);
         cam->setUpVector(up);
 
-        if (mpScene && mpScene->getCamera())
-        {
-            ref<Camera> sceneCam = mpScene->getCamera();
-
-            cam->setAspectRatio(sceneCam->getAspectRatio());
-            cam->setFocalLength(sceneCam->getFocalLength());
-        }
+        cam->setFrameHeight(frameHeight);
+        cam->setAspectRatio(aspectRatio);
+        cam->setFocalLength(focalLength);
 
         mReferenceCameras.push_back(cam);
-        if (mReferenceCameras.size() >= mOptimizerParams.viewsPerIteration)
-        {
-            break;
-        }
+        mReferenceImagePaths.push_back(imagePath);
     }
 
     if (mReferenceCameras.empty())
     {
-        logError(std::string("No valid cameras loaded from file: ") + cameraFile);
+        logError("No valid NeRF cameras loaded from: " + cameraFile);
         return false;
     }
 
+    if (mReferenceCameras.size() != mReferenceImagePaths.size())
     {
-        std::stringstream msg;
-        msg << "Loaded " << mReferenceCameras.size() << " reference cameras from " << cameraFile;
-        logInfo(msg.str());
+        logError("NeRF camera/image count mismatch.");
+        return false;
     }
+
+    //
+    // 直接使用整个 train 集。
+    // NeRF synthetic train 正好是 100 张。
+    //
+    mOptimizerParams.viewsPerIteration = static_cast<uint32_t>(mReferenceCameras.size());
+
+    logInfo("Loaded NeRF training dataset: {} views, FOVx={} rad, focalLength={}", mReferenceCameras.size(), cameraAngleX, focalLength);
 
     return true;
 }
 
+
 void VoxelReconstructionNoLightTransport::loadReferenceImages()
 {
-    const uint32_t imageCount = mOptimizerParams.viewsPerIteration;
-
-    // 全部图片已经加载完成。
-    if (mReferenceImages.size() >= imageCount)
-        return;
-
-    // 第一帧：读取相机文件并预留图片空间。
-    if (mReferenceImages.empty())
+    //
+    // 第一次进入时先读取 transforms_train.json。
+    // 这一步会同时生成：
+    //
+    // mReferenceCameras
+    // mReferenceImagePaths
+    //
+    if (mReferenceCameras.empty() || mReferenceImagePaths.empty())
     {
-        const std::filesystem::path cameraFile = ReferenceCameraFile;
-
         mReferenceCameras.clear();
+        mReferenceImagePaths.clear();
+        mReferenceImages.clear();
 
-        if (!loadReferenceCamerasFromFile(cameraFile.string()))
+        if (!loadReferenceCamerasFromFile(ReferenceCameraFile))
         {
-            throw RuntimeError("Failed to load reference cameras.");
+            throw RuntimeError("Failed to load NeRF training dataset.");
         }
 
-        if (mReferenceCameras.size() < imageCount)
+        if (mReferenceCameras.size() != mReferenceImagePaths.size())
         {
-            std::stringstream err;
-            err << "Reference camera count is smaller than image count. camera count = " << mReferenceCameras.size()
-                << ", image count = " << imageCount;
-
-            throw RuntimeError(err.str());
+            throw RuntimeError("NeRF camera count does not match image path count.");
         }
 
-        if (mReferenceCameras.size() > imageCount)
-        {
-            mReferenceCameras.resize(imageCount);
-        }
+        mOptimizerParams.viewsPerIteration = static_cast<uint32_t>(mReferenceCameras.size());
 
-        mReferenceImages.reserve(imageCount);
+        mReferenceImages.reserve(mOptimizerParams.viewsPerIteration);
     }
 
-    // 本帧需要读取的图片序号。
+    const uint32_t imageCount = mOptimizerParams.viewsPerIteration;
+
+    //
+    // 全部 train 图片已经加载完。
+    //
+    if (mReferenceImages.size() >= imageCount)
+    {
+        return;
+    }
+
+    //
+    // 当前帧只加载一张图片。
+    //
     const uint32_t imageIndex = static_cast<uint32_t>(mReferenceImages.size());
 
-    std::stringstream ss;
-    ss << "picture" << std::setw(3) << std::setfill('0') << imageIndex << ".exr";
+    if (imageIndex >= mReferenceImagePaths.size())
+    {
+        throw RuntimeError("Reference image index exceeds image path count.");
+    }
 
-    std::filesystem::path imagePath = std::filesystem::path(ReferenceImageDir) / ss.str();
+    const std::filesystem::path& imagePath = mReferenceImagePaths[imageIndex];
 
-    imagePath = std::filesystem::weakly_canonical(imagePath);
+    if (!std::filesystem::exists(imagePath))
+    {
+        throw RuntimeError("Reference image does not exist: " + imagePath.string());
+    }
 
-    ref<Texture> image = Texture::createFromFile(mpDevice, imagePath, false, false);
+    ref<Texture> image = Texture::createFromFile(mpDevice, imagePath, false, true);
 
     if (!image)
     {
@@ -242,9 +507,10 @@ void VoxelReconstructionNoLightTransport::loadReferenceImages()
     }
 
     logInfo(
-        "Reference image loaded: {}/{}, size={}x{}, format={}",
+        "Reference image loaded: {}/{}, path={}, size={}x{}, format={}",
         imageIndex + 1,
         imageCount,
+        imagePath.string(),
         image->getWidth(),
         image->getHeight(),
         to_string(image->getFormat())
@@ -254,7 +520,7 @@ void VoxelReconstructionNoLightTransport::loadReferenceImages()
 
     if (mReferenceImages.size() == imageCount)
     {
-        logInfo("Reference dataset loaded.");
+        logInfo("NeRF training dataset loaded. {} images.", imageCount);
     }
 }
 

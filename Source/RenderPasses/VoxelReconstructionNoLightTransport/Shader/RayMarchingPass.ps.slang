@@ -272,6 +272,8 @@ HitResult rayMarching_Mipmap(
                         cand.transmittanceBefore = transmittanceBefore;
                         cand.frontHitCount = frontHitCount;
 
+                        //cand.sortScore = 1e30f;
+
                         // candidate数组还没有装满
                         if (candidateCount < (uint)MAX_CANDIDATES)
                         {

@@ -17,17 +17,17 @@ def render_graph_Pass():
 
     g.addEdge("VoxelizationPass.dummy","ReadVoxelPass.dummy")
 
-    g.addEdge("ReadVoxelPass.vBuffer","VoxelReconstruction.vBuffer")
-    g.addEdge("ReadVoxelPass.gBuffer","VoxelReconstruction.gBuffer")
-    g.addEdge("ReadVoxelPass.pBuffer","VoxelReconstruction.pBuffer")
-    g.addEdge("ReadVoxelPass.blockMap","VoxelReconstruction.blockMap")
+    #g.addEdge("ReadVoxelPass.vBuffer","VoxelReconstruction.vBuffer")
+    #g.addEdge("ReadVoxelPass.gBuffer","VoxelReconstruction.gBuffer")
+    #g.addEdge("ReadVoxelPass.pBuffer","VoxelReconstruction.pBuffer")
+    #g.addEdge("ReadVoxelPass.blockMap","VoxelReconstruction.blockMap")
 
 
 
     g.addEdge("VoxelReconstruction.color","AccumulatePass.input")
 
 
-    
+
     g.markOutput("VoxelReconstruction.color")
     g.markOutput("AccumulatePass.output")
     g.markOutput("VoxelReconstruction.dummy")
@@ -35,7 +35,7 @@ def render_graph_Pass():
     return g
 
 Graph = render_graph_Pass()
-try: 
+try:
     m.addGraph(Graph)
-except NameError: 
+except NameError:
     pass

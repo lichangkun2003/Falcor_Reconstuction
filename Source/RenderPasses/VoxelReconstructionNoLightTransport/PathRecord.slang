@@ -12,6 +12,7 @@ struct GeometryCandidateRecord
 
     float gmin;   // ray vs ellipsoid implicit min value
     float4 xStar; // closest point on ray segment
+    //float sortScore; //for candidate sort
 
     float transmittanceBefore;
     uint frontHitCount;
@@ -23,6 +24,7 @@ struct GeometryCandidateRecord
 
         gmin = 1e30f;
         xStar = float4(0.0f);
+        //sortScore = 1e30f;
 
         transmittanceBefore = 1.0f;
         frontHitCount = 0;

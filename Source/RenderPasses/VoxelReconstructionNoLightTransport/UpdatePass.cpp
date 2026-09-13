@@ -57,7 +57,7 @@ void VoxelReconstructionNoLightTransport::runUpdatePass(RenderContext* pRenderCo
     var["gGridDataParamBlock"] = mpGridBlock;
     var["gGradBuffer"] = mGradientPass.gradBuffer;
 
-    var["gVoxelSHGrads"] = mpSceneGradients->getGradsBuffer(GradientType::VoxelSH);
+    //var["gVoxelSHGrads"] = mpSceneGradients->getGradsBuffer(GradientType::VoxelSH);
 
     auto cb = var["CB"];
     cb["gUseGradCountNormalize"] = mUpdatePass.mUseGradCountNormalize;
@@ -66,7 +66,7 @@ void VoxelReconstructionNoLightTransport::runUpdatePass(RenderContext* pRenderCo
     cb["gLrCenter"] = mUpdatePass.mLrCenter;
     cb["gLrB"] = mUpdatePass.mLrB;
     cb["gLrOpacity"] = mUpdatePass.mLrOpacity;
-    cb["gVoxelSHGradDim"] = mVoxelSHGradDim;
+    //cb["gVoxelSHGradDim"] = mVoxelSHGradDim;
     cb["gEllipsoidPruneThreshold"] = mUpdatePass.mEllipsoidPruneThreshold;
     cb["gEnableEllipsoidPruning"] = mUpdatePass.mEnableEllipsoidPruning;
 

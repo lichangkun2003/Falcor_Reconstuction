@@ -4,8 +4,8 @@
 
 Texture3D<int> vBuffer;
 Texture2D<uint4> blockMap;
-StructuredBuffer<PrimitiveBSDF> gBuffer;
-StructuredBuffer<Ellipsoid> pBuffer;
+//StructuredBuffer<PrimitiveBSDF> gBuffer;
+//StructuredBuffer<Ellipsoid> pBuffer;
 
 cbuffer GridData {
     uint solidVoxelCount;
@@ -120,7 +120,7 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
         // phi = (x-c)^T B (x-c) - 1
         if (gLrB > 0.0f)
         {
-            float r = 0.35f;
+            float r = 0.6f;
             float invR2 = 1.0f / max(r * r, 1e-6f);
 
             data.ellipsoid.B = float3x3(

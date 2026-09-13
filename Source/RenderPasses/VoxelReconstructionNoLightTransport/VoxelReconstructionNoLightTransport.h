@@ -37,6 +37,7 @@
 #include <iomanip>
 #include <sstream>
 #include "DiffRendering/SceneGradients.h"
+#include <nlohmann/json.hpp>
 
 
 #include "Defines.h"
@@ -67,9 +68,9 @@ inline std::string kBlockMap = "blockMap";
 inline std::string kOutputColor = "color";
 inline std::string kAccumulateOutputColor = "AccuColor";
 
-inline std::string ReferenceImageDir = "D:/lck/vs/Reconstruction_Input/lego_white_256";
-inline std::string ReferenceCameraFile = "D:/lck/vs/Reconstruction_Input/lego_white_256/camera_params.txt";
 inline std::string ReconstructionDataDir = "D:/lck/vs/Reconstruction_Output";
+inline std::string ReferenceImageDir = "D:/lck/vs/Reconstruction_Input/lego";
+inline std::string ReferenceCameraFile = "D:/lck/vs/Reconstruction_Input/lego/transforms_train.json";
 } // namespace VoxelPrime
 
 class VoxelReconstructionNoLightTransport : public RenderPass
@@ -99,7 +100,7 @@ public:
 
     void setupGridResouce(RenderContext* pRenderContext, bool forceReset);
     void proccessXuData(RenderContext* pRenderContext, const RenderData& renderData);
-    void UpdateVoxelGrid(ref<Scene> scene, uint voxelResolution);
+    void UpdateVoxelGrid(uint voxelResolution);
 
     void createRayMarchingPassResource(RenderContext* pRenderContext);
     void rayMarchingPass(RenderContext* pRenderContext, const RenderData& renderData);
@@ -165,7 +166,7 @@ public:
 
             mOptionsChanged = false;
             mFrameIndex = 0;
-            mOutputResolution = uint2(1920, 1080);
+            mOutputResolution = uint2(800, 800);
             mClearColor = float3(0);
             mCheckPrimitive = true;
             mShadowBias100 = 0.01f;
@@ -241,10 +242,10 @@ public:
             mLrRadiance = 0.1f;
             mLrOpacity = 15.0f;
 
-            mLrCenter = 0.f;
-            mLrB = 0.f;
+            mLrCenter = 0.5f;
+            mLrB = 1.0f;
 
-            mEllipsoidPruneThreshold = 0.01f;
+            mEllipsoidPruneThreshold = 0.03f;
             mEnableEllipsoidPruning = false;
         }
     };
@@ -258,7 +259,7 @@ public:
         uint32_t currentIteration = 0;
 
         // 每次 iteration 使用多少个 camera/view
-        uint32_t viewsPerIteration = 300;
+        uint32_t viewsPerIteration = 100;
         uint32_t currentView = 0;
 
         void reset()
@@ -313,11 +314,12 @@ private:
     // Voxel Optimization
     std::vector<ref<Texture>> mReferenceImages;
     std::vector<ref<Camera>> mReferenceCameras;
+    std::vector<std::filesystem::path> mReferenceImagePaths;
     ref<Buffer> mpPathRecordBuffer;
 
     // Auto Diff
-    ref<SceneGradients> mpSceneGradients;
-    uint32_t mVoxelSHGradDim = 0;
+    //ref<SceneGradients> mpSceneGradients;
+    //uint32_t mVoxelSHGradDim = 0;
 
     // UI
     bool mOptionsChanged = false;

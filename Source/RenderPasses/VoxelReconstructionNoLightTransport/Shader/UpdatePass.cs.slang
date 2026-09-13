@@ -4,7 +4,7 @@
 // Input
 StructuredBuffer<GradRecord> gGradBuffer;
 
-StructuredBuffer<float> gVoxelSHGrads;
+//StructuredBuffer<float> gVoxelSHGrads;
 
 cbuffer CB {
     // 是否按当前 voxel 命中的 pixel 数做平均
@@ -22,7 +22,7 @@ cbuffer CB {
     bool gEnableEllipsoidPruning;
 
 
-    uint gVoxelSHGradDim;
+    //uint gVoxelSHGradDim;
 }
 
 
