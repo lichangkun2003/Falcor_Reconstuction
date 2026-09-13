@@ -78,6 +78,10 @@ void VoxelReconstructionNoLightTransport::rayMarchingPass(RenderContext* pRender
     {
         pCamera = mReferenceCameras[mOptimizerParams.currentView];
     }
+    else if (mUseReferenceCamera)
+    {
+        pCamera = mReferenceCameras[testIndex];
+    }
     else
     {
         pCamera = mpScene->getCamera();

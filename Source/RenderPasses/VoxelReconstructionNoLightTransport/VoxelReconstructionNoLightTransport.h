@@ -242,8 +242,8 @@ public:
             mLrRadiance = 0.1f;
             mLrOpacity = 15.0f;
 
-            mLrCenter = 0.5f;
-            mLrB = 1.0f;
+            mLrCenter = 0.f;
+            mLrB = 0.f;
 
             mEllipsoidPruneThreshold = 0.03f;
             mEnableEllipsoidPruning = false;
@@ -325,12 +325,13 @@ private:
     bool mOptionsChanged = false;
     bool mEnableReconstruction = false;
     bool mInitVoxelData = false;
+    bool mUseReferenceCamera = false;
     uint testIndex = 0;
     bool mSaveReconstructionRequested = false;
     bool mLoadReconstructionRequested = false;
     bool mReconstructionFileListDirty = true;
-    float mLrCenterScale = 0.0f; 
-    float mLrBScale = 0.0f; 
+    float mLrCenterScale = 0.5f; 
+    float mLrBScale = 1.0f; 
     std::vector<std::filesystem::path> mReconstructionFilePaths;
     uint32_t mSelectedReconstructionFile = 0;
     std::string mReconstructionNameTag = "";

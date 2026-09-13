@@ -235,6 +235,7 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
     widget.var("Geometry Grad Clamp", mGradientPass.geometryTau, 0.0f, 10.0f, 1e-4f);
     widget.var("Spp", mRayMarchingPass.mSpp, 1u, 100u,1u);
 
+    widget.checkbox("Use ReferenceCamera", mUseReferenceCamera);
     widget.slider("Camera Index", testIndex, 0u, mOptimizerParams.viewsPerIteration - 1u);
     widget.checkbox("Init Voxel Data", mInitVoxelData);
 

@@ -115,6 +115,8 @@ void calcVoxelLocalSegment(float3 cell,float3 direction,int3 cellInt,out float3 
 
 
 
+
+
 float evalEllipsoidImplicit(Ellipsoid ellipsoid, float3 xLocal)
 {
     float3 q = xLocal - ellipsoid.center;
@@ -158,6 +160,77 @@ void calcEllipsoidGMinOnSegment(
 
     xStarGlobal = float3(cellInt) + xStarLocal;
 }
+
+float calcCandidateSortScore(
+    Ellipsoid ellipsoid,
+    int3 cellInt,
+    float gmin,
+    float3 xStarCell,
+    float3 rayOriginCell)
+{
+    // ---------------------------------------------------------
+    // 1. gmin -> 近似世界空间 surface gap
+    // ---------------------------------------------------------
+
+    // xStarCell 是 global cell-space。
+    float3 xLocal =
+        xStarCell - float3(cellInt);
+
+    float3 q =
+        xLocal - ellipsoid.center;
+
+    float3 Bq =
+        mul(ellipsoid.B, q);
+
+    float3 gradPhiWorld =
+        (2.0f * Bq) /
+        max(voxelSize, float3(1e-6f));
+
+    float gradNormWorld =
+        max(length(gradPhiWorld), 1e-6f);
+
+    // 一阶 signed-distance approximation。
+    // 对 near-miss candidate，gmin >= 0。
+    float gapWorld =
+        max(gmin, 0.0f) / gradNormWorld;
+
+    // ---------------------------------------------------------
+    // 2. gap normalization
+    // ---------------------------------------------------------
+
+    float voxelScale =
+        max(voxelSize.x, 1e-6f);
+
+    float gapNorm =
+        gapWorld / voxelScale;
+
+    // ---------------------------------------------------------
+    // 3. 距离相机（当前先用 ray near-plane origin）
+    // ---------------------------------------------------------
+
+    float3 deltaWorld =
+        (xStarCell - rayOriginCell) * voxelSize;
+
+    float depthWorld =
+        length(deltaWorld);
+
+    float sceneDiagonal =
+        length(float3(voxelCount) * voxelSize);
+
+    float depthNorm =
+        depthWorld / max(sceneDiagonal, 1e-6f);
+
+    // ---------------------------------------------------------
+    // 4. Weighted score
+    // gap 主导，depth 只作为弱约束
+    // ---------------------------------------------------------
+
+    const float depthWeight = 0.05f;
+
+    return gapNorm +
+           depthWeight * depthNorm;
+}
+
 
 // 先后用体素和椭球裁剪线段
 HitResult checkPrimitive(Ellipsoid ellipsoid, float3 cell, float3 direction, int3 cellInt)
@@ -215,6 +288,7 @@ HitResult rayMarching_Mipmap(
     float3 direction,
     bool ignoreFirst,
     int3 initialCellInt,
+    float3 rayOriginCell,
     uint bufferIndex,
     float transmittanceBefore,
     uint frontHitCount,
@@ -272,7 +346,13 @@ HitResult rayMarching_Mipmap(
                         cand.transmittanceBefore = transmittanceBefore;
                         cand.frontHitCount = frontHitCount;
 
-                        //cand.sortScore = 1e30f;
+                        cand.sortScore = calcCandidateSortScore(
+                            ellipsoid,
+                            cellInt,
+                            hit.gmin,
+                            hit.xStar.xyz,
+                            rayOriginCell
+                        );
 
                         // candidate数组还没有装满
                         if (candidateCount < (uint)MAX_CANDIDATES)
@@ -280,7 +360,7 @@ HitResult rayMarching_Mipmap(
                             uint insertIndex = candidateCount;
 
                             // 数组按gmin从小到大排序
-                            while (insertIndex > 0 && gPathRecordBuffer[bufferIndex].candidates[insertIndex - 1].gmin > cand.gmin)
+                            while (insertIndex > 0 && gPathRecordBuffer[bufferIndex].candidates[insertIndex - 1].sortScore > cand.sortScore)
                             {
                                 gPathRecordBuffer[bufferIndex].candidates[insertIndex] =
                                     gPathRecordBuffer[bufferIndex].candidates[insertIndex - 1];
@@ -290,12 +370,12 @@ HitResult rayMarching_Mipmap(
                             gPathRecordBuffer[bufferIndex].candidates[insertIndex] = cand;
                             candidateCount++;
                         }
-                        // 数组已经装满，只考虑替换当前最大的gmin
-                        else if ( cand.gmin < gPathRecordBuffer[bufferIndex].candidates[MAX_CANDIDATES - 1].gmin)
+                        // 数组已经装满，只考虑替换当前最大的sortScore
+                        else if (cand.sortScore < gPathRecordBuffer[bufferIndex].candidates[MAX_CANDIDATES - 1].sortScore)
                         {
                             uint insertIndex = MAX_CANDIDATES - 1;
 
-                            while (insertIndex > 0 && gPathRecordBuffer[bufferIndex].candidates[insertIndex - 1].gmin > cand.gmin)
+                            while (insertIndex > 0 && gPathRecordBuffer[bufferIndex].candidates[insertIndex - 1].sortScore > cand.sortScore)
                             {
                                 gPathRecordBuffer[bufferIndex].candidates[insertIndex] =
                                     gPathRecordBuffer[bufferIndex].candidates[insertIndex - 1];
@@ -328,6 +408,7 @@ HitResult rayMarching(
     float3 direction,
     bool ignoreFirst,
     int3 initialCellInt,
+    float3 rayOriginCell,
     uint bufferIndex,
     float transmittanceBefore,
     uint frontHitCount,
@@ -346,6 +427,7 @@ HitResult rayMarching(
         direction,
         ignoreFirst,
         initialCellInt,
+        rayOriginCell,
 
         bufferIndex,
         transmittanceBefore,
@@ -359,6 +441,7 @@ float3 shadingGlobal(
     float3 direction,
     uint contributingVoxelCount,
     uint2 pixel,
+    float3 rayOriginCell,
     inout UniformSampleGenerator sg,
     inout uint candidateCount)
 {
@@ -441,13 +524,13 @@ float3 shadingGlobal(
             break;
         if (actualHitCount >= contributingVoxelCount)
             break;
-        
 
         currentHit = rayMarching(
             currentHit.cell,
             direction,
             true,
             currentHit.cellInt,
+            rayOriginCell,
 
             bufferIndex,
             transmittance,
@@ -493,6 +576,8 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
     float3 direction = normalize(delta); // 网格/世界空间下的方向相同
     psOut.color = renderBackground(direction);
 
+    float3 rayOriginCell = from;
+
     uint bufferIndex = PixelToIndex(pixel, pixelCount);
     gPathRecordBuffer[bufferIndex].init();
     gPathRecordBuffer[bufferIndex].backgroundColor = renderBackground(direction).xyz;
@@ -508,6 +593,7 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
     UniformSampleGenerator sg = UniformSampleGenerator(pixel, frameIndex);
     from = from + (inOut.x + 1e-6) * delta;
 
+
     HitResult hit;
     uint candidateCount = 0;
     hit = rayMarching(
@@ -515,6 +601,7 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
         direction,
         false,
         int3(floor(from)),
+        rayOriginCell,
         bufferIndex,
         1.0f,
         0,
@@ -531,7 +618,7 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
         switch (drawMode)
         {
         case ABSDFDrawMode::Default:
-            color = shadingGlobal(hit, direction, maxContributingVoxelCount, pixel, sg,candidateCount);
+            color = shadingGlobal(hit, direction, maxContributingVoxelCount, pixel, rayOriginCell, sg,candidateCount);
             psOut.color = float4(color, 1.0f);
             break;
         }
