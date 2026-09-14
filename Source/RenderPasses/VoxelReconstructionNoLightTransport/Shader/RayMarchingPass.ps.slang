@@ -436,7 +436,7 @@ HitResult rayMarching(
     );
 }
 
-float3 shadingGlobal(
+float4 shadingGlobal(
     HitResult firstHit,
     float3 direction,
     uint contributingVoxelCount,
@@ -545,6 +545,7 @@ float3 shadingGlobal(
     }
 
     accumulatedColor += transmittance * renderBackground(direction).xyz;
+    float renderAlpha = 1.0f - transmittance;
 
     if (enableReconstruction) {
         gPathRecordBuffer[bufferIndex].contributingVoxelCount = actualHitCount;
@@ -555,8 +556,7 @@ float3 shadingGlobal(
 
     print("actualHitCount : ", actualHitCount);
 
-
-    return accumulatedColor;
+    return float4(accumulatedColor, renderAlpha);
 }
 
 
@@ -574,7 +574,9 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
     float3 to = screenCoordToCell(texCoord, 1);
     float3 delta = to - from;
     float3 direction = normalize(delta); // 网格/世界空间下的方向相同
-    psOut.color = renderBackground(direction);
+    //psOut.color = renderBackground(direction);
+    float3 backgroundColor = renderBackground(direction).xyz;
+    psOut.color = float4(backgroundColor, 0.0f);
 
     float3 rayOriginCell = from;
 
@@ -586,7 +588,7 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
     float2 inOut = clip(float3(0), float3(voxelCount), from, to);
     if (inOut.x < 0) {
         gAccuColor[pixel].xyz += psOut.color.xyz * invSpp;
-        gAccuColor[pixel].w = 1.0f;
+        gAccuColor[pixel].w += 0.0f;
         return psOut;
     }
         
@@ -614,12 +616,10 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
     {
         gPathRecordBuffer[bufferIndex].valid = 1;
 
-        float3 color = 0;
         switch (drawMode)
         {
         case ABSDFDrawMode::Default:
-            color = shadingGlobal(hit, direction, maxContributingVoxelCount, pixel, rayOriginCell, sg,candidateCount);
-            psOut.color = float4(color, 1.0f);
+            psOut.color = shadingGlobal(hit, direction, maxContributingVoxelCount, pixel, rayOriginCell, sg,candidateCount);
             break;
         }
     }
@@ -632,7 +632,8 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
     print("candidateCount : ", candidateCount);
 
     gAccuColor[pixel].xyz += psOut.color.xyz * invSpp;
-    gAccuColor[pixel].w = 1.0f;
+    gAccuColor[pixel].w += psOut.color.w * invSpp;
+    print("Alpha : ", gAccuColor[pixel].w);
 
     return psOut;
 

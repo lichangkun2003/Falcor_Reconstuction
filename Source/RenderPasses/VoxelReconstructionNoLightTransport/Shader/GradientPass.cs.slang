@@ -477,7 +477,9 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
     if (rec.valid == 0 && rec.candidateCount == 0)
         return;
 
-    float3 dL_dC = gDL_dColorBuffer.Load(int3(pixel, 0)).rgb;
+    float4 dL_dRGBA = gDL_dColorBuffer[pixel];
+    float3 dL_dC = dL_dRGBA.xyz;
+    float dL_dA = dL_dRGBA.w;
     bool isReferenceBackground = gBackgroundMaskBuffer[pixel] == 1;
 
     // -------------------------
@@ -486,8 +488,8 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
     if (rec.valid != 0)
     {
         uint hitCount = min(rec.contributingVoxelCount, (uint)MAX_CONTRIBUTING_VOXELS_PER_RAY);
-        float3 behindColor =
-        sanitizeFloat3(rec.backgroundColor.xyz);
+        float3 behindColor = sanitizeFloat3(rec.backgroundColor.xyz);
+        float transmittanceAfter = 1.0f;
         for (int i = int(hitCount) - 1; i >= 0; --i) {
             VoxelRecord voxelRec = rec.voxels[i];
             if (any(voxelRec.cellInt < int3(0)) || any(voxelRec.cellInt >= int3(gVoxelCount))){
@@ -499,7 +501,11 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
             float transmittanceBefore = clamp(sanitizeFloat(voxelRec.transmittanceBefore),0.0f,1.0f);
 
             float3 dL_dRadiance = dL_dC * transmittanceBefore * opacity;
-            float dL_dOpacity = dot(dL_dC,transmittanceBefore *(radiance - behindColor));
+            // float dL_dOpacity = dot(dL_dC,transmittanceBefore *(radiance - behindColor));
+            float dL_dOpacityRGB = dot(dL_dC, transmittanceBefore * (radiance - behindColor));
+            float dA_dOpacity = transmittanceBefore * transmittanceAfter;
+            float dL_dOpacityAlpha = dL_dA * dA_dOpacity;
+            float dL_dOpacity = dL_dOpacityRGB + dL_dOpacityAlpha;
 
             dL_dRadiance = sanitizeFloat3(dL_dRadiance);
             dL_dOpacity = sanitizeFloat(dL_dOpacity);
@@ -554,6 +560,9 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
             */
             behindColor = opacity * radiance +(1.0f - opacity) * behindColor;
             behindColor = sanitizeFloat3(behindColor);
+
+            transmittanceAfter *= (1.0f - opacity);
+            transmittanceAfter = clamp(sanitizeFloat(transmittanceAfter), 0.0f, 1.0f);
         }
   
     }
