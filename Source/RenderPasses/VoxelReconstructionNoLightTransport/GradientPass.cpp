@@ -80,7 +80,8 @@ void VoxelReconstructionNoLightTransport::runGradientPass(RenderContext* pRender
     cb["gGeometryTau"] = mGradientPass.geometryTau;
     cb["gGeometryGradClamp"] = mGradientPass.geometryGradClamp;
     cb["gBackgroundCarveWeight"] = 0.01f;
-
+    cb["gBinaryOpacityWeight"] = 0.003f;
+    
     mpPixelDebug->prepareProgram(mGradientPass.mpComputePass->getProgram(), mGradientPass.mpComputePass->getRootVar());
 
     mGradientPass.mpComputePass->execute(

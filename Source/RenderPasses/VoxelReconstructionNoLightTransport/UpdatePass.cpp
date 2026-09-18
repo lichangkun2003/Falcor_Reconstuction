@@ -45,9 +45,9 @@ void VoxelReconstructionNoLightTransport::runUpdatePass(RenderContext* pRenderCo
     //mUpdatePass.mpComputePass->addDefine("CHECK_VISIBILITY", mRayMarchingPass.mCheckVisibility ? "1" : "0");
     //mUpdatePass.mpComputePass->addDefine("CHECK_COVERAGE", mRayMarchingPass.mCheckCoverage ? "1" : "0");
 
-    if ((mOptimizerParams.currentIteration + 1) % 10 == 0)
+    if ((mOptimizerParams.currentIteration) % 10 == 0)
     {
-        //mUpdatePass.mEnableEllipsoidPruning = true;
+        mUpdatePass.mEnableEllipsoidPruning = true;
     }
 
 

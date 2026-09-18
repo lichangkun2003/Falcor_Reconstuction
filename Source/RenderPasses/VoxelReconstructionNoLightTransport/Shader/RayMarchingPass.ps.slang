@@ -318,7 +318,7 @@ HitResult rayMarching_Mipmap(
                 if (any(cellInt < int3(0)) || any(cellInt >= (int3)voxelCount))
                     break;
                 //int offset;
-                if (isSolidVoxel(cellInt)) // 理论上不会出现面积为0的情况
+                if (isSolidVoxel(cellInt)) 
                 {
     #if !CHECK_PRIMITIVE
                     HitResult hit = { true, cellInt, cellInt + 0.5f, -1.0f,
@@ -482,22 +482,6 @@ float4 shadingGlobal(
         // -direction 是体素指向相机的观察方向
         float3 radiance = data.radiance.calc(-direction);
         radiance = max(radiance, 0.0f);
-        //float3 rawRadiance = data.radiance.calc(-direction);
-        //float3 radiance;
-        //if (any(rawRadiance < 0.0f))
-        //{
-        //    // 紫色：radiance 被优化成负数
-        //    radiance = float3(1.0f, 0.0f, 1.0f);
-        //}
-        //else if (max(rawRadiance.x,max(rawRadiance.y, rawRadiance.z)) < 0.02f)
-        //{
-        //    // 绿色：radiance 基本没学起来
-        //    radiance = float3(0.0f, 1.0f, 0.0f);
-        //}
-        //else
-        //{
-        //    radiance = rawRadiance;
-        //}
 
         float opacity = data.opacity.calcOpacity(-direction);
         opacity = saturate(opacity);
@@ -516,6 +500,15 @@ float4 shadingGlobal(
             gPathRecordBuffer[bufferIndex].voxels[i] = voxelRecord;
         }
 
+        {
+            //float weight = transmittance * opacity;
+
+            //print("hit index : ", i);
+            //print("cell : ", currentHit.cellInt);
+            //print("opacity : ", opacity);
+            //print("T_before : ", transmittance);
+            //print("weight : ", weight);
+        }
 
         accumulatedColor += transmittance * opacity * radiance;
         transmittance *= 1.0f - opacity;
@@ -538,7 +531,7 @@ float4 shadingGlobal(
             candidateCount);
 
         //if (i == 0) {
-        //    print("first opacitySH0 : ", data.opacity.coefficients[0]);
+        //    print("first radiance : ", radiance);
         //    print("first opacity : ", opacity);
         //}
             
@@ -629,10 +622,11 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
         gPathRecordBuffer[bufferIndex].candidateCount = candidateCount;
     }
 
-    print("candidateCount : ", candidateCount);
+    //print("candidateCount : ", candidateCount);
 
     gAccuColor[pixel].xyz += psOut.color.xyz * invSpp;
     gAccuColor[pixel].w += psOut.color.w * invSpp;
+
     print("Alpha : ", gAccuColor[pixel].w);
 
     return psOut;

@@ -69,6 +69,7 @@ inline std::string kOutputColor = "color";
 inline std::string kAccumulateOutputColor = "AccuColor";
 
 inline std::string ReconstructionDataDir = "D:/lck/vs/Reconstruction_Output";
+inline std::string ReconstructionLossDataDir = "D:/lck/vs/Reconstruction_Output/Loss";
 inline std::string ReferenceImageDir = "D:/lck/vs/Reconstruction_Input/lego";
 inline std::string ReferenceCameraFile = "D:/lck/vs/Reconstruction_Input/lego/transforms_train.json";
 } // namespace VoxelPrime
@@ -129,6 +130,7 @@ public:
     void saveReconstruction(RenderContext* pRenderContext);
     void loadReconstruction(RenderContext* pRenderContext, const std::filesystem::path& path);
     void refreshReconstructionFileList();
+    void saveLossHistory() const;
 
     struct GridResources
     {
@@ -279,6 +281,13 @@ public:
         ref<ComputePass> mpReduceBufferPass;
 
         float meanLoss = 0.0f;
+
+        // 当前 iteration 内所有 view 的 loss 累加
+        float iterationLossSum = 0.0f;
+        uint32_t iterationLossCount = 0;
+
+        // 每个 iteration 一个点
+        std::vector<float> iterationLossHistory;
     };
 
 private:

@@ -311,6 +311,60 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
         mpPixelDebug->renderUI(group);
     }
 
+    // Show Loss Graph
+    {
+        Gui::Window lossWindow(widget, "Loss Curve", uint2(600, 300), uint2(20, 20), Gui::WindowFlags::Default);
+
+        if (lossWindow.gui())
+        {
+            lossWindow.text(fmt::format("Iteration: {}", mOptimizerParams.currentIteration));
+
+            lossWindow.text(fmt::format("Current view mean loss: {:.8f}", mReduceLossPass.meanLoss));
+
+            if (!mReduceLossPass.iterationLossHistory.empty())
+            {
+                const auto& history = mReduceLossPass.iterationLossHistory;
+
+                // 最多只显示最近 100 个 iteration
+                const uint32_t maxDisplayCount = 100;
+
+                uint32_t sampleCount = std::min(uint32_t(history.size()), maxDisplayCount);
+
+                uint32_t startIndex = uint32_t(history.size()) - sampleCount;
+
+                // callback 需要同时知道 history 和起始位置
+                struct LossGraphData
+                {
+                    const std::vector<float>* history;
+                    uint32_t startIndex;
+                };
+
+                LossGraphData graphData{&history, startIndex};
+
+                auto lossCallback = [](void* pUserData, int32_t index) -> float
+                {
+                    auto* pData = static_cast<LossGraphData*>(pUserData);
+
+                    uint32_t actualIndex = pData->startIndex + uint32_t(index);
+
+                    float loss = (*pData->history)[actualIndex];
+
+                    // 防止 log10(0)
+                    loss = std::max(loss, 1e-12f);
+
+                    return std::log10(loss);
+                };
+
+                // 显示当前 graph 对应的真实 iteration 范围
+                lossWindow.text(fmt::format("Showing iterations: {} - {}", startIndex + 1, history.size()));
+
+                lossWindow.graph("Log10 Average Loss (Last 100)", lossCallback, &graphData, sampleCount, 0, FLT_MAX, FLT_MAX, 0, 220);
+            }
+
+            lossWindow.release();
+        }
+    }
+
 }
 
 
@@ -577,8 +631,11 @@ void VoxelReconstructionNoLightTransport::startReconstruction()
     mOptimizerParams.currentView = 0;
     mRayMarchingPass.mSampleIndex = 0;
 
-    // 如果希望每次点击开始都重新初始化 voxel 数据
-    // mInitVoxelData = true;
+    mReduceLossPass.meanLoss = 0.0f;
+    mReduceLossPass.iterationLossSum = 0.0f;
+    mReduceLossPass.iterationLossCount = 0;
+    mReduceLossPass.iterationLossHistory.clear();
+
 }
 
 void VoxelReconstructionNoLightTransport::stopReconstruction()

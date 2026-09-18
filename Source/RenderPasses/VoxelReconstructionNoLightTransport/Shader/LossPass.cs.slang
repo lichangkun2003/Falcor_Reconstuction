@@ -31,16 +31,13 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
     float refAlpha = ref.a;
     float3 R = ref.rgb * refAlpha + float3(1.0f) * (1.0f - refAlpha);
 
-    // ------------------------------------------------------
+
     // RGB loss
-    // ------------------------------------------------------
     float3 diff = C - R;
     float rgbLoss = dot(diff, diff);
     float3 dL_dColor = 2.0f * diff;
 
-    // ------------------------------------------------------
     // Alpha loss
-    // ------------------------------------------------------
     const float alphaLossWeight = 0.3f;
 
     float alphaLoss = 0.0f;
@@ -69,9 +66,7 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
             2.0f * alphaLossWeight * alphaDiff;
     }
 
-    // ------------------------------------------------------
     // Total loss
-    // ------------------------------------------------------
     gLossBuffer[pixel] = rgbLoss + alphaLoss;
 
     gBackgroundMaskBuffer[pixel] = refAlpha < 1e-4f ? 1u : 0u;

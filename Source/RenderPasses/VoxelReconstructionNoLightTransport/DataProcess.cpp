@@ -147,6 +147,8 @@ void VoxelReconstructionNoLightTransport::saveReconstruction(RenderContext* pRen
 
     out.close();
 
+    saveLossHistory();
+
     logInfo(
         "Saved reconstruction to {}, voxelCount={}x{}x{}, params={}, bytes={}",
         path.string(),
@@ -272,4 +274,71 @@ void VoxelReconstructionNoLightTransport::refreshReconstructionFileList()
     {
         mSelectedReconstructionFile = std::min(mSelectedReconstructionFile, uint32_t(mReconstructionFilePaths.size() - 1));
     }
+}
+
+
+
+
+void VoxelReconstructionNoLightTransport::saveLossHistory() const
+{
+    if (mReduceLossPass.iterationLossHistory.empty())
+    {
+        logWarning("Save loss history skipped: loss history is empty.");
+        return;
+    }
+
+    const std::filesystem::path lossDir = ReconstructionLossDataDir;
+
+    std::filesystem::create_directories(lossDir);
+
+    // 获取当前日期：month_day
+    auto now = std::chrono::system_clock::now();
+    std::time_t time = std::chrono::system_clock::to_time_t(now);
+
+    std::tm localTime{};
+#if defined(_WIN32)
+    localtime_s(&localTime, &time);
+#else
+    localtime_r(&time, &localTime);
+#endif
+
+    int month = localTime.tm_mon + 1;
+    int day = localTime.tm_mday;
+
+    std::string dateTag = fmt::format("{}_{}", month, day);
+
+    // 文件名：日期_NameTag.csv
+    std::string filename;
+
+    if (mReconstructionNameTag.empty())
+    {
+        filename = fmt::format("{}.csv", dateTag);
+    }
+    else
+    {
+        filename = fmt::format("{}_{}.csv", dateTag, mReconstructionNameTag);
+    }
+
+    std::filesystem::path lossPath = lossDir / filename;
+
+    std::ofstream out(lossPath);
+
+    if (!out.is_open())
+    {
+        logError("Save loss history failed: cannot open file " + lossPath.string());
+        return;
+    }
+
+    out << "iteration,mean_loss\n";
+
+    out << std::setprecision(10);
+
+    for (size_t i = 0; i < mReduceLossPass.iterationLossHistory.size(); ++i)
+    {
+        out << (i + 1) << "," << mReduceLossPass.iterationLossHistory[i] << "\n";
+    }
+
+    out.close();
+
+    logInfo("Saved loss history to {}, iterations={}", lossPath.string(), mReduceLossPass.iterationLossHistory.size());
 }

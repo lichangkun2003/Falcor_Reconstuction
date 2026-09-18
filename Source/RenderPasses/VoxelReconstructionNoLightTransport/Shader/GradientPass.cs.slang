@@ -24,6 +24,7 @@ cbuffer CB {
     float gGeometryTau;             // soft-hit sigmoid 温度，越小越接近 hard hit
     float gGeometryGradClamp;       // 防止几何梯度爆炸
     float gBackgroundCarveWeight;   // 背景几何清除项的权重
+    float gBinaryOpacityWeight;
 
 }
 
@@ -501,11 +502,11 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
             float transmittanceBefore = clamp(sanitizeFloat(voxelRec.transmittanceBefore),0.0f,1.0f);
 
             float3 dL_dRadiance = dL_dC * transmittanceBefore * opacity;
-            // float dL_dOpacity = dot(dL_dC,transmittanceBefore *(radiance - behindColor));
             float dL_dOpacityRGB = dot(dL_dC, transmittanceBefore * (radiance - behindColor));
             float dA_dOpacity = transmittanceBefore * transmittanceAfter;
             float dL_dOpacityAlpha = dL_dA * dA_dOpacity;
-            float dL_dOpacity = dL_dOpacityRGB + dL_dOpacityAlpha;
+            float dL_dOpacityBinary = gBinaryOpacityWeight * (1.0f - 2.0f * opacity);
+            float dL_dOpacity = dL_dOpacityRGB + dL_dOpacityAlpha + dL_dOpacityBinary ;
 
             dL_dRadiance = sanitizeFloat3(dL_dRadiance);
             dL_dOpacity = sanitizeFloat(dL_dOpacity);
@@ -571,8 +572,6 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
     // 2. Near-miss candidate geometry gradient
     // -------------------------
     /*
-    candidate 本身没有实际命中。
-    参考图是背景时，candidate 当前已经是 miss，不需要继续执行 carve。
     只有参考图是前景时，才通过 candidate 梯度 推动椭球表面向 ray 扩张。
     */
     if (!isReferenceBackground)

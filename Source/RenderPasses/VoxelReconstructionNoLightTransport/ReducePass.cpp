@@ -131,6 +131,23 @@ void VoxelReconstructionNoLightTransport::runReducePass(RenderContext* pRenderCo
         mReduceLossPass.meanLoss =
             pData[0] / std::max(float(mRayMarchingPass.mOutputResolution.x * mRayMarchingPass.mOutputResolution.y), 1.0f);
         mReduceLossPass.mpTotalLossReadback->unmap();
+
+        // Accumulate loss of all views in current iteration
+        mReduceLossPass.iterationLossSum += mReduceLossPass.meanLoss;
+        mReduceLossPass.iterationLossCount++;
+
+        // runReducePass() 此时 currentView 还没有 ++,所以这是当前 iteration 的最后一个 view
+        if (mOptimizerParams.currentView + 1 >= mOptimizerParams.viewsPerIteration)
+        {
+            float iterationMeanLoss = mReduceLossPass.iterationLossSum / std::max(float(mReduceLossPass.iterationLossCount), 1.0f);
+            mReduceLossPass.iterationLossHistory.push_back(iterationMeanLoss);
+
+            // 下一轮重新累计
+            mReduceLossPass.iterationLossSum = 0.0f;
+            mReduceLossPass.iterationLossCount = 0;
+        }
+
+
     }
 
 
