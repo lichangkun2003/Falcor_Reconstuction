@@ -56,13 +56,7 @@ VoxelReconstructionNoLightTransport::VoxelReconstructionNoLightTransport(ref<Dev
         mpReflectTypes = ComputePass::create(mpDevice, desc, defines, true);
     }
 
-    // Create ProcessXuData pass
-    {
-        ProgramDesc desc;
-        desc.addShaderLibrary(ProcessXuDataShaderFilePath).csEntry("main");
-        DefineList defines;
-        mpProcessXuDataPass = ComputePass::create(mpDevice, desc, defines, true);
-    }
+    createInitializationPassResource();
 
     // RayMarchingPass
     {
@@ -147,7 +141,7 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
 
     if (mInitVoxelData)
     {
-        proccessXuData(pRenderContext, renderData);
+        initializeVoxelData(pRenderContext);
         mInitVoxelData = false;
     }
 
@@ -589,35 +583,6 @@ void VoxelReconstructionNoLightTransport::setupGridResouce(RenderContext* pRende
     gridBlock["gridMin"] = mGridResources.gridData.gridMin;
     gridBlock["solidVoxelCount"] = mGridResources.gridData.solidVoxelCount;
 
-}
-
-
-
-void VoxelReconstructionNoLightTransport::proccessXuData(RenderContext* pRenderContext, const RenderData& renderData)
-{
-    //pRenderContext->clearUAV(mGridResources.gridDataBuffer->getUAV().get(), uint4(0));
-    //pRenderContext->clearUAV(mGridResources.blockOM->getUAV().get(), uint4(0));
-
-    auto var = mpProcessXuDataPass->getRootVar();
-    //var[kVBuffer] = renderData.getTexture(kVBuffer);
-    //var[kGBuffer] = renderData.getResource(kGBuffer)->asBuffer();
-    //var[kPBuffer] = renderData.getResource(kPBuffer)->asBuffer();
-    //var[kBlockMap] = renderData.getTexture(kBlockMap);
-    var["gGridDataParamBlock"] = mpGridBlock;
-
-    auto cb = var["GridData"];
-    cb["gLrCenter"] = mUpdatePass.mLrCenter;
-    cb["gLrB"] = mUpdatePass.mLrB;
-    cb["gLrRadiance"] = mUpdatePass.mLrRadiance;
-    cb["gLrOpacity"] = mUpdatePass.mLrOpacity;
-
-    ShaderVar gridBlock = mpGridBlock->getRootVar();
-    //gridBlock["blockOM"] = renderData.getTexture(kBlockMap);
-
-    pRenderContext->clearUAV(mGridResources.blockOM->getUAV().get(), uint4(0xFFFFFFFFu));
-    gridBlock["blockOM"] = mGridResources.blockOM;
-
-    mpProcessXuDataPass->execute(pRenderContext, mGridResources.gridData.voxelCount);
 }
 
 

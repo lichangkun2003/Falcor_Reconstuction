@@ -53,7 +53,7 @@ using namespace Falcor;
 namespace 
 {
 const std::string ReflectTypesShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/ReflectTypes.cs.slang";
-const std::string ProcessXuDataShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/ProcessXuData.cs.slang";
+const std::string InitializeDataShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/InitializeData.cs.slang";
 const std::string RayMarchingShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/RayMarchingPass.ps.slang";
 const std::string LossPassShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/LossPass.cs.slang";
 const std::string GradientPassShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/GradientPass.cs.slang";
@@ -100,7 +100,6 @@ public:
 
 
     void setupGridResouce(RenderContext* pRenderContext, bool forceReset);
-    void proccessXuData(RenderContext* pRenderContext, const RenderData& renderData);
     void UpdateVoxelGrid(uint voxelResolution);
 
     void createRayMarchingPassResource(RenderContext* pRenderContext);
@@ -291,6 +290,10 @@ public:
     };
 
 private:
+    void createInitializationPassResource();
+    void initializeVoxelData(RenderContext* pRenderContext);
+    void initializeOriginalVoxelData(RenderContext* pRenderContext);
+
     ref<Device> mpDevice;
     ref<Scene> mpScene;
     std::unique_ptr<PixelDebug> mpPixelDebug;
@@ -305,7 +308,7 @@ private:
 
     // Passes
     ref<ComputePass> mpReflectTypes;
-    ref<ComputePass> mpProcessXuDataPass;
+    ref<ComputePass> mpInitializeDataPass;
     GradientPass mGradientPass;
     UpdatePass mUpdatePass;
     LossPass mLossPass;

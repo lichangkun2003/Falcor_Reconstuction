@@ -29,9 +29,6 @@
             "description": "Base Windows configuration for specifying Windows SDK.",
             "hidden": true,
             "inherits": "base"
-            //"cacheVariables": {
-            //    "CMAKE_SYSTEM_VERSION": "10.0.19041.0"
-            //}
         },
         {
             "name": "windows-vs2022-base",

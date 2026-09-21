@@ -6,6 +6,7 @@ target_sources(VoxelReconstructionNoLightTransport PRIVATE
     VoxelReconstructionNoLightTransport.cpp
     VoxelReconstructionNoLightTransport.h
     Defines.h
+    Initialization.cpp
     RayMarchingPass.cpp
     LossPass.cpp
     ReducePass.cpp
@@ -32,7 +33,7 @@ target_sources(VoxelReconstructionNoLightTransport PRIVATE
     Math/Random.slang
 
     Shader/ReflectTypes.cs.slang
-    Shader/ProcessXuData.cs.slang
+    Shader/InitializeData.cs.slang
     Shader/RayMarchingPass.ps.slang
     Shader/LossPass.cs.slang
     Shader/ReduceTexturePass.cs.slang
