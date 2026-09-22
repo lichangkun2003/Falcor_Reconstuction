@@ -30,6 +30,7 @@
 #include "RenderGraph/RenderPass.h"
 #include "Utils/Debug/PixelDebug.h"
 #include "Core/Pass/FullScreenPass.h"
+#include "Core/Platform/OS.h"
 #include "RenderGraph/RenderPassStandardFlags.h"
 #include "iostream"
 #include <fstream>
@@ -67,9 +68,15 @@ inline std::string kPBuffer = "pBuffer";
 inline std::string kOutputColor = "color";
 inline std::string kAccumulateOutputColor = "AccuColor";
 
-inline std::string ReconstructionDataDir = "D:/lck/vs/Reconstruction_Output";
-inline std::string ReferenceImageDir = "D:/lck/vs/Reconstruction_Input/hotdog";
-inline std::string ReferenceCameraFile = "D:/lck/vs/Reconstruction_Input/hotdog/transforms_train.json";
+// Relative paths are rooted at the Falcor source project, independently of the process working directory.
+inline std::string ReconstructionDataDir = "Reconstruction_Output";
+inline std::string ReferenceImageDir = "Reconstruction_Input/chair";
+inline std::string ReferenceCameraFile = "Reconstruction_Input/chair/transforms_train.json";
+
+inline std::filesystem::path resolveReconstructionPath(const std::filesystem::path& path)
+{
+    return (path.is_absolute() ? path : Falcor::getProjectDirectory() / path).lexically_normal();
+}
 } // namespace VoxelPrime
 
 class VoxelReconstructionNoLightTransport : public RenderPass

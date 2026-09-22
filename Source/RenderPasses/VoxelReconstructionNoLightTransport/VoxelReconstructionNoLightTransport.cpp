@@ -368,7 +368,7 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
 #else
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
     widget.text("Mode 1: point-cloud initialization");
-    widget.text("PLY: " + (std::filesystem::path(ReferenceImageDir) / "init_points.ply").string());
+    widget.text("PLY: " + (resolveReconstructionPath(ReferenceImageDir) / "init_points.ply").string());
     widget.text(mPointCloud.status);
     if (widget.button("Init / Reset from PLY")) mInitVoxelData = true;
 #else

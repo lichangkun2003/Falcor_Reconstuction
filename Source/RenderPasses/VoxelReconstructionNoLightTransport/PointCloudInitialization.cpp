@@ -23,7 +23,7 @@ void VoxelReconstructionNoLightTransport::resetPointCloudOptimization(RenderCont
 
 bool VoxelReconstructionNoLightTransport::initializePointCloudVoxelData(RenderContext* pRenderContext)
 {
-    const auto path = std::filesystem::path(ReferenceImageDir) / "init_points.ply";
+    const auto path = resolveReconstructionPath(ReferenceImageDir) / "init_points.ply";
     try
     {
         // Read and validate before touching the active reconstruction.

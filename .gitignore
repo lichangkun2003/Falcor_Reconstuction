@@ -2,6 +2,10 @@
 # Build folder.
 /build/
 
+# Local reconstruction datasets and experiment results.
+/Reconstruction_Input/
+/Reconstruction_Output/
+
 # Test output folder.
 /tests/data/
 

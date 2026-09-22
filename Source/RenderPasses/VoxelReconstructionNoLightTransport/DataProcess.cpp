@@ -88,6 +88,33 @@ uint64_t checkedVoxelCount(uint3 count, uint32_t dimensionLimit)
 #if RECON_MODE == RECON_MODE_COARSE_TO_FINE
 constexpr uint64_t kMaxCheckpointMetadataBytes = 16ull * 1024 * 1024;
 
+std::filesystem::path checkpointReferencePath(std::string value)
+{
+    // Checkpoints can move between machines, including ones using different separators.
+    std::replace(value.begin(), value.end(), '\\', '/');
+    auto path = std::filesystem::path(value).lexically_normal();
+    if (path.has_relative_path() && path.filename().empty()) path = path.parent_path();
+
+    const bool windowsAbsolute = value.size() >= 3 &&
+        ((value[0] >= 'A' && value[0] <= 'Z') || (value[0] >= 'a' && value[0] <= 'z')) &&
+        value[1] == ':' && value[2] == '/';
+    if (!path.is_absolute() && !windowsAbsolute) return path;
+
+    // Older v2 files stored machine-specific absolute paths. Only relocate the explicit
+    // Reconstruction_Input subtree, retaining every component of the dataset/file name.
+    // Other absolute paths keep their full identity and must still match exactly.
+    auto component = path.begin();
+    for (; component != path.end(); ++component)
+    {
+        if (samePathComponent(*component, "Reconstruction_Input")) break;
+    }
+    if (component == path.end()) return path;
+
+    std::filesystem::path relative;
+    for (; component != path.end(); ++component) relative /= *component;
+    return relative;
+}
+
 struct CoarseCheckpointHeader
 {
     uint3 voxelCount = uint3(0);
@@ -202,7 +229,7 @@ std::filesystem::path uniqueCheckpointPath(const std::filesystem::path& path)
 
 std::filesystem::path VoxelReconstructionNoLightTransport::getReconstructionModeDirectory() const
 {
-    return std::filesystem::path(ReconstructionDataDir) / fmt::format("mode{}", RECON_MODE);
+    return resolveReconstructionPath(ReconstructionDataDir) / fmt::format("mode{}", RECON_MODE);
 }
 
 #if RECON_MODE == RECON_MODE_COARSE_TO_FINE
@@ -444,8 +471,9 @@ void VoxelReconstructionNoLightTransport::saveReconstruction(RenderContext* pRen
             {"gridMin", {grid.gridMin.x, grid.gridMin.y, grid.gridMin.z}},
             {"voxelSize", {grid.voxelSize.x, grid.voxelSize.y, grid.voxelSize.z}},
             {"solidVoxelCount", grid.solidVoxelCount},
-            {"nameTag", mReconstructionNameTag}, {"referenceCameraFile", ReferenceCameraFile},
-            {"referenceImageDir", ReferenceImageDir}, {"viewsPerIteration", mOptimizerParams.viewsPerIteration},
+            {"nameTag", mReconstructionNameTag}, {"referenceCameraFile", checkpointReferencePath(ReferenceCameraFile).generic_string()},
+            {"referenceImageDir", checkpointReferencePath(ReferenceImageDir).generic_string()},
+            {"viewsPerIteration", mOptimizerParams.viewsPerIteration},
             {"imageWidth", mRayMarchingPass.mOutputResolution.x}, {"imageHeight", mRayMarchingPass.mOutputResolution.y},
             {"totalIterations", CTF_TOTAL_ITERATIONS}, {"refineInterval", CTF_REFINE_INTERVAL},
             {"finalIterations", getCoarseStageBudget(uint32_t(mCoarseToFine.resolutions.size() - 1))},
@@ -668,7 +696,8 @@ void VoxelReconstructionNoLightTransport::restoreCoarseCheckpoint(RenderContext*
         const std::string nameTag = metadata.at("nameTag").get<std::string>();
         const std::string cameraFile = metadata.at("referenceCameraFile").get<std::string>();
         const std::string imageDirectory = metadata.at("referenceImageDir").get<std::string>();
-        if (cameraFile != ReferenceCameraFile || imageDirectory != ReferenceImageDir)
+        if (!samePathComponent(checkpointReferencePath(cameraFile), checkpointReferencePath(ReferenceCameraFile)) ||
+            !samePathComponent(checkpointReferencePath(imageDirectory), checkpointReferencePath(ReferenceImageDir)))
             throw std::runtime_error("Checkpoint reference dataset differs from the currently configured dataset.");
         const uint32_t savedInterval = checkpointUInt(metadata, "refineInterval");
         const uint32_t savedFinalIterations = checkpointUInt(metadata, "finalIterations");

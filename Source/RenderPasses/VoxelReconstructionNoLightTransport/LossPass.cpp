@@ -265,10 +265,11 @@ void VoxelReconstructionNoLightTransport::runLossPass(RenderContext* pRenderCont
 
 bool VoxelReconstructionNoLightTransport::loadReferenceCamerasFromFile(const std::string& cameraFile)
 {
-    std::ifstream file(cameraFile);
+    const auto cameraPath = resolveReconstructionPath(cameraFile);
+    std::ifstream file(cameraPath);
     if (!file.is_open())
     {
-        logError("Failed to open NeRF transform file: " + cameraFile);
+        logError("Failed to open NeRF transform file: " + cameraPath.string());
         return false;
     }
 
@@ -332,7 +333,7 @@ bool VoxelReconstructionNoLightTransport::loadReferenceCamerasFromFile(const std
         //
         std::string relativeImagePath = frame["file_path"].get<std::string>();
 
-        std::filesystem::path imagePath = std::filesystem::path(ReferenceImageDir) / relativeImagePath;
+        std::filesystem::path imagePath = resolveReconstructionPath(ReferenceImageDir) / relativeImagePath;
 
         // NeRF json 中通常写 "./train/r_0"，没有 .png
         if (!imagePath.has_extension())
