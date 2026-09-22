@@ -345,9 +345,15 @@ std::string VoxelReconstructionNoLightTransport::getOptimizedParamTag() const
 }
 std::filesystem::path VoxelReconstructionNoLightTransport::getDefaultReconstructionSavePath() const
 {
+    auto sceneDirectory = std::filesystem::path(ReferenceImageDir).lexically_normal();
+    // A trailing separator gives an empty filename; use the last directory component.
+    if (sceneDirectory.filename().empty()) sceneDirectory = sceneDirectory.parent_path();
+    std::string sceneName = sceneDirectory.filename().string();
+    if (sceneName.empty() || sceneName == "." || sceneName == "..") sceneName = "scene";
+
 #if RECON_MODE == RECON_MODE_COARSE_TO_FINE
     return mCoarseToFine.runDirectory / fmt::format(
-        "stage{}_res{}_iter{}.bin", mCoarseToFine.stageIndex, mVoxelResolution, mCoarseToFine.stageIteration
+        "{}_stage{}_res{}_iter{}.bin", sceneName, mCoarseToFine.stageIndex, mVoxelResolution, mCoarseToFine.stageIteration
     );
 #else
     const std::filesystem::path outputDir = getReconstructionModeDirectory();
@@ -380,11 +386,11 @@ std::filesystem::path VoxelReconstructionNoLightTransport::getDefaultReconstruct
 
     if (nameTag.empty())
     {
-        filename = fmt::format("recon{}_{}_{}.bin", dateTag, mVoxelResolution, paramTag);
+        filename = fmt::format("{}_recon{}_{}_{}.bin", sceneName, dateTag, mVoxelResolution, paramTag);
     }
     else
     {
-        filename = fmt::format("recon{}_{}_{}_{}.bin", dateTag, nameTag, mVoxelResolution, paramTag);
+        filename = fmt::format("{}_recon{}_{}_{}_{}.bin", sceneName, dateTag, nameTag, mVoxelResolution, paramTag);
     }
 
     return outputDir / filename;

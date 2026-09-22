@@ -9,6 +9,10 @@
 
 实际选择以 `Defines.h` 为准。切换宏后需要重新编译 Pass；三个模式的新实验仍共用 `GRID_RESOLUTION`。
 
+此 Pass 的 `CMakeLists.txt` 为 C++ 文件显式声明了本地头文件和 CPU/GPU 共享文件的依赖。修改 `ReferenceImageDir`、`ReferenceCameraFile`、`maxIteration` 或实验宏后，保存文件并正常 Build（F7），编译成功后重新启动 Mogwai，即可使用新值，无需每次清理重建。首次应用这份 CMake 修改时需先完成一次 CMake Configure。
+
+这些显式依赖用于补足当前环境中 Ninja 未正确解析 MSVC 头文件依赖的问题，范围仅限此 Pass。新增参与 C++ 编译的本地共享文件时，需同步维护 `voxel_reconstruction_shared_headers`；GPU 专用 shader 不在此列表中。
+
 ## Mode1：点云初始化
 
 读取 `ReferenceImageDir/init_points.ply`，当前对应 `D:/lck/vs/Reconstruction_Input/lego/init_points.ply`。更换数据集时，头文件中的 `ReferenceImageDir` 和 `ReferenceCameraFile` 应指向同一场景。
@@ -57,23 +61,25 @@
 
 输出根目录仍为头文件中的 `ReconstructionDataDir`，默认 `D:/lck/vs/Reconstruction_Output`，按 `mode1`、`mode2`、`mode3` 分开使用。
 
+三个 mode 的新 bin 文件名都以 `ReferenceImageDir` 的末级目录名作为场景前缀，路径末尾带分隔符也可识别。例如目录 `D:/lck/vs/Reconstruction_Input/hotdog` 对应 `hotdog_recon9_22_128_radiance_opacity_center_B.bin` 或 `hotdog_stage0_res32_iter40.bin`；mode1/3 的自定义 Name Tag 仍保留。已有文件无需重命名，仍可正常 Load。
+
 ```text
 Reconstruction_Output/
   mode1/
-    recon*.bin
+    hotdog_recon*.bin
     Loss/
   mode2/
     run_<时间>_target128/
-      stage0_res32_iter40.bin
-      stage1_res64_iter40.bin
-      stage2_res128_iter120.bin
+      hotdog_stage0_res32_iter40.bin
+      hotdog_stage1_res64_iter40.bin
+      hotdog_stage2_res128_iter120.bin
       Loss/
       Images/
-        stage0_res32_iter40_view0_rgb.png
-        stage0_res32_iter40_view0_alpha.png
-        stage0_res32_iter40_evaluation.csv
+        hotdog_stage0_res32_iter40_view0_rgb.png
+        hotdog_stage0_res32_iter40_view0_alpha.png
+        hotdog_stage0_res32_iter40_evaluation.csv
   mode3/
-    recon*.bin
+    hotdog_recon*.bin
     Loss/
 ```
 

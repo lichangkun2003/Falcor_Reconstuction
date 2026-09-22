@@ -1,15 +1,9 @@
 add_plugin(VoxelReconstructionNoLightTransport)
 
-target_sources(VoxelReconstructionNoLightTransport PRIVATE
-    HostDeviceShared.slang
-
+set(voxel_reconstruction_sources
     VoxelReconstructionNoLightTransport.cpp
-    VoxelReconstructionNoLightTransport.h
-    Defines.h
     Initialization.cpp
     PointCloudInitialization.cpp
-    PointCloudLoader.cpp
-    PointCloudLoader.h
     CoarseToFine.cpp
     RayMarchingPass.cpp
     LossPass.cpp
@@ -17,7 +11,14 @@ target_sources(VoxelReconstructionNoLightTransport PRIVATE
     GradientPass.cpp
     UpdatePass.cpp
     DataProcess.cpp
+)
 
+set(voxel_reconstruction_shared_headers
+    VoxelReconstructionNoLightTransport.h
+    Defines.h
+    HostDeviceShared.slang
+    PathRecord.slang
+    GradRecord.slang
     Voxel/ABSDF.slang
     Voxel/VoxelGrid.slang
     Voxel/VoxelData.slang
@@ -30,6 +31,13 @@ target_sources(VoxelReconstructionNoLightTransport PRIVATE
     Math/Triangle.slang
     Math/Sampling.slang
     Math/SphericalHarmonics.slang
+)
+
+target_sources(VoxelReconstructionNoLightTransport PRIVATE
+    ${voxel_reconstruction_sources}
+    ${voxel_reconstruction_shared_headers}
+    PointCloudLoader.cpp
+    PointCloudLoader.h
     Math/LebedevQuadrature.slang
     Math/Random.h
     Math/Random.slang
@@ -49,9 +57,19 @@ target_sources(VoxelReconstructionNoLightTransport PRIVATE
     Shader/DiffTools.slang
     Shader/DiffShading.slang
 
-    PathRecord.slang
-    GradRecord.slang
+)
 
+# Keep this pass's C++ dependencies explicit: localized MSVC /showIncludes output
+# can fail to match Ninja's recorded prefix. A successful build must still pick
+# up changed experiment settings and shared CPU/GPU layouts. Keep the list above
+# in sync with the local C++ include graph; GPU-only shaders need no object rebuild.
+set(voxel_reconstruction_object_dependencies ${voxel_reconstruction_shared_headers})
+list(TRANSFORM voxel_reconstruction_object_dependencies PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
+foreach(source IN LISTS voxel_reconstruction_sources)
+    set_property(SOURCE "${source}" APPEND PROPERTY OBJECT_DEPENDS ${voxel_reconstruction_object_dependencies})
+endforeach()
+set_property(SOURCE PointCloudLoader.cpp PointCloudInitialization.cpp APPEND PROPERTY OBJECT_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/PointCloudLoader.h"
 )
 
 target_source_group(VoxelReconstructionNoLightTransport "RenderPasses")
