@@ -45,11 +45,7 @@ VoxelReconstructionNoLightTransport::VoxelReconstructionNoLightTransport(ref<Dev
 #else
         mGridResources.gridData.solidVoxelCount = 17650;        // 64
 #endif
-        //mGridResources.gridData.solidVoxelCount = 92562;      //128
-        //mGridResources.gridData.solidVoxelCount = 545771;     //256
 
-        // Box
-        //mGridResources.gridData.solidVoxelCount = 94816; // 128
     }
 
     // Create Grid pass
@@ -92,21 +88,6 @@ RenderPassReflection VoxelReconstructionNoLightTransport::reflect(const CompileD
 {
 
     RenderPassReflection reflector;
-    // Input
-    //reflector.addInput(kVBuffer, kVBuffer)
-    //    .bindFlags(ResourceBindFlags::ShaderResource)
-    //    .format(ResourceFormat::R32Uint)
-    //    .texture3D();
-
-    //reflector.addInput(kGBuffer, kGBuffer)
-    //    .bindFlags(ResourceBindFlags::UnorderedAccess | ResourceBindFlags::ShaderResource)
-    //    .format(ResourceFormat::Unknown)
-    //    .rawBuffer(mGridResources.gridData.solidVoxelCount * sizeof(PrimitiveBSDF));
-
-    //reflector.addInput(kPBuffer, kPBuffer)
-    //    .bindFlags(ResourceBindFlags::ShaderResource)
-    //    .format(ResourceFormat::Unknown)
-    //    .rawBuffer(mGridResources.gridData.solidVoxelCount * sizeof(Ellipsoid));
 
     // Output
     reflector.addOutput("dummy", "Dummy")
@@ -132,20 +113,79 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
     // auto& pTexture = renderData.getTexture("src");
     if (!mpScene)
         return;
-    loadReferenceImages();
-#if RECON_MODE == RECON_MODE_COARSE_TO_FINE || RECON_MODE == RECON_MODE_POINT_CLOUD
-    // The original loader streams one image per frame. A new experiment waits for the complete set.
-    if (mReferenceImages.size() < mReferenceCameras.size())
-        return;
-#endif
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
-    if (mReferenceImages.empty() || mReferenceCameras.empty()) return;
-#endif
-
     mFrameDim = renderData.getDefaultTextureDims();
     mInvFrameDim = 1.0f / float2(mFrameDim);
     beginFrame(pRenderContext, false);
 
+    // Viewing an existing result must work even without the training images or PLY.
+    if (mLoadReconstructionRequested)
+    {
+        if (!mReconstructionFilePaths.empty() && mSelectedReconstructionFile < mReconstructionFilePaths.size())
+        {
+            loadReconstruction(pRenderContext, mReconstructionFilePaths[mSelectedReconstructionFile]);
+        }
+        else
+        {
+            mReconstructionIOStatus = "Load failed: no file selected.";
+            logWarning("Load reconstruction failed: no file selected.");
+        }
+
+        mLoadReconstructionRequested = false;
+    }
+
+    bool needsTrainingData = mEnableReconstruction || mOptimizerParams.isRunning || mInitVoxelData;
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    needsTrainingData |= mPointCloud.startRequested;
+#elif RECON_MODE == RECON_MODE_COARSE_TO_FINE
+    needsTrainingData |= mCoarseToFine.startRequested || mCoarseToFine.advanceRequested || mRestoreCoarseCheckpointRequested;
+#endif
+    if ((needsTrainingData || mUseReferenceCamera || !mLoadedReconstructionForViewing) && mReferenceDataError.empty())
+    {
+        try { loadReferenceImages(); }
+        catch (const std::exception& e)
+        {
+            mReferenceDataError = e.what();
+            // Parsing can fail after a prefix of cameras has been appended. Retry the whole dataset.
+            mReferenceCameras.clear();
+            mReferenceImagePaths.clear();
+            mReferenceImages.clear();
+            logWarning("Reference data unavailable: {}. Saved reconstructions can still be loaded for viewing.", e.what());
+        }
+    }
+    const bool referencesReady = !mReferenceCameras.empty() && mReferenceImages.size() == mReferenceCameras.size() &&
+        mOptimizerParams.viewsPerIteration == mReferenceCameras.size();
+    if (needsTrainingData && !referencesReady)
+    {
+        if (mReferenceDataError.empty())
+        {
+            endFrame(pRenderContext);
+            return;
+        }
+        // A failed training/restore request must not prevent viewing an already loaded grid.
+        mEnableReconstruction = false;
+        mOptimizerParams.isRunning = false;
+        mInitVoxelData = false;
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+        mPointCloud.startRequested = false;
+#elif RECON_MODE == RECON_MODE_COARSE_TO_FINE
+        mRestoreCoarseCheckpointRequested = false;
+        mCoarseToFine.startRequested = false;
+        mCoarseToFine.advanceRequested = false;
+        mCoarseToFine.pauseRequested = false;
+        mCoarseToFine.paused = true;
+#endif
+        mReconstructionIOStatus = "Training/restore request cancelled: reference data is unavailable. The current grid remains available for viewing.";
+    }
+
+#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
+    if (mRestoreCoarseCheckpointRequested)
+    {
+        mRestoreCoarseCheckpointRequested = false;
+        if (mSelectedReconstructionFile < mReconstructionFilePaths.size())
+            restoreCoarseCheckpoint(pRenderContext, mReconstructionFilePaths[mSelectedReconstructionFile]);
+        else mReconstructionIOStatus = "Restore failed: no file selected.";
+    }
+#endif
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
     bool pointCloudInitFailed = false;
 #endif
@@ -157,22 +197,11 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
         mPointCloud.startRequested = startAfterInit && !pointCloudInitFailed;
 #else
         initializeVoxelData(pRenderContext);
+#if RECON_MODE == RECON_MODE_ORIGINAL
+        mLoadedReconstructionForViewing = false;
+#endif
 #endif
         mInitVoxelData = false;
-    }
-
-    if (mLoadReconstructionRequested)
-    {
-        if (!mReconstructionFilePaths.empty() && mSelectedReconstructionFile < mReconstructionFilePaths.size())
-        {
-            loadReconstruction(pRenderContext, mReconstructionFilePaths[mSelectedReconstructionFile]);
-        }
-        else
-        {
-            logWarning("Load reconstruction failed: no file selected.");
-        }
-
-        mLoadReconstructionRequested = false;
     }
 
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
@@ -185,6 +214,7 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
             resetPointCloudOptimization(pRenderContext);
             mEnableReconstruction = true;
             mOptimizerParams.isRunning = true;
+            mLoadedReconstructionForViewing = false;
         }
     }
     if (mPointCloud.clearAccumulation)
@@ -237,19 +267,20 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
     // test input
     {
         ref<Texture> pDummy = renderData.getTexture("dummy");
-        ref<Texture> pRef = mReferenceImages[testIndex];
+        ref<Texture> pRef = testIndex < mReferenceImages.size() ? mReferenceImages[testIndex] : nullptr;
 
         if (pDummy && pRef)
         {
             pRenderContext->blit(pRef->getSRV(), pDummy->getRTV());
         }
+        else if (pDummy) pRenderContext->clearRtv(pDummy->getRTV().get(), float4(0));
     }
 
     bool isLastSample = mRayMarchingPass.mSpp > 0 && mRayMarchingPass.mSampleIndex == mRayMarchingPass.mSpp - 1u;
 
     rayMarchingPass(pRenderContext, renderData);
 
-    
+
     if (mEnableReconstruction && mOptimizerParams.isRunning && isLastSample)
     {
         mLossPass.mView = mOptimizerParams.currentView;
@@ -317,8 +348,21 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
     widget.var("Spp", mRayMarchingPass.mSpp, 1u, 100u,1u);
 #endif
 
-    widget.checkbox("Use ReferenceCamera", mUseReferenceCamera);
-    widget.slider("Camera Index", testIndex, 0u, mOptimizerParams.viewsPerIteration - 1u);
+    if (widget.checkbox("Use ReferenceCamera", mUseReferenceCamera))
+    {
+        mReferenceDataError.clear();
+        mRayMarchingPass.mOptionsChanged = true;
+    }
+    const uint32_t maxCameraIndex = mReferenceCameras.empty() ? 0u : uint32_t(mReferenceCameras.size() - 1);
+    testIndex = std::min(testIndex, maxCameraIndex);
+    if (widget.slider("Camera Index", testIndex, 0u, maxCameraIndex)) mRayMarchingPass.mOptionsChanged = true;
+    if (!mReferenceDataError.empty())
+    {
+        widget.text("Reference data: " + mReferenceDataError);
+        if (widget.button("Retry loading reference data")) mReferenceDataError.clear();
+    }
+    else if (!mReferenceCameras.empty() && mReferenceImages.size() < mReferenceCameras.size())
+        widget.text(fmt::format("Loading reference images: {} / {}", mReferenceImages.size(), mReferenceCameras.size()));
 #if RECON_MODE == RECON_MODE_COARSE_TO_FINE
     renderCoarseUI(widget);
 #else
@@ -361,6 +405,8 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
 
     if (auto group = widget.group("Reconstruction IO"))
     {
+        widget.text("Directory: " + getReconstructionModeDirectory().string());
+        if (widget.button("Refresh Files")) mReconstructionFileListDirty = true;
         if (mReconstructionFileListDirty)
         {
             refreshReconstructionFileList();
@@ -371,11 +417,7 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
 
         for (uint32_t i = 0; i < mReconstructionFilePaths.size(); i++)
         {
-#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
             fileList.push_back({i, mReconstructionFilePaths[i].lexically_relative(getReconstructionModeDirectory()).string()});
-#else
-            fileList.push_back({i, mReconstructionFilePaths[i].filename().string()});
-#endif
         }
 
         if (!fileList.empty())
@@ -388,13 +430,24 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
             {
                 mLoadReconstructionRequested = true;
             }
+#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
+            if (widget.button("Restore Training Checkpoint"))
+            {
+                mReferenceDataError.clear();
+                mRestoreCoarseCheckpointRequested = true;
+            }
+#endif
         }
         else
         {
             widget.text("No reconstruction .bin files found.");
         }
 
+        if (!mReconstructionIOStatus.empty()) widget.text(mReconstructionIOStatus);
         widget.textbox("Name Tag", mReconstructionNameTag);
+#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
+        if (!mLoadedReconstructionForViewing)
+#endif
         if (widget.button("Save Reconstruction"))
         {
             mSaveReconstructionRequested = true;
@@ -466,6 +519,9 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
 void VoxelReconstructionNoLightTransport::setScene(RenderContext* pRenderContext, const ref<Scene>& pScene)
 {
     mpScene = pScene;
+    mLoadedReconstructionForViewing = false;
+    mReconstructionIOStatus.clear();
+    mReferenceDataError.clear();
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
     mPointCloud = {};
     mGridResources.gridData.solidVoxelCount = 0;
@@ -687,12 +743,19 @@ void VoxelReconstructionNoLightTransport::setupGridResouce(RenderContext* pRende
 
 void VoxelReconstructionNoLightTransport::startReconstruction()
 {
+    mReferenceDataError.clear();
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
     // GPU work and first-use initialization are performed at the next frame boundary.
     mPointCloud.startRequested = true;
 #elif RECON_MODE == RECON_MODE_COARSE_TO_FINE
+    if (mLoadedReconstructionForViewing)
+    {
+        mReconstructionIOStatus = "Viewing a saved result. Restore Training Checkpoint to continue its optimization.";
+        return;
+    }
     mCoarseToFine.startRequested = true;
 #else
+    mLoadedReconstructionForViewing = false;
     mEnableReconstruction = true;
 
     mOptimizerParams.isRunning = true;
@@ -728,7 +791,7 @@ void VoxelReconstructionNoLightTransport::stopReconstruction()
 #endif
 }
 
-bool VoxelReconstructionNoLightTransport::onMouseEvent(const MouseEvent& mouseEvent) 
+bool VoxelReconstructionNoLightTransport::onMouseEvent(const MouseEvent& mouseEvent)
 {
     bool ret = mpPixelDebug->onMouseEvent(mouseEvent);
 

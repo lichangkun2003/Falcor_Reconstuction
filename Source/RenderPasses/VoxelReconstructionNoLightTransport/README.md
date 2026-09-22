@@ -7,7 +7,7 @@
 #define GRID_RESOLUTION 128                // 所有模式共用的最终目标分辨率
 ```
 
-当前默认 mode2，目标分辨率为 128。切换宏后需要重新编译 Pass；三个模式仍共用 `GRID_RESOLUTION`。
+实际选择以 `Defines.h` 为准。切换宏后需要重新编译 Pass；三个模式的新实验仍共用 `GRID_RESOLUTION`。
 
 ## Mode1：点云初始化
 
@@ -20,7 +20,7 @@
 
 等待参考图片加载完，点击 **Init / Reset from PLY** 可先查看初始化结果，再勾选 **Enable Reconstruction** 开始训练。也可以直接勾选 **Enable Reconstruction**，首次会自动初始化。重置按钮会重新读取 PLY、清除迭代和 loss 状态并停止训练。训练建议先保持默认 Spp=1。
 
-结果及 loss 保存到 `Reconstruction_Output/mode1`。沿用 v1 体素文件格式，包含全部体素的占据信息及参数；**Load Selected Reconstruction** 成功后停止训练，重新开始时直接使用加载结果，不要求 PLY 存在。v1 不保存优化器进度或 AABB，加载时应使用与保存时相同的场景、AABB 和分辨率。
+结果及 loss 保存到 `Reconstruction_Output/mode1`。当前使用 v1 体素文件格式，包含全部体素的占据信息及参数；**Load Selected Reconstruction** 成功后停止训练，重新开始时直接使用加载结果，不要求 PLY 存在。加载采用文件中的实际分辨率，并按当前版本的固定重建范围 `[-1.326, 1.326]³` 还原网格。更早使用其他 AABB 或非立方网格的旧文件不在此次兼容范围内。
 
 当前严格采用“有点才占据”：空体素不会在训练中自动生长，点云的孔洞可能保留。此模式提供点云初始化先验，没有增加邻域膨胀或空间平滑正则项。pruning 和梯度更新沿用固定分辨率流程。
 
@@ -37,9 +37,9 @@
 3. **Display level** 可选择 **Current optimization level (live)** 或已保存的层级，例如 32、64、128；条目同时显示保存时的本层迭代数。每层完成保存后自动加入列表，同层追加训练完成后更新为最新结果。训练中也可以查看之前的层级，最终训练完成后可依次切换比较。
 4. 若需要逐层判断迭代是否足够，可勾选 **Pause after each stage**。暂停后设置 **Additional iterations**，点击 **Add iterations and continue this stage**；满意后点击 **Refine and start next stage**。
 5. **Pause and save after this iteration** 和训练中的 **Save Reconstruction** 都等待当前整轮结束。前者暂停，后者保存后继续训练。
-6. **Load Selected Reconstruction** 可恢复 mode2 的中间检查点。加载后暂停，可继续该层、追加轮次或进入下一层。
+6. **Load Selected Reconstruction** 加载 mode2 文件用于查看，暂停训练，不恢复预算、学习率或 loss 历史。同一实验目录的层级结果会加入 **Display level**。需要接着优化时，选择文件并点击 **Restore Training Checkpoint**；配置兼容且恢复成功后仍保持暂停，可继续该层、追加轮次或进入下一层。
 
-层级选择同时作用于 `VoxelReconstruction.color` 和 `VoxelReconstruction.AccuColor`。查看历史层时，可使用场景相机，或勾选 **Use ReferenceCamera** 并调整 **Camera Index**，以相同视角比较各层。切换显示不恢复训练状态，也不改变当前训练的层级、相机、迭代进度、学习率或 loss；**Save Reconstruction** 仍保存正在优化的层级。若要回到早期层继续训练，仍使用 **Load Selected Reconstruction**。
+层级选择同时作用于 `VoxelReconstruction.color` 和 `VoxelReconstruction.AccuColor`。查看历史层时，可使用场景相机，或勾选 **Use ReferenceCamera** 并调整 **Camera Index**，以相同视角比较各层。切换显示不恢复训练状态，也不改变当前训练的层级、相机、迭代进度、学习率或 loss；**Save Reconstruction** 仍保存正在优化的层级。纯查看状态不生成训练检查点；若要回到早期层继续训练，使用 **Restore Training Checkpoint**。
 
 每层重新分配体素、梯度和 vBuffer；旧层优化结果保存在磁盘，不永久保留全部 GPU buffer。可视化只按需加载所选历史层的一份独立网格，返回 live 时释放；不分配历史层梯度或路径记录。预览使用独立渲染和累积纹理，训练的跨帧 Spp 累积、loss 和保存图片始终使用当前训练层。新实验清空历史层选择列表。磁盘加载、自动保存和评估导出仍可能短暂耗时，连续模式表示不再等待手动确认升层。
 
@@ -77,7 +77,15 @@ Reconstruction_Output/
     Loss/
 ```
 
-同一阶段追加训练会生成新的文件；同名保存增加编号，不覆盖已有检查点。stage 编号从 0 开始。mode2 文件包含网格 AABB、当前/目标分辨率、层级预算、训练设置和 loss 历史；只接受配置兼容的 v2 检查点。mode3 继续使用原有 v1 体素文件格式，新结果写到 mode3 目录；旧文件可放入此目录供原模式加载。
+同一阶段追加训练会生成新的文件；同名保存增加编号，不覆盖已有检查点。stage 编号从 0 开始。mode2 文件包含网格 AABB、当前/目标分辨率、层级预算、训练设置和 loss 历史。mode1、mode3 使用当前 v1 体素文件格式，mode2 使用 v2；保存格式保持不变。
+
+## 加载当前版本的结果
+
+在 **Reconstruction IO** 中，点击 **Refresh Files**，选择文件并点击 **Load Selected Reconstruction**。列表递归扫描当前 `RECON_MODE` 对应的目录，显示相对路径；不会混入其他 mode 的文件。v1 本身没有 mode 字段，所以 mode1、mode3 的归属由文件夹区分。
+
+三个 mode 的 Load 均按文件实际网格尺寸重建资源，暂停优化、取消待执行的初始化与自动升层，并清除旧采样累积。查看结果只需要已加载的场景和场景相机，不要求 PLY、训练图片或参考相机文件存在。`color` 和 `AccuColor` 都显示加载结果，暂停时不会因训练 Spp 大于 1 而将画面亮度除以 Spp。UI 会显示加载成功或具体失败原因；格式、长度或资源分配失败时保留原结果。
+
+mode2 普通 Load 只检查体素布局、mode、文件完整性和网格空间信息；当前目标分辨率、参考数据路径及训练预算不同也可以查看。只有 **Restore Training Checkpoint** 才要求训练数据与当前配置兼容，并恢复迭代、预算、学习率等。加载某层后，**Display level** 的 **Loaded reconstruction** 表示所选文件；其他条目来自该实验目录中每层最新的保存结果。
 
 `Images` 使用第 0、N/3、2N/3 个训练视角（去重），固定采样种子，默认 `CTF_EVALUATION_SPP=8`。在最后一次参数更新后重新渲染；RGB PNG 使用 sRGB 编码，alpha PNG 保存线性灰度覆盖率。evaluation CSV 为这些固定训练视角的最新 loss，训练 loss CSV 则记录每轮各视角更新前的平均 loss；两者含义不同，不是验证集指标。
 

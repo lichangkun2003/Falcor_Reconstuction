@@ -28,14 +28,62 @@
 #include "VoxelReconstructionNoLightTransport.h"
 #include <cmath>
 #include <limits>
+#include <map>
 #include <stdexcept>
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
 #include <cstring>
-#endif
+#include <cwctype>
+#include <slang-gfx.h>
 
 namespace
 {
 constexpr uint32_t kReconstructionMagic = 0x56525831;
+
+bool samePathComponent(const std::filesystem::path& a, const std::filesystem::path& b)
+{
+#if defined(_WIN32)
+    auto lhs = a.native(), rhs = b.native();
+    std::transform(lhs.begin(), lhs.end(), lhs.begin(), [](wchar_t value) { return wchar_t(std::towlower(value)); });
+    std::transform(rhs.begin(), rhs.end(), rhs.begin(), [](wchar_t value) { return wchar_t(std::towlower(value)); });
+    return lhs == rhs;
+#else
+    return a == b;
+#endif
+}
+
+std::filesystem::path requireModeFile(const std::filesystem::path& path, const std::filesystem::path& modeDirectory)
+{
+    const auto file = std::filesystem::canonical(path);
+    const auto directory = std::filesystem::canonical(modeDirectory);
+    auto component = file.begin();
+    for (auto rootComponent = directory.begin(); rootComponent != directory.end(); ++rootComponent, ++component)
+    {
+        if (component == file.end() || !samePathComponent(*component, *rootComponent))
+            throw std::runtime_error("Select a reconstruction inside the current mode directory: " + modeDirectory.string());
+    }
+    if (component == file.end() || !std::filesystem::is_regular_file(file))
+        throw std::runtime_error("The selected reconstruction is not a regular file.");
+    return file;
+}
+
+uint32_t reconstructionDimensionLimit(const ref<Device>& device)
+{
+    const uint32_t limit = device->getGfxDevice()->getDeviceInfo().limits.maxTextureDimension3D;
+    return limit > 0 ? limit : 2048u;
+}
+
+uint64_t checkedVoxelCount(uint3 count, uint32_t dimensionLimit)
+{
+    if (any(count == uint3(0)) || any(count > uint3(dimensionLimit)))
+        throw std::runtime_error("Reconstruction voxel dimensions exceed the GPU's 3D texture limit.");
+    const uint64_t maximum = uint64_t(std::numeric_limits<int32_t>::max());
+    uint64_t elements = count.x;
+    if (elements > maximum / count.y)
+        throw std::runtime_error("Reconstruction exceeds the shader index range.");
+    elements *= count.y;
+    if (elements > maximum / count.z)
+        throw std::runtime_error("Reconstruction exceeds the shader index range.");
+    return elements * count.z;
+}
 
 #if RECON_MODE == RECON_MODE_COARSE_TO_FINE
 constexpr uint64_t kMaxCheckpointMetadataBytes = 16ull * 1024 * 1024;
@@ -48,7 +96,7 @@ struct CoarseCheckpointHeader
 };
 
 // Leave the stream at the voxel payload so resume and read-only preview share the same size checks.
-CoarseCheckpointHeader readCoarseCheckpointHeader(std::ifstream& in, const std::filesystem::path& path)
+CoarseCheckpointHeader readCoarseCheckpointHeader(std::ifstream& in, const std::filesystem::path& path, uint32_t dimensionLimit)
 {
     if (!in) throw std::runtime_error("Cannot open checkpoint: " + path.string());
     CoarseCheckpointHeader header;
@@ -65,16 +113,7 @@ CoarseCheckpointHeader readCoarseCheckpointHeader(std::ifstream& in, const std::
     in.read(reinterpret_cast<char*>(&metadataSize), sizeof(metadataSize));
     if (!in || metadataSize == 0 || metadataSize > kMaxCheckpointMetadataBytes)
         throw std::runtime_error("Invalid checkpoint metadata size.");
-    if (any(header.voxelCount == uint3(0)) || any(header.voxelCount > uint3(GRID_RESOLUTION)))
-        throw std::runtime_error("Invalid checkpoint voxel count.");
-    const uint64_t maxElements = uint64_t(std::numeric_limits<int32_t>::max());
-    header.elementCount = header.voxelCount.x;
-    if (header.elementCount > maxElements / header.voxelCount.y)
-        throw std::runtime_error("Checkpoint exceeds the shader index range.");
-    header.elementCount *= header.voxelCount.y;
-    if (header.elementCount > maxElements / header.voxelCount.z)
-        throw std::runtime_error("Checkpoint exceeds the shader index range.");
-    header.elementCount *= header.voxelCount.z;
+    header.elementCount = checkedVoxelCount(header.voxelCount, dimensionLimit);
     header.byteSize = header.elementCount * sizeof(VoxelData);
     const uint64_t headerSize = sizeof(magic) + sizeof(version) + sizeof(header.voxelCount) + sizeof(voxelDataSize) + sizeof(metadataSize);
     if (std::filesystem::file_size(path) != headerSize + metadataSize + header.byteSize)
@@ -123,6 +162,28 @@ float3 checkpointFloat3(const nlohmann::json& object, const char* key, bool posi
             throw std::runtime_error(std::string("Checkpoint vector out of range: ") + key);
     }
     return result;
+}
+
+GridData coarseResultGrid(const CoarseCheckpointHeader& header)
+{
+    const auto& metadata = header.metadata;
+    if (checkpointUInt(metadata, "mode") != RECON_MODE_COARSE_TO_FINE ||
+        checkpointUInt(metadata, "radianceShCount") != SH_COUNT || checkpointUInt(metadata, "opacityShCount") != SH_OPACITY_COUNT)
+        throw std::runtime_error("The saved result has an incompatible reconstruction mode or SH layout.");
+    GridData grid{};
+    grid.voxelCount = header.voxelCount;
+    const uint32_t resolution = checkpointUInt(metadata, "resolution");
+    if (resolution != std::max(grid.voxelCount.x, std::max(grid.voxelCount.y, grid.voxelCount.z)))
+        throw std::runtime_error("The saved result resolution does not match its grid dimensions.");
+    grid.gridMin = checkpointFloat3(metadata, "gridMin", false);
+    grid.voxelSize = checkpointFloat3(metadata, "voxelSize", true);
+    grid.solidVoxelCount = checkpointUInt(metadata, "solidVoxelCount");
+    if (grid.solidVoxelCount > header.elementCount)
+        throw std::runtime_error("The saved result has an invalid solid voxel count.");
+    for (uint32_t axis = 0; axis < 3; ++axis)
+        if (!std::isfinite(grid.gridMin[axis] + grid.voxelSize[axis] * float(grid.voxelCount[axis])))
+            throw std::runtime_error("The saved result grid extent is not finite.");
+    return grid;
 }
 
 std::filesystem::path uniqueCheckpointPath(const std::filesystem::path& path)
@@ -200,37 +261,17 @@ bool VoxelReconstructionNoLightTransport::loadCoarsePreview(RenderContext* pRend
     auto& preview = mCoarseToFine.preview;
     try
     {
-        std::ifstream in(result.path, std::ios::binary);
-        const auto header = readCoarseCheckpointHeader(in, result.path);
+        const auto path = requireModeFile(result.path, getReconstructionModeDirectory());
+        std::ifstream in(path, std::ios::binary);
+        const auto header = readCoarseCheckpointHeader(in, path, reconstructionDimensionLimit(mpDevice));
         const auto& metadata = header.metadata;
-        if (checkpointUInt(metadata, "mode") != RECON_MODE || checkpointUInt(metadata, "targetResolution") != GRID_RESOLUTION ||
-            checkpointUInt(metadata, "radianceShCount") != SH_COUNT || checkpointUInt(metadata, "opacityShCount") != SH_OPACITY_COUNT)
-            throw std::runtime_error("Saved preview has an incompatible reconstruction mode, target resolution, or SH layout.");
+        GridResources next;
+        next.gridData = coarseResultGrid(header);
         const uint32_t resolution = checkpointUInt(metadata, "resolution");
         const uint32_t stageIndex = checkpointUInt(metadata, "stageIndex");
         const uint32_t stageIteration = checkpointUInt(metadata, "stageIteration");
-        if (resolution == 0 || resolution != result.resolution || stageIndex != result.stageIndex || stageIteration != result.stageIteration ||
-            any(header.voxelCount > uint3(resolution)) ||
-            std::max(header.voxelCount.x, std::max(header.voxelCount.y, header.voxelCount.z)) != resolution)
+        if (resolution != result.resolution || stageIndex != result.stageIndex || stageIteration != result.stageIteration)
             throw std::runtime_error("Saved preview does not match the selected stage result.");
-        const auto& levels = metadata.at("resolutions");
-        if (!levels.is_array() || stageIndex >= levels.size() ||
-            checkpointUInt(nlohmann::json{{"value", levels[stageIndex]}}, "value") != resolution)
-            throw std::runtime_error("Saved preview has invalid stage metadata.");
-        if (metadata.at("referenceCameraFile").get<std::string>() != ReferenceCameraFile ||
-            metadata.at("referenceImageDir").get<std::string>() != ReferenceImageDir)
-            throw std::runtime_error("Saved preview belongs to a different reference dataset.");
-
-        GridResources next;
-        next.gridData.voxelCount = header.voxelCount;
-        next.gridData.gridMin = checkpointFloat3(metadata, "gridMin", false);
-        next.gridData.voxelSize = checkpointFloat3(metadata, "voxelSize", true);
-        next.gridData.solidVoxelCount = checkpointUInt(metadata, "solidVoxelCount");
-        if (next.gridData.solidVoxelCount > header.elementCount)
-            throw std::runtime_error("Saved preview has an invalid solid voxel count.");
-        for (uint32_t axis = 0; axis < 3; ++axis)
-            if (!std::isfinite(next.gridData.gridMin[axis] + next.gridData.voxelSize[axis] * float(header.voxelCount[axis])))
-                throw std::runtime_error("Saved preview grid extent is not finite.");
 
         std::vector<uint8_t> data(static_cast<size_t>(header.byteSize));
         in.read(reinterpret_cast<char*>(data.data()), std::streamsize(header.byteSize));
@@ -254,7 +295,7 @@ bool VoxelReconstructionNoLightTransport::loadCoarsePreview(RenderContext* pRend
         pRenderContext->uavBarrier(next.gridDataBuffer.get());
 
         // Only publish preview resources after validation/allocation/upload; the active optimizer is untouched.
-        auto loadedPath = result.path;
+        auto loadedPath = path;
         auto status = fmt::format("Saved stage {}, resolution {}, iteration {}", stageIndex + 1, resolution, stageIteration);
         preview.grid = std::move(next);
         preview.gridBlock = std::move(block);
@@ -339,11 +380,11 @@ std::filesystem::path VoxelReconstructionNoLightTransport::getDefaultReconstruct
 
     if (nameTag.empty())
     {
-        filename = fmt::format("recon{}_{}_{}.bin", dateTag, GRID_RESOLUTION, paramTag);
+        filename = fmt::format("recon{}_{}_{}.bin", dateTag, mVoxelResolution, paramTag);
     }
     else
     {
-        filename = fmt::format("recon{}_{}_{}_{}.bin", dateTag, nameTag, GRID_RESOLUTION, paramTag);
+        filename = fmt::format("recon{}_{}_{}_{}.bin", dateTag, nameTag, mVoxelResolution, paramTag);
     }
 
     return outputDir / filename;
@@ -365,6 +406,8 @@ void VoxelReconstructionNoLightTransport::saveReconstruction(RenderContext* pRen
     mCoarseToFine.lastSaveSucceeded = false;
     try
     {
+        if (mLoadedReconstructionForViewing)
+            throw std::runtime_error("This result is open for viewing. Restore its training checkpoint before saving a new mode 2 checkpoint.");
         if (!mGridResources.gridDataBuffer || !mCoarseToFine.initialized)
             throw std::runtime_error("Initialize the coarse-to-fine grid before saving.");
         if (mOptimizerParams.currentView != 0)
@@ -517,13 +560,14 @@ void VoxelReconstructionNoLightTransport::saveReconstruction(RenderContext* pRen
 }
 
 
-void VoxelReconstructionNoLightTransport::loadReconstruction(RenderContext* pRenderContext, const std::filesystem::path& path)
-{
 #if RECON_MODE == RECON_MODE_COARSE_TO_FINE
+void VoxelReconstructionNoLightTransport::restoreCoarseCheckpoint(RenderContext* pRenderContext, const std::filesystem::path& path)
+{
     try
     {
+        requireModeFile(path, getReconstructionModeDirectory());
         std::ifstream in(path, std::ios::binary);
-        const auto header = readCoarseCheckpointHeader(in, path);
+        const auto header = readCoarseCheckpointHeader(in, path, reconstructionDimensionLimit(mpDevice));
         const auto fileVoxelCount = header.voxelCount;
         const auto elementCount = header.elementCount;
         const auto byteSize = header.byteSize;
@@ -657,33 +701,8 @@ void VoxelReconstructionNoLightTransport::loadReconstruction(RenderContext* pRen
         if (!in) throw std::runtime_error("Cannot read checkpoint voxel payload.");
         in.close();
 
-        // All file validation is complete before replacing any live GPU resources.
-        const auto previousGrid = mGridResources;
-        const auto previousGradient = mGradientPass.gradBuffer;
-        const auto previousBlock = mpGridBlock;
-        const auto previousOptimizer = mOptimizerParams;
-        const auto previousRay = mRayMarchingPass;
-        const auto previousLoss = mReduceLossPass;
-        const uint32_t previousResolution = mVoxelResolution;
-        const bool previousClearAccumulation = mCoarseToFine.clearAccumulation;
-        try
-        {
-            replaceCoarseGrid(pRenderContext, grid, resolution);
-            pRenderContext->updateBuffer(mGridResources.gridDataBuffer.get(), data.data(), 0, data.size());
-            pRenderContext->uavBarrier(mGridResources.gridDataBuffer.get());
-        }
-        catch (...)
-        {
-            mGridResources = previousGrid;
-            mGradientPass.gradBuffer = previousGradient;
-            mpGridBlock = previousBlock;
-            mOptimizerParams = previousOptimizer;
-            mRayMarchingPass = previousRay;
-            mReduceLossPass = previousLoss;
-            mVoxelResolution = previousResolution;
-            mCoarseToFine.clearAccumulation = previousClearAccumulation;
-            throw;
-        }
+        // Validation and payload reads complete before the shared allocation/upload/binding transaction.
+        replaceReconstructionGrid(pRenderContext, grid, resolution, data.data(), data.size());
         state.initialized = true;
         state.paused = true;
         state.lastSaveSucceeded = true;
@@ -693,6 +712,7 @@ void VoxelReconstructionNoLightTransport::loadReconstruction(RenderContext* pRen
         // Resume into a new run on first save so the inspected experiment stays intact.
         state.runDirectory.clear();
         mCoarseToFine = std::move(state);
+        mLoadedReconstructionForViewing = false;
         mOptimizerParams.currentIteration = globalIteration;
         mOptimizerParams.currentView = 0;
         mOptimizerParams.viewsPerIteration = viewCount;
@@ -726,103 +746,161 @@ void VoxelReconstructionNoLightTransport::loadReconstruction(RenderContext* pRen
             logWarning("Checkpoint restored with volume pruning on every stage, once per {} complete stage iterations.", CTF_PRUNE_INTERVAL);
         logInfo("Loaded {} at resolution {}, stage iteration {}/{}; paused for inspection.", path.string(), resolution,
             mCoarseToFine.stageIteration, mCoarseToFine.stageBudget);
+        mReconstructionIOStatus = fmt::format("Restored training checkpoint: {} (resolution {}, stage iteration {}/{}, paused)",
+            path.filename().string(), resolution, mCoarseToFine.stageIteration, mCoarseToFine.stageBudget);
     }
     catch (const std::exception& error)
     {
-        logError("Load stage checkpoint failed: {}", error.what());
+        mReconstructionIOStatus = std::string("Restore checkpoint failed: ") + error.what();
+        logError("{}", mReconstructionIOStatus);
     }
+}
+#endif
+
+void VoxelReconstructionNoLightTransport::loadReconstruction(RenderContext* pRenderContext, const std::filesystem::path& selectedPath)
+{
+    try
+    {
+        const auto path = requireModeFile(selectedPath, getReconstructionModeDirectory());
+        std::ifstream in(path, std::ios::binary);
+        if (!in) throw std::runtime_error("Cannot open reconstruction: " + path.string());
+        const uint32_t dimensionLimit = reconstructionDimensionLimit(mpDevice);
+        GridData grid{};
+        uint32_t resolution = 0;
+        uint64_t elementCount = 0, byteSize = 0;
+#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
+        const auto header = readCoarseCheckpointHeader(in, path, dimensionLimit);
+        grid = coarseResultGrid(header);
+        resolution = checkpointUInt(header.metadata, "resolution");
+        elementCount = header.elementCount;
+        byteSize = header.byteSize;
+        CoarseToFineState viewState;
+        viewState.initialized = true;
+        viewState.paused = true;
+        viewState.lastCheckpointPath = path;
+        // Stage labels describe the file. They do not restore optimizer iteration counts or budgets.
+        const auto stageLabel = [&](const CoarseCheckpointHeader& saved, const std::filesystem::path& file)
+        {
+            const auto savedGrid = coarseResultGrid(saved);
+            const uint32_t stageIndex = checkpointUInt(saved.metadata, "stageIndex");
+            if (stageIndex >= 32) throw std::runtime_error("Saved stage index is out of range.");
+            return CoarseStageResult{stageIndex,
+                std::max(savedGrid.voxelCount.x, std::max(savedGrid.voxelCount.y, savedGrid.voxelCount.z)),
+                checkpointUInt(saved.metadata, "stageIteration"), file};
+        };
+        const auto selectedStage = stageLabel(header, path);
+        viewState.stageIndex = selectedStage.stageIndex;
+        viewState.resolutions.assign(selectedStage.stageIndex + 1, resolution);
+        // A result remains viewable when its training hierarchy differs from the current experiment.
+        const auto levels = header.metadata.find("resolutions");
+        if (levels != header.metadata.end() && levels->is_array() && levels->size() <= 32)
+        {
+            std::vector<uint32_t> savedLevels;
+            try
+            {
+                for (const auto& level : *levels)
+                {
+                    const uint32_t value = checkpointUInt(nlohmann::json{{"value", level}}, "value");
+                    if (value == 0 || value > dimensionLimit) throw std::runtime_error("Invalid display level.");
+                    savedLevels.push_back(value);
+                }
+                if (selectedStage.stageIndex < savedLevels.size() && savedLevels[selectedStage.stageIndex] == resolution)
+                    viewState.resolutions = std::move(savedLevels);
+            }
+            catch (const std::exception&) { /* The optional training hierarchy is not required to display voxel data. */ }
+        }
+        viewState.preview.stages.push_back(selectedStage);
 #else
-    if (!mGridResources.gridDataBuffer)
-    {
-        logWarning("Load reconstruction failed: gridDataBuffer is null.");
-        return;
-    }
-
-    std::ifstream in(path, std::ios::binary);
-
-    if (!in.is_open())
-    {
-        logError("Load reconstruction failed: cannot open file " + path.string());
-        return;
-    }
-
-    uint32_t magic = 0;
-    uint32_t version = 0;
-    uint3 fileVoxelCount = uint3(0);
-    uint32_t voxelDataSize = 0;
-
-    in.read(reinterpret_cast<char*>(&magic), sizeof(magic));
-    in.read(reinterpret_cast<char*>(&version), sizeof(version));
-    in.read(reinterpret_cast<char*>(&fileVoxelCount), sizeof(fileVoxelCount));
-    in.read(reinterpret_cast<char*>(&voxelDataSize), sizeof(voxelDataSize));
-
-    if (magic != 0x56525831 || version != 1)
-    {
-        logError("Load reconstruction failed: invalid file header.");
-        return;
-    }
-
-    if (any(fileVoxelCount != mGridResources.gridData.voxelCount))
-    {
-        logError(
-            "Load reconstruction failed: voxel count mismatch. file={}x{}x{}, current={}x{}x{}",
-            fileVoxelCount.x,
-            fileVoxelCount.y,
-            fileVoxelCount.z,
-            mGridResources.gridData.voxelCount.x,
-            mGridResources.gridData.voxelCount.y,
-            mGridResources.gridData.voxelCount.z
-        );
-        return;
-    }
-
-    if (voxelDataSize != sizeof(VoxelData))
-    {
-        logError("Load reconstruction failed: VoxelData size mismatch. file={}, current={}", voxelDataSize, sizeof(VoxelData));
-        return;
-    }
-
-    const uint64_t elementCount = mGridResources.gridData.totalVoxelCount();
-    //const uint64_t elementCount = mGridResources.gridData.solidVoxelCount;
-    const uint64_t byteSize = elementCount * sizeof(VoxelData);
-
-    std::vector<uint8_t> data(byteSize);
-
-    in.read(reinterpret_cast<char*>(data.data()), std::streamsize(byteSize));
-
-    if (!in)
-    {
-        logError("Load reconstruction failed: file is truncated.");
-        return;
-    }
-
-    in.close();
-
-    pRenderContext->updateBuffer(mGridResources.gridDataBuffer.get(), data.data(), 0, size_t(byteSize));
-
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
-    uint32_t occupiedCount = 0;
-    for (uint64_t i = 0; i < elementCount; ++i)
-    {
-        uint32_t occupied = 0;
-        std::memcpy(&occupied, data.data() + i * sizeof(VoxelData) + offsetof(VoxelData, occupied), sizeof(occupied));
-        if (occupied != 0) ++occupiedCount;
-    }
-    mGridResources.gridData.solidVoxelCount = occupiedCount;
-    mpGridBlock->getRootVar()["solidVoxelCount"] = occupiedCount;
-    resetPointCloudOptimization(pRenderContext);
-    mPointCloud.initialized = true;
-    mPointCloud.status = fmt::format("Loaded {}: {} occupied voxels", path.filename().string(), occupiedCount);
+        uint32_t magic = 0, version = 0, voxelDataSize = 0;
+        in.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+        in.read(reinterpret_cast<char*>(&version), sizeof(version));
+        in.read(reinterpret_cast<char*>(&grid.voxelCount), sizeof(grid.voxelCount));
+        in.read(reinterpret_cast<char*>(&voxelDataSize), sizeof(voxelDataSize));
+        if (!in || magic != kReconstructionMagic || version != 1)
+            throw std::runtime_error("This mode loads its current version 1 reconstruction files.");
+        if (voxelDataSize != sizeof(VoxelData))
+            throw std::runtime_error("Reconstruction VoxelData layout differs from the current build.");
+        elementCount = checkedVoxelCount(grid.voxelCount, dimensionLimit);
+        if (grid.voxelCount.x != grid.voxelCount.y || grid.voxelCount.x != grid.voxelCount.z)
+            throw std::runtime_error("Only current cubic-grid mode 1/3 files are supported; older non-cubic/SVO files are not supported.");
+        resolution = grid.voxelCount.x;
+        byteSize = elementCount * sizeof(VoxelData);
+        const uint64_t headerSize = sizeof(magic) + sizeof(version) + sizeof(grid.voxelCount) + sizeof(voxelDataSize);
+        if (std::filesystem::file_size(path) != headerSize + byteSize)
+            throw std::runtime_error("Reconstruction file size does not match its voxel dimensions and layout.");
+        // Current mode 1/3 v1 files use this fixed NeRF reconstruction domain; v1 does not store its AABB.
+        constexpr float extent = 2.6f * 1.02f;
+        grid.voxelSize = float3(extent / float(resolution));
+        grid.gridMin = -0.5f * grid.voxelSize * float3(grid.voxelCount);
 #endif
-
-    logInfo("Loaded reconstruction from " + path.string());
+        std::vector<uint8_t> data(static_cast<size_t>(byteSize));
+        in.read(reinterpret_cast<char*>(data.data()), std::streamsize(byteSize));
+        if (!in) throw std::runtime_error("Cannot read the complete reconstruction voxel payload.");
+        in.close();
+        grid.solidVoxelCount = 0;
+        for (uint64_t i = 0; i < elementCount; ++i)
+        {
+            uint32_t occupied = 0;
+            std::memcpy(&occupied, data.data() + i * sizeof(VoxelData) + offsetof(VoxelData, occupied), sizeof(occupied));
+            if (occupied != 0) ++grid.solidVoxelCount;
+        }
+        auto status = fmt::format("Loaded for viewing: {} (mode {}, {}x{}x{}, {} occupied voxels)",
+            path.filename().string(), RECON_MODE, grid.voxelCount.x, grid.voxelCount.y, grid.voxelCount.z, grid.solidVoxelCount);
+        replaceReconstructionGrid(pRenderContext, grid, resolution, data.data(), data.size());
+        resetLoadedReconstruction(pRenderContext);
+#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
+        mCoarseToFine = std::move(viewState);
+        // Discover saved stages from this run only; a bad neighbour must not invalidate the loaded result.
+        try
+        {
+            std::map<uint32_t, std::pair<CoarseStageResult, std::filesystem::file_time_type>> stages;
+            for (const auto& entry : std::filesystem::directory_iterator(path.parent_path()))
+            {
+                if (!entry.is_regular_file() || !samePathComponent(entry.path().extension(), ".bin")) continue;
+                try
+                {
+                    const auto candidatePath = requireModeFile(entry.path(), getReconstructionModeDirectory());
+                    std::ifstream candidate(candidatePath, std::ios::binary);
+                    const auto candidateHeader = readCoarseCheckpointHeader(candidate, candidatePath, dimensionLimit);
+                    auto result = stageLabel(candidateHeader, candidatePath);
+                    const auto modified = std::filesystem::last_write_time(candidatePath);
+                    auto old = stages.find(result.stageIndex);
+                    if (old == stages.end() || result.stageIteration > old->second.first.stageIteration ||
+                        (result.stageIteration == old->second.first.stageIteration && modified > old->second.second))
+                        stages[result.stageIndex] = {std::move(result), modified};
+                }
+                catch (const std::exception& error)
+                {
+                    logWarning("Skipped saved-stage result {}: {}", entry.path().string(), error.what());
+                }
+            }
+            // An explicitly selected older checkpoint wins over a newer file for the same stage.
+            stages[selectedStage.stageIndex] = {selectedStage, std::filesystem::file_time_type::min()};
+            std::vector<CoarseStageResult> results;
+            for (auto& stage : stages) results.push_back(std::move(stage.second.first));
+            mCoarseToFine.preview.stages = std::move(results);
+        }
+        catch (const std::exception& error)
+        {
+            logWarning("Loaded reconstruction, but could not list all saved stages: {}", error.what());
+        }
 #endif
+        mReconstructionIOStatus = std::move(status);
+        logInfo("{}", mReconstructionIOStatus);
+    }
+    catch (const std::exception& error)
+    {
+        mReconstructionIOStatus = std::string("Load failed: ") + error.what();
+        logError("{}", mReconstructionIOStatus);
+    }
 }
 
 
 
 void VoxelReconstructionNoLightTransport::refreshReconstructionFileList()
 {
+    const std::filesystem::path selectedPath = mSelectedReconstructionFile < mReconstructionFilePaths.size() ?
+        mReconstructionFilePaths[mSelectedReconstructionFile] : std::filesystem::path{};
     mReconstructionFilePaths.clear();
     const auto directory = getReconstructionModeDirectory();
     std::error_code error;
@@ -834,15 +912,14 @@ void VoxelReconstructionNoLightTransport::refreshReconstructionFileList()
 
     try
     {
-#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
         const auto entries = std::filesystem::recursive_directory_iterator(directory, std::filesystem::directory_options::skip_permission_denied);
-#else
-        const auto entries = std::filesystem::directory_iterator(directory);
-#endif
         for (const auto& entry : entries)
         {
-            if (entry.is_regular_file() && entry.path().extension() == ".bin")
-                mReconstructionFilePaths.push_back(entry.path());
+            if (entry.is_regular_file() && samePathComponent(entry.path().extension(), ".bin"))
+            {
+                try { mReconstructionFilePaths.push_back(requireModeFile(entry.path(), directory)); }
+                catch (const std::exception& e) { logWarning("Skipped reconstruction file {}: {}", entry.path().string(), e.what()); }
+            }
         }
     }
     catch (const std::filesystem::filesystem_error& e)
@@ -853,20 +930,17 @@ void VoxelReconstructionNoLightTransport::refreshReconstructionFileList()
     std::sort(
         mReconstructionFilePaths.begin(),
         mReconstructionFilePaths.end(),
-#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
         [](const std::filesystem::path& a, const std::filesystem::path& b) { return a.generic_string() < b.generic_string(); }
-#else
-        [](const std::filesystem::path& a, const std::filesystem::path& b) { return a.filename().string() < b.filename().string(); }
-#endif
     );
-
-    if (mReconstructionFilePaths.empty())
+    mReconstructionFilePaths.erase(std::unique(mReconstructionFilePaths.begin(), mReconstructionFilePaths.end()), mReconstructionFilePaths.end());
+    mSelectedReconstructionFile = 0;
+    if (!selectedPath.empty())
     {
-        mSelectedReconstructionFile = 0;
-    }
-    else
-    {
-        mSelectedReconstructionFile = std::min(mSelectedReconstructionFile, uint32_t(mReconstructionFilePaths.size() - 1));
+        const auto oldSelection = std::filesystem::weakly_canonical(selectedPath, error);
+        const auto selected = std::find_if(mReconstructionFilePaths.begin(), mReconstructionFilePaths.end(),
+            [&](const auto& path) { return samePathComponent(path, oldSelection); });
+        if (selected != mReconstructionFilePaths.end())
+            mSelectedReconstructionFile = uint32_t(std::distance(mReconstructionFilePaths.begin(), selected));
     }
 }
 

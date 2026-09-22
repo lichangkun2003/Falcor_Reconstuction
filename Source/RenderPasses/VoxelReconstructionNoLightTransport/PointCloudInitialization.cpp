@@ -86,6 +86,7 @@ bool VoxelReconstructionNoLightTransport::initializePointCloudVoxelData(RenderCo
         mpGridBlock = block;
         resetPointCloudOptimization(pRenderContext);
         mPointCloud.initialized = true;
+        mLoadedReconstructionForViewing = false;
         const auto& stats = points.statistics;
         mPointCloud.status = fmt::format("PLY: {} points, {} occupied voxels; {} outside, {} invalid",
             stats.inputPoints, grid.solidVoxelCount, stats.outsidePoints, stats.invalidPoints);

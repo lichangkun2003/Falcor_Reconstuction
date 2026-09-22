@@ -50,7 +50,7 @@
 
 using namespace Falcor;
 
-namespace 
+namespace
 {
 const std::string ReflectTypesShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/ReflectTypes.cs.slang";
 const std::string InitializeDataShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/InitializeData.cs.slang";
@@ -68,8 +68,8 @@ inline std::string kOutputColor = "color";
 inline std::string kAccumulateOutputColor = "AccuColor";
 
 inline std::string ReconstructionDataDir = "D:/lck/vs/Reconstruction_Output";
-inline std::string ReferenceImageDir = "D:/lck/vs/Reconstruction_Input/lego";
-inline std::string ReferenceCameraFile = "D:/lck/vs/Reconstruction_Input/lego/transforms_train.json";
+inline std::string ReferenceImageDir = "D:/lck/vs/Reconstruction_Input/hotdog";
+inline std::string ReferenceCameraFile = "D:/lck/vs/Reconstruction_Input/hotdog/transforms_train.json";
 } // namespace VoxelPrime
 
 class VoxelReconstructionNoLightTransport : public RenderPass
@@ -292,6 +292,9 @@ private:
     void createInitializationPassResource();
     void initializeVoxelData(RenderContext* pRenderContext);
     void initializeOriginalVoxelData(RenderContext* pRenderContext);
+    void replaceReconstructionGrid(RenderContext* pRenderContext, const GridData& grid, uint32_t resolution,
+        const void* voxelData = nullptr, size_t byteSize = 0);
+    void resetLoadedReconstruction(RenderContext* pRenderContext);
 
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
     struct PointCloudState
@@ -364,6 +367,8 @@ private:
     bool loadCoarsePreview(RenderContext* pRenderContext, const CoarseStageResult& result);
     void renderCoarsePreviewUI(Gui::Widgets& widget);
     void renderCoarsePreview(RenderContext* pRenderContext, const RenderData& renderData);
+    void restoreCoarseCheckpoint(RenderContext* pRenderContext, const std::filesystem::path& path);
+    bool mRestoreCoarseCheckpointRequested = false;
 #endif
 
     ref<Device> mpDevice;
@@ -385,7 +390,7 @@ private:
     UpdatePass mUpdatePass;
     LossPass mLossPass;
     ReduceLossPass mReduceLossPass;
-    
+
 
     // Grid
     GridResources mGridResources;    // cpu中的对应gpu中的资源，变量赋值，buffer绑定
@@ -414,8 +419,11 @@ private:
     bool mSaveReconstructionRequested = false;
     bool mLoadReconstructionRequested = false;
     bool mReconstructionFileListDirty = true;
-    float mLrCenterScale = 0.5f; 
-    float mLrBScale = 1.0f; 
+    bool mLoadedReconstructionForViewing = false;
+    std::string mReconstructionIOStatus;
+    std::string mReferenceDataError;
+    float mLrCenterScale = 0.5f;
+    float mLrBScale = 1.0f;
     std::vector<std::filesystem::path> mReconstructionFilePaths;
     uint32_t mSelectedReconstructionFile = 0;
     std::string mReconstructionNameTag = "";

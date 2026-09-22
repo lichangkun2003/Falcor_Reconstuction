@@ -94,7 +94,7 @@ void VoxelReconstructionNoLightTransport::rayMarchingPass(RenderContext* pRender
     {
         pCamera = mReferenceCameras[mOptimizerParams.currentView];
     }
-    else if (mUseReferenceCamera)
+    else if (mUseReferenceCamera && testIndex < mReferenceCameras.size())
     {
         pCamera = mReferenceCameras[testIndex];
     }
@@ -144,11 +144,7 @@ void VoxelReconstructionNoLightTransport::rayMarchingPass(RenderContext* pRender
         cb["renderBackGround"] = pass.mRenderBackGround;
         cb["clearColor"] = float4(pass.mClearColor, 0);
         cb["enableReconstruction"] = mEnableReconstruction;
-#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
         cb["invSpp"] = mEnableReconstruction ? 1.0f / pass.mSpp : 1.0f;
-#else
-        cb["invSpp"] = 1.0f / pass.mSpp;
-#endif
 
         ref<Fbo> fbo = Fbo::create(mpDevice);
         fbo->attachColorTarget(pOutputColor, 0);

@@ -27,6 +27,104 @@
  **************************************************************************/
 #include "VoxelReconstructionNoLightTransport.h"
 
+void VoxelReconstructionNoLightTransport::replaceReconstructionGrid(
+    RenderContext* pRenderContext, const GridData& grid, uint32_t resolution, const void* voxelData, size_t byteSize)
+{
+    const auto flags = ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess;
+    GridResources next;
+    next.gridData = grid;
+    const uint32_t elementCount = next.gridData.totalVoxelCount();
+    next.gridDataBuffer = mpDevice->createStructuredBuffer(sizeof(VoxelData), elementCount, flags);
+    next.vBuffer = mpDevice->createTexture3D(grid.voxelCount.x, grid.voxelCount.y, grid.voxelCount.z,
+        ResourceFormat::R32Int, 1u, nullptr, flags);
+    auto gradient = mpDevice->createStructuredBuffer(sizeof(GradRecord), elementCount, flags);
+    auto block = ParameterBlock::create(mpDevice,
+        mpReflectTypes->getProgram()->getReflector()->getParameterBlock("gGridDataParamBlock"));
+    auto var = block->getRootVar();
+    var["gridDataBuffer"] = next.gridDataBuffer;
+    var["vBuffer"] = next.vBuffer;
+    var["voxelCount"] = grid.voxelCount;
+    var["voxelSize"] = grid.voxelSize;
+    var["gridMin"] = grid.gridMin;
+    var["solidVoxelCount"] = grid.solidVoxelCount;
+    if (voxelData)
+    {
+        if (byteSize != size_t(elementCount) * sizeof(VoxelData))
+            throw RuntimeError("Voxel payload size does not match the replacement grid.");
+        pRenderContext->updateBuffer(next.gridDataBuffer.get(), voxelData, 0, byteSize);
+    }
+    else pRenderContext->clearUAV(next.gridDataBuffer->getUAV().get(), uint4(0));
+    pRenderContext->clearUAV(next.vBuffer->getUAV().get(), uint4(0));
+    pRenderContext->clearUAV(gradient->getUAV().get(), uint4(0));
+    pRenderContext->uavBarrier(next.gridDataBuffer.get());
+    if (voxelData) pRenderContext->submit(true);
+
+    // Allocate/upload first. Keep all program bindings consistent if rebinding fails.
+    const auto bind = [&](const ref<ParameterBlock>& gridBlock, const ref<Buffer>& gradBuffer)
+    {
+        const auto bindGrid = [&](const auto& pass)
+        {
+            if (pass && pass->getVars()) pass->getRootVar()["gGridDataParamBlock"].setParameterBlock(gridBlock);
+        };
+        bindGrid(mpInitializeDataPass);
+        bindGrid(mRayMarchingPass.mpFullScreenPass);
+        bindGrid(mGradientPass.mpComputePass);
+        bindGrid(mUpdatePass.mpComputePass);
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+        bindGrid(mpInitializePointCloudPass);
+#endif
+        if (mGradientPass.mpComputePass && mGradientPass.mpComputePass->getVars())
+            mGradientPass.mpComputePass->getRootVar()["gGradBuffer"].setBuffer(gradBuffer);
+        if (mUpdatePass.mpComputePass && mUpdatePass.mpComputePass->getVars())
+            mUpdatePass.mpComputePass->getRootVar()["gGradBuffer"].setBuffer(gradBuffer);
+    };
+    try { bind(block, gradient); }
+    catch (...)
+    {
+        if (mpGridBlock) bind(mpGridBlock, mGradientPass.gradBuffer);
+        throw;
+    }
+    mGridResources = std::move(next);
+    mGradientPass.gradBuffer = gradient;
+    mpGridBlock = block;
+    mVoxelResolution = resolution;
+}
+
+void VoxelReconstructionNoLightTransport::resetLoadedReconstruction(RenderContext* pRenderContext)
+{
+    mEnableReconstruction = false;
+    mOptimizerParams.reset();
+    mInitVoxelData = false;
+    mSaveReconstructionRequested = false;
+    mLoadReconstructionRequested = false;
+    mLoadedReconstructionForViewing = true;
+    mFrameCount = 0;
+    mRayMarchingPass.mFrameIndex = 0;
+    mRayMarchingPass.mSampleIndex = 0;
+    mRayMarchingPass.mOptionsChanged = true;
+    mLossPass.mView = 0;
+    mReduceLossPass.meanLoss = 0.f;
+    mReduceLossPass.iterationLossSum = 0.f;
+    mReduceLossPass.iterationLossCount = 0;
+    mReduceLossPass.iterationLossHistory.clear();
+    if (mpPathRecordBuffer) pRenderContext->clearUAV(mpPathRecordBuffer->getUAV().get(), uint4(0));
+    if (mGradientPass.gradBuffer) pRenderContext->clearUAV(mGradientPass.gradBuffer->getUAV().get(), uint4(0));
+    if (mRayMarchingPass.accuColor) pRenderContext->clearUAV(mRayMarchingPass.accuColor->getUAV().get(), float4(0));
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    mPointCloud.startRequested = false;
+    mPointCloud.initialized = true;
+    mPointCloud.clearAccumulation = true;
+    mPointCloud.status = "Loaded voxel reconstruction; PLY initialization is not required.";
+#elif RECON_MODE == RECON_MODE_COARSE_TO_FINE
+    mRestoreCoarseCheckpointRequested = false;
+    mCoarseToFine.startRequested = false;
+    mCoarseToFine.pauseRequested = false;
+    mCoarseToFine.advanceRequested = false;
+    mCoarseToFine.paused = true;
+    mCoarseToFine.clearAccumulation = true;
+#endif
+}
+
 DefineList VoxelReconstructionNoLightTransport::getReconstructionDefines()
 {
     DefineList defines;

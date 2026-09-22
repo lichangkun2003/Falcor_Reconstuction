@@ -119,6 +119,7 @@ bool VoxelReconstructionNoLightTransport::initializeCoarseVoxelData(RenderContex
         mFrameCount = 0;
         mRayMarchingPass.mFrameIndex = 0;
         ensureCoarseRunDirectory();
+        mLoadedReconstructionForViewing = false;
         logInfo("Coarse-to-fine initialized: {} -> {}, {} stages.", mVoxelResolution, GRID_RESOLUTION, mCoarseToFine.resolutions.size());
         return true;
     }
@@ -254,6 +255,18 @@ void VoxelReconstructionNoLightTransport::saveCoarseStage(RenderContext* pRender
 
 void VoxelReconstructionNoLightTransport::renderCoarseUI(Gui::Widgets& widget)
 {
+    if (mLoadedReconstructionForViewing)
+    {
+        widget.text(fmt::format("Mode 2: viewing loaded resolution {} (training paused)", mVoxelResolution));
+        renderCoarsePreviewUI(widget);
+        widget.text("Restore Training Checkpoint to continue optimization with saved settings.");
+        if (widget.button("Initialize / reset coarse experiment"))
+        {
+            mReferenceDataError.clear();
+            mInitVoxelData = true;
+        }
+        return;
+    }
     widget.text(fmt::format("Mode 2: {} / {} (target {})", mCoarseToFine.stageIndex + 1, mCoarseToFine.resolutions.size(), GRID_RESOLUTION));
     widget.text(fmt::format("Resolution: {}   Stage iterations: {} / {}", mVoxelResolution, mCoarseToFine.stageIteration, mCoarseToFine.stageBudget));
     widget.text(fmt::format("Default total budget: {} iterations (additional iterations extend it).", CTF_TOTAL_ITERATIONS));
@@ -293,7 +306,7 @@ void VoxelReconstructionNoLightTransport::renderCoarseUI(Gui::Widgets& widget)
 void VoxelReconstructionNoLightTransport::renderCoarsePreviewUI(Gui::Widgets& widget)
 {
     auto& preview = mCoarseToFine.preview;
-    Gui::DropdownList levels{{0u, "Current optimization level (live)"}};
+    Gui::DropdownList levels{{0u, mLoadedReconstructionForViewing ? "Loaded reconstruction" : "Current optimization level (live)"}};
     for (const auto& stage : preview.stages)
     {
         levels.push_back({stage.stageIndex + 1,
