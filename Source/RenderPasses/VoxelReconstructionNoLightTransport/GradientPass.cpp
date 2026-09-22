@@ -35,7 +35,7 @@ void VoxelReconstructionNoLightTransport::createGradientPassResource(RenderConte
         ProgramDesc desc;
         desc.addShaderLibrary(GradientPassShaderFilePath).csEntry("main");
         //desc.setShaderModel(Falcor::ShaderModel::SM6_7);
-        DefineList defines;
+        DefineList defines = getReconstructionDefines();
         defines.add("DIFF_MODE", "1");
         mGradientPass.mpComputePass = ComputePass::create(mpDevice, desc, defines, true);
     }

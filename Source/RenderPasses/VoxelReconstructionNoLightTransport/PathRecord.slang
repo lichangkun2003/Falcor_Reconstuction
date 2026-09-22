@@ -96,7 +96,10 @@ struct PathRecord
 };
 
 
-#if !defined(HOST_CODE)
+#if defined(HOST_CODE)
+// D3D12 limits each StructuredBuffer element to 2048 bytes.
+static_assert(sizeof(PathRecord) <= 2048, "PathRecord exceeds the D3D12 structured-buffer stride limit.");
+#else
 
 inline uint PixelToIndex(uint2 pixel, uint2 size)
 {

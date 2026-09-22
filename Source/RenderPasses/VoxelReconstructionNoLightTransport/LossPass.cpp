@@ -78,7 +78,11 @@ void VoxelReconstructionNoLightTransport::runLossPass(RenderContext* pRenderCont
     auto var = mLossPass.mpComputePass->getRootVar();
 
     //var["gRenderedColor"] = renderData.getTexture(kOutputColor);
+#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
+    var["gRenderedColor"] = mRayMarchingPass.accuColor;
+#else
     var["gRenderedColor"] = renderData.getTexture(kAccumulateOutputColor);
+#endif
     var["gReferenceImage"] = mReferenceImages[mLossPass.mView];
     var["gLossBuffer"] = mLossPass.lossBuffer;
     var["gDL_dColorBuffer"] = mLossPass.dL_dColor;

@@ -40,7 +40,11 @@ VoxelReconstructionNoLightTransport::VoxelReconstructionNoLightTransport(ref<Dev
     // Initial Data
     {
         // Lego
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+        mGridResources.gridData.solidVoxelCount = 0;
+#else
         mGridResources.gridData.solidVoxelCount = 17650;        // 64
+#endif
         //mGridResources.gridData.solidVoxelCount = 92562;      //128
         //mGridResources.gridData.solidVoxelCount = 545771;     //256
 
@@ -52,7 +56,7 @@ VoxelReconstructionNoLightTransport::VoxelReconstructionNoLightTransport(ref<Dev
     {
         ProgramDesc desc;
         desc.addShaderLibrary(ReflectTypesShaderFilePath).csEntry("main");
-        DefineList defines;
+        DefineList defines = getReconstructionDefines();
         mpReflectTypes = ComputePass::create(mpDevice, desc, defines, true);
     }
 
@@ -104,11 +108,6 @@ RenderPassReflection VoxelReconstructionNoLightTransport::reflect(const CompileD
     //    .format(ResourceFormat::Unknown)
     //    .rawBuffer(mGridResources.gridData.solidVoxelCount * sizeof(Ellipsoid));
 
-    //reflector.addInput(kBlockMap, kBlockMap)
-    //    .bindFlags(ResourceBindFlags::ShaderResource)
-    //    .format(ResourceFormat::RGBA32Uint)
-    //    .texture2D();
-
     // Output
     reflector.addOutput("dummy", "Dummy")
         .bindFlags(ResourceBindFlags::UnorderedAccess | ResourceBindFlags::ShaderResource | ResourceBindFlags::RenderTarget)
@@ -134,14 +133,31 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
     if (!mpScene)
         return;
     loadReferenceImages();
+#if RECON_MODE == RECON_MODE_COARSE_TO_FINE || RECON_MODE == RECON_MODE_POINT_CLOUD
+    // The original loader streams one image per frame. A new experiment waits for the complete set.
+    if (mReferenceImages.size() < mReferenceCameras.size())
+        return;
+#endif
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    if (mReferenceImages.empty() || mReferenceCameras.empty()) return;
+#endif
 
     mFrameDim = renderData.getDefaultTextureDims();
     mInvFrameDim = 1.0f / float2(mFrameDim);
     beginFrame(pRenderContext, false);
 
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    bool pointCloudInitFailed = false;
+#endif
     if (mInitVoxelData)
     {
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+        const bool startAfterInit = mPointCloud.startRequested;
+        pointCloudInitFailed = !initializePointCloudVoxelData(pRenderContext);
+        mPointCloud.startRequested = startAfterInit && !pointCloudInitFailed;
+#else
         initializeVoxelData(pRenderContext);
+#endif
         mInitVoxelData = false;
     }
 
@@ -159,6 +175,55 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
         mLoadReconstructionRequested = false;
     }
 
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    if (mPointCloud.startRequested && !pointCloudInitFailed)
+    {
+        const bool ready = mPointCloud.initialized || initializePointCloudVoxelData(pRenderContext);
+        mPointCloud.startRequested = false;
+        if (ready)
+        {
+            resetPointCloudOptimization(pRenderContext);
+            mEnableReconstruction = true;
+            mOptimizerParams.isRunning = true;
+        }
+    }
+    if (mPointCloud.clearAccumulation)
+    {
+        pRenderContext->clearUAV(renderData.getTexture(kAccumulateOutputColor)->getUAV().get(), float4(0));
+        mPointCloud.clearAccumulation = false;
+    }
+#endif
+#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
+    if (mCoarseToFine.startRequested)
+    {
+        const bool ready = mCoarseToFine.initialized || initializeCoarseVoxelData(pRenderContext);
+        mCoarseToFine.startRequested = false;
+        if (ready)
+        {
+            mCoarseToFine.paused = false;
+            mCoarseToFine.finished = false;
+            mEnableReconstruction = true;
+            mOptimizerParams.isRunning = true;
+            resetCoarseSampling(pRenderContext);
+        }
+    }
+    if (mCoarseToFine.advanceRequested)
+    {
+        mCoarseToFine.advanceRequested = false;
+        advanceCoarseStage(pRenderContext);
+    }
+    if (mSaveReconstructionRequested && !mOptimizerParams.isRunning && mCoarseToFine.initialized)
+    {
+        saveCoarseStage(pRenderContext, renderData);
+        mSaveReconstructionRequested = false;
+    }
+    if (mCoarseToFine.clearAccumulation)
+    {
+        if (mRayMarchingPass.accuColor)
+            pRenderContext->clearUAV(mRayMarchingPass.accuColor->getUAV().get(), float4(0));
+        mCoarseToFine.clearAccumulation = false;
+    }
+#else
     if (mSaveReconstructionRequested)
     {
         saveReconstruction(pRenderContext);
@@ -167,6 +232,7 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
         // 保存后刷新列表，立刻能在 dropdown 看到新文件
         mReconstructionFileListDirty = true;
     }
+#endif
 
     // test input
     {
@@ -199,15 +265,24 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
         {
             mOptimizerParams.currentView = 0;
             mOptimizerParams.currentIteration++;
+#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
+            completeCoarseIteration(pRenderContext, renderData);
+#else
             if (mOptimizerParams.currentIteration >= mOptimizerParams.maxIteration)
             {
                 stopReconstruction();
                 mSaveReconstructionRequested = true;
             }
+#endif
         }
     }
 
 
+#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
+    // Publish only after loss, gradients, updates and checkpoint evaluation have finished.
+    pRenderContext->copyResource(renderData.getTexture(kAccumulateOutputColor).get(), mRayMarchingPass.accuColor.get());
+    renderCoarsePreview(pRenderContext, renderData);
+#endif
     endFrame(pRenderContext);
 }
 
@@ -219,20 +294,42 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
     if (widget.checkbox("Render Background", mRayMarchingPass.mRenderBackGround))
         mRayMarchingPass.mOptionsChanged = true;
 
+#if RECON_MODE != RECON_MODE_POINT_CLOUD
     if (widget.var("Solid Voxel Count", mGridResources.gridData.solidVoxelCount))
     {
         requestRecompile();
     }
+#endif
 
 
     widget.var("Geometry Tau", mGradientPass.geometryTau, 0.0f, 0.2f, 1e-4f);
+#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
+    widget.var("Geometry Grad Clamp", mGradientPass.geometryGradClamp, 0.0f, 10.0f, 1e-4f);
+#else
     widget.var("Geometry Grad Clamp", mGradientPass.geometryTau, 0.0f, 10.0f, 1e-4f);
+#endif
+#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
+    if (!mOptimizerParams.isRunning)
+        widget.var("Spp", mRayMarchingPass.mSpp, 1u, 100u, 1u);
+    else
+        widget.text("Training Spp: " + std::to_string(mRayMarchingPass.mSpp));
+#else
     widget.var("Spp", mRayMarchingPass.mSpp, 1u, 100u,1u);
+#endif
 
     widget.checkbox("Use ReferenceCamera", mUseReferenceCamera);
     widget.slider("Camera Index", testIndex, 0u, mOptimizerParams.viewsPerIteration - 1u);
+#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
+    renderCoarseUI(widget);
+#else
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    widget.text("Mode 1: point-cloud initialization");
+    widget.text("PLY: " + (std::filesystem::path(ReferenceImageDir) / "init_points.ply").string());
+    widget.text(mPointCloud.status);
+    if (widget.button("Init / Reset from PLY")) mInitVoxelData = true;
+#else
     widget.checkbox("Init Voxel Data", mInitVoxelData);
-
+#endif
     widget.var("Max Iteration", mOptimizerParams.maxIteration);
     if (widget.checkbox("Enable Reconstruction", mEnableReconstruction))
     {
@@ -241,12 +338,12 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
         else
             stopReconstruction();
     }
+#endif
 
     renderUIUpdatePass(widget);
 
     widget.text("Voxel Size: " + ToString(mGridResources.gridData.voxelSize));
     widget.text("Voxel Count: " + ToString((int3)mGridResources.gridData.voxelCount));
-    widget.text("Block Count: " + ToString((int3)mGridResources.gridData.blockCount3D()));
     widget.text("Grid Min: " + ToString(mGridResources.gridData.gridMin));
     widget.text("Solid Voxel Count: " + std::to_string(mGridResources.gridData.solidVoxelCount));
     widget.text(
@@ -274,7 +371,11 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
 
         for (uint32_t i = 0; i < mReconstructionFilePaths.size(); i++)
         {
+#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
+            fileList.push_back({i, mReconstructionFilePaths[i].lexically_relative(getReconstructionModeDirectory()).string()});
+#else
             fileList.push_back({i, mReconstructionFilePaths[i].filename().string()});
+#endif
         }
 
         if (!fileList.empty())
@@ -365,6 +466,15 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
 void VoxelReconstructionNoLightTransport::setScene(RenderContext* pRenderContext, const ref<Scene>& pScene)
 {
     mpScene = pScene;
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    mPointCloud = {};
+    mGridResources.gridData.solidVoxelCount = 0;
+    mEnableReconstruction = false;
+    mOptimizerParams.reset();
+#endif
+#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
+    configureCoarseStages();
+#endif
     UpdateVoxelGrid(mVoxelResolution);
     setupGridResouce(pRenderContext, true);
 
@@ -552,16 +662,6 @@ void VoxelReconstructionNoLightTransport::setupGridResouce(RenderContext* pRende
         //    mGridResources.gridData.solidVoxelCount,
         //    ResourceBindFlags::UnorderedAccess | ResourceBindFlags::ShaderResource
         //);
-        mGridResources.blockOM = mpDevice->createTexture2D(
-            mGridResources.gridData.blockGridSizeXY().x,
-            mGridResources.gridData.blockGridSizeXY().y,
-            ResourceFormat::RGBA32Uint,
-            1u,
-            1u,
-            nullptr,
-            ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess
-        );
-
         mGridResources.vBuffer = mpDevice->createTexture3D(
             mGridResources.gridData.voxelCount.x, mGridResources.gridData.voxelCount.y, mGridResources.gridData.voxelCount.z,
             ResourceFormat::R32Int,
@@ -571,12 +671,10 @@ void VoxelReconstructionNoLightTransport::setupGridResouce(RenderContext* pRende
         );
 
         pRenderContext->clearUAV(mGridResources.gridDataBuffer->getUAV().get(), uint4(0));
-        pRenderContext->clearUAV(mGridResources.blockOM->getUAV().get(), uint4(0));
     }
 
 
     gridBlock["gridDataBuffer"] = mGridResources.gridDataBuffer;
-    // gridBlock["blockOM"] = mGridResources.blockOM;
     gridBlock["vBuffer"] = mGridResources.vBuffer;
     gridBlock["voxelCount"] = mGridResources.gridData.voxelCount;
     gridBlock["voxelSize"] = mGridResources.gridData.voxelSize;
@@ -589,6 +687,12 @@ void VoxelReconstructionNoLightTransport::setupGridResouce(RenderContext* pRende
 
 void VoxelReconstructionNoLightTransport::startReconstruction()
 {
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    // GPU work and first-use initialization are performed at the next frame boundary.
+    mPointCloud.startRequested = true;
+#elif RECON_MODE == RECON_MODE_COARSE_TO_FINE
+    mCoarseToFine.startRequested = true;
+#else
     mEnableReconstruction = true;
 
     mOptimizerParams.isRunning = true;
@@ -600,16 +704,28 @@ void VoxelReconstructionNoLightTransport::startReconstruction()
     mReduceLossPass.iterationLossSum = 0.0f;
     mReduceLossPass.iterationLossCount = 0;
     mReduceLossPass.iterationLossHistory.clear();
+#endif
 
 }
 
 void VoxelReconstructionNoLightTransport::stopReconstruction()
 {
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    mPointCloud.startRequested = false;
+    mEnableReconstruction = false;
+    mOptimizerParams.isRunning = false;
+    mOptimizerParams.currentView = 0;
+    mRayMarchingPass.mSampleIndex = 0;
+    mPointCloud.clearAccumulation = true;
+#elif RECON_MODE == RECON_MODE_COARSE_TO_FINE
+    mCoarseToFine.pauseRequested = true;
+#else
     mEnableReconstruction = false;
 
     mOptimizerParams.isRunning = false;
     mOptimizerParams.currentIteration = 0;
     mOptimizerParams.currentView = 0;
+#endif
 }
 
 bool VoxelReconstructionNoLightTransport::onMouseEvent(const MouseEvent& mouseEvent) 

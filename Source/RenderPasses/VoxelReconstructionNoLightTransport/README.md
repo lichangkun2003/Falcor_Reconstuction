@@ -1,0 +1,84 @@
+# Reconstruction experiments
+
+在 `Defines.h` 中选择实验，修改后重新编译此 Pass：
+
+```cpp
+#define RECON_MODE RECON_MODE_COARSE_TO_FINE // 2；点云模式为 RECON_MODE_POINT_CLOUD（1），原始模式为 RECON_MODE_ORIGINAL（3）
+#define GRID_RESOLUTION 128                // 所有模式共用的最终目标分辨率
+```
+
+当前默认 mode2，目标分辨率为 128。切换宏后需要重新编译 Pass；三个模式仍共用 `GRID_RESOLUTION`。
+
+## Mode1：点云初始化
+
+读取 `ReferenceImageDir/init_points.ply`，当前对应 `D:/lck/vs/Reconstruction_Input/lego/init_points.ply`。更换数据集时，头文件中的 `ReferenceImageDir` 和 `ReferenceCameraFile` 应指向同一场景。
+
+- 支持 ASCII 和 binary little-endian PLY，按属性名读取 XYZ，忽略 RGB、法线等额外属性。点云仅决定占据状态，不使用点颜色。点云应使用原始 NeRF 世界坐标，加载时与相机一致转换为 `(x, z, -y)`，不重新缩放或拟合点云 AABB。
+- 沿用当前固定世界 AABB 和 `GRID_RESOLUTION` 的密集网格。通过 `floor((position-gridMin)/voxelSize)` 确定体素；越界和非有限坐标分别统计并跳过，同格点合并，只有包含点的格子被占据。缺文件、无有效点或格式错误时明确报错并停止训练，保留已有体素。
+- 占据体素的局部椭球中心为 `(0.5, 0.5, 0.5)`，半径为 `0.6`，`B=I/0.36`。这些初值不依赖学习率；学习率为零表示不优化该参数。
+- 占据体素调用 `radiance.init()`，所有 radiance SH 系数（含 DC）为零，初始颜色全黑。opacity 直接调用与 mode3 相同的 `opacity.init()`，所有 opacity SH 系数为零，对应初始 alpha=`sigmoid(0)=0.5`。mode1 不额外写入 mode3 在 opacity 学习率为零时保留的 `16.29` DC 系数。
+
+等待参考图片加载完，点击 **Init / Reset from PLY** 可先查看初始化结果，再勾选 **Enable Reconstruction** 开始训练。也可以直接勾选 **Enable Reconstruction**，首次会自动初始化。重置按钮会重新读取 PLY、清除迭代和 loss 状态并停止训练。训练建议先保持默认 Spp=1。
+
+结果及 loss 保存到 `Reconstruction_Output/mode1`。沿用 v1 体素文件格式，包含全部体素的占据信息及参数；**Load Selected Reconstruction** 成功后停止训练，重新开始时直接使用加载结果，不要求 PLY 存在。v1 不保存优化器进度或 AABB，加载时应使用与保存时相同的场景、AABB 和分辨率。
+
+当前严格采用“有点才占据”：空体素不会在训练中自动生长，点云的孔洞可能保留。此模式提供点云初始化先验，没有增加邻域膨胀或空间平滑正则项。pruning 和梯度更新沿用固定分辨率流程。
+
+## Mode2：分阶段优化
+
+默认从 32 开始，每层分辨率翻倍，到 `GRID_RESOLUTION` 为止：128 对应 32 → 64 → 128，256 对应 32 → 64 → 128 → 256。目标必须是至少 32 的 2 的幂；起点可修改 `CTF_START_RESOLUTION`。
+
+`CTF_TOTAL_ITERATIONS` 默认 200，控制新实验的总迭代预算；`CTF_REFINE_INTERVAL` 默认 40，控制中间层的预算上限，最终层获得剩余预算。默认 32 → 64 → 128 分配为 **40 + 40 + 120 = 200**；目标改为 256 时分配为 **40 + 40 + 40 + 80 = 200**。如果层级较多，会自动缩短中间层预算，并在允许时对齐删除周期，保证各层至少一次迭代、默认总数仍为 200。手动追加迭代会增加总数。
+
+一次 iteration 指所有训练相机各完成一次参数更新；视角数量读取自 `transforms_train.json`，不依赖 `REFERENCE_IMAGES_COUNT`。训练沿用现有梯度实现，建议保持默认 Spp=1。加载旧检查点保留当时的本层预算，后续层按当前宏分配；要完整应用新的 200 次预算，使用 **Initialize / reset coarse experiment** 开始新实验。
+
+1. 等待参考图片加载完，点击 **Start coarse-to-fine**，会自动初始化最低层。
+2. **Pause after each stage** 默认不勾选。每层达到预算后自动保存、升层，连续优化到最终分辨率。
+3. **Display level** 可选择 **Current optimization level (live)** 或已保存的层级，例如 32、64、128；条目同时显示保存时的本层迭代数。每层完成保存后自动加入列表，同层追加训练完成后更新为最新结果。训练中也可以查看之前的层级，最终训练完成后可依次切换比较。
+4. 若需要逐层判断迭代是否足够，可勾选 **Pause after each stage**。暂停后设置 **Additional iterations**，点击 **Add iterations and continue this stage**；满意后点击 **Refine and start next stage**。
+5. **Pause and save after this iteration** 和训练中的 **Save Reconstruction** 都等待当前整轮结束。前者暂停，后者保存后继续训练。
+6. **Load Selected Reconstruction** 可恢复 mode2 的中间检查点。加载后暂停，可继续该层、追加轮次或进入下一层。
+
+层级选择同时作用于 `VoxelReconstruction.color` 和 `VoxelReconstruction.AccuColor`。查看历史层时，可使用场景相机，或勾选 **Use ReferenceCamera** 并调整 **Camera Index**，以相同视角比较各层。切换显示不恢复训练状态，也不改变当前训练的层级、相机、迭代进度、学习率或 loss；**Save Reconstruction** 仍保存正在优化的层级。若要回到早期层继续训练，仍使用 **Load Selected Reconstruction**。
+
+每层重新分配体素、梯度和 vBuffer；旧层优化结果保存在磁盘，不永久保留全部 GPU buffer。可视化只按需加载所选历史层的一份独立网格，返回 live 时释放；不分配历史层梯度或路径记录。预览使用独立渲染和累积纹理，训练的跨帧 Spp 累积、loss 和保存图片始终使用当前训练层。新实验清空历史层选择列表。磁盘加载、自动保存和评估导出仍可能短暂耗时，连续模式表示不再等待手动确认升层。
+
+升层时 `gridMin` 不变，`voxelCount` 加倍、`voxelSize` 减半；DDA、相机投影和偏移量读取当前层参数。路径记录与图像尺寸有关，在一次实验内固定大小。三个 mode 的路径命中容量统一为 8，保留单个路径记录 buffer，CPU 与 shader 使用同一组宏。`PathRecord` 大小为 944 字节，编译期检查其不超过 D3D12 的 2048 字节结构化 buffer 元素上限。
+
+每次分裂按父椭球与子体素的几何相交情况决定占据：空父体素的子体素仍为空；占据父体素中，确定不与父椭球相交的子体素置空，其余保留。这个相交判断不使用椭球体积阈值，在中间层和升到最终层时都执行。
+
+保留下来的子体素统一重新初始化为覆盖整格的椭球：局部中心 `(0.5, 0.5, 0.5)`、三个半轴均为 `0.87`、`B=I/(0.87²)`。半径略大于 `sqrt(3)/2`，覆盖局部 `[0,1]³` 的全部角点；实际光线求交仍限制在本体素线段内。父椭球只用于子体素占据筛选，子体素几何从整格覆盖开始继续优化。此修改只用于 mode2 升层后的子体素；最低层的初始椭球及 mode1、mode3 保持原有初始化。
+
+迁移继续复制父体素的 radiance SH；opacity 在方向采样后，拟合 `alpha_child = 1 - sqrt(1 - alpha_parent)` 对应的 logit SH。这个补偿近似保持两次子体素命中相对一次父体素命中的透射率。子体素的几何覆盖会重新扩大，且实际命中数因方向而异，因此升层前后的渲染不保证完全一致，需要细层继续优化。粗层通过占据和外观参数提供初始化先验，没有加入显式空间平滑正则项。
+
+所有层级均开启椭球体积剪枝。`CTF_PRUNE_INTERVAL` 默认 10：在每层第 10、20、30… 轮最后一个视角更新时执行一次，升层后按新层的迭代数重新计时，没有额外 warmup。判据沿用 mode3 的完整椭球体积与体素体积之比，低于 `Ellipsoid Prune Threshold`（默认 0.03）时取消占据，不按 opacity 或点云点数删除。分裂时的父椭球相交筛选与保留子体素的整格椭球初始化保持不变。几何参数在 mode2 新实验初始化时总会赋值；切层不重置用户的学习率。mode1、mode3 的初始化、更新、命中容量和固定分辨率路径保留。
+
+## 保存结果
+
+输出根目录仍为头文件中的 `ReconstructionDataDir`，默认 `D:/lck/vs/Reconstruction_Output`，按 `mode1`、`mode2`、`mode3` 分开使用。
+
+```text
+Reconstruction_Output/
+  mode1/
+    recon*.bin
+    Loss/
+  mode2/
+    run_<时间>_target128/
+      stage0_res32_iter40.bin
+      stage1_res64_iter40.bin
+      stage2_res128_iter120.bin
+      Loss/
+      Images/
+        stage0_res32_iter40_view0_rgb.png
+        stage0_res32_iter40_view0_alpha.png
+        stage0_res32_iter40_evaluation.csv
+  mode3/
+    recon*.bin
+    Loss/
+```
+
+同一阶段追加训练会生成新的文件；同名保存增加编号，不覆盖已有检查点。stage 编号从 0 开始。mode2 文件包含网格 AABB、当前/目标分辨率、层级预算、训练设置和 loss 历史；只接受配置兼容的 v2 检查点。mode3 继续使用原有 v1 体素文件格式，新结果写到 mode3 目录；旧文件可放入此目录供原模式加载。
+
+`Images` 使用第 0、N/3、2N/3 个训练视角（去重），固定采样种子，默认 `CTF_EVALUATION_SPP=8`。在最后一次参数更新后重新渲染；RGB PNG 使用 sRGB 编码，alpha PNG 保存线性灰度覆盖率。evaluation CSV 为这些固定训练视角的最新 loss，训练 loss CSV 则记录每轮各视角更新前的平均 loss；两者含义不同，不是验证集指标。
+
+保存或迁移失败会停留在当前层，不自动进入下一层。升层时新旧资源短暂共存，高分辨率仍需考虑显存容量。

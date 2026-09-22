@@ -7,19 +7,21 @@ target_sources(VoxelReconstructionNoLightTransport PRIVATE
     VoxelReconstructionNoLightTransport.h
     Defines.h
     Initialization.cpp
+    PointCloudInitialization.cpp
+    PointCloudLoader.cpp
+    PointCloudLoader.h
+    CoarseToFine.cpp
     RayMarchingPass.cpp
     LossPass.cpp
     ReducePass.cpp
     GradientPass.cpp
     UpdatePass.cpp
     DataProcess.cpp
-    BuildSVO.cpp
 
     Voxel/ABSDF.slang
     Voxel/VoxelGrid.slang
     Voxel/VoxelData.slang
     Voxel/Shading.slang
-    Voxel/SVO.slang
 
     Math/AABB.slang
     Math/Projection.slang
@@ -34,6 +36,9 @@ target_sources(VoxelReconstructionNoLightTransport PRIVATE
 
     Shader/ReflectTypes.cs.slang
     Shader/InitializeData.cs.slang
+    Shader/InitializePointCloud.cs.slang
+    Shader/RefineVoxelGrid.cs.slang
+    Shader/EvaluationImages.cs.slang
     Shader/RayMarchingPass.ps.slang
     Shader/LossPass.cs.slang
     Shader/ReduceTexturePass.cs.slang
@@ -43,7 +48,6 @@ target_sources(VoxelReconstructionNoLightTransport PRIVATE
     Shader/DiffVoxelIO.slang
     Shader/DiffTools.slang
     Shader/DiffShading.slang
-    Shader/BuildSVO.cs.slang
 
     PathRecord.slang
     GradRecord.slang

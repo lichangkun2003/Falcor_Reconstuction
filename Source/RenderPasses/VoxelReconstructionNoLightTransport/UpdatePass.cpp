@@ -34,7 +34,7 @@ void VoxelReconstructionNoLightTransport::createUpdatePassResource(RenderContext
     {
         ProgramDesc desc;
         desc.addShaderLibrary(UpdatePassShaderFilePath).csEntry("main");
-        DefineList defines;
+        DefineList defines = getReconstructionDefines();
         mUpdatePass.mpComputePass = ComputePass::create(mpDevice, desc, defines, true);
     }
 
@@ -45,10 +45,17 @@ void VoxelReconstructionNoLightTransport::runUpdatePass(RenderContext* pRenderCo
     //mUpdatePass.mpComputePass->addDefine("CHECK_VISIBILITY", mRayMarchingPass.mCheckVisibility ? "1" : "0");
     //mUpdatePass.mpComputePass->addDefine("CHECK_COVERAGE", mRayMarchingPass.mCheckCoverage ? "1" : "0");
 
+#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
+    // Prune at every level, once at the end of each local pruning interval.
+    mUpdatePass.mEnableEllipsoidPruning =
+        (mCoarseToFine.stageIteration + 1) % CTF_PRUNE_INTERVAL == 0 &&
+        mOptimizerParams.currentView + 1 == mOptimizerParams.viewsPerIteration;
+#else
     if ((mOptimizerParams.currentIteration) % 10 == 0)
     {
         mUpdatePass.mEnableEllipsoidPruning = true;
     }
+#endif
 
 
     auto var = mUpdatePass.mpComputePass->getRootVar();

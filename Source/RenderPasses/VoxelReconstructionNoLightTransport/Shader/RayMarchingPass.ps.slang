@@ -14,6 +14,9 @@ import Utils.Debug.PixelDebug;
 #include "../Voxel/VoxelGrid.slang"
 #include "../PathRecord.slang"
 
+#ifndef PREVIEW_ONLY
+#define PREVIEW_ONLY 0
+#endif
 
 
 cbuffer GridData
@@ -27,7 +30,6 @@ cbuffer GridData
 cbuffer CB
 {
     uint2 pixelCount;
-    uint3 blockCount;
     float4x4 invVP;
     float shadowBias;
     uint drawMode;
@@ -42,7 +44,9 @@ cbuffer CB
     float transmittanceThreshold;
 }
 
+#if !PREVIEW_ONLY
 RWStructuredBuffer<PathRecord> gPathRecordBuffer;
+#endif
 RWTexture2D gAccuColor;
 
 
@@ -282,8 +286,8 @@ HitResult checkPrimitive(Ellipsoid ellipsoid, float3 cell, float3 direction, int
     return result;
 }
 
-// HitResult rayMarching_Mipmap(float3 from, float3 direction, bool ignoreFirst, int3 initialCellInt)
-HitResult rayMarching_Mipmap(
+// Traverse occupied voxels directly with the voxel DDA.
+HitResult rayMarchingDDA(
     float3 from,
     float3 direction,
     bool ignoreFirst,
@@ -309,93 +313,79 @@ HitResult rayMarching_Mipmap(
         if (any(cellInt < int3(0)) || any(cellInt >= (int3)voxelCount))
             break;
 
-        int3 blockInt = cellInt / BLOCK_TO_VOXEL;
-        if (isSolidBlock(blockInt))
+        if (isSolidVoxel(cellInt))
         {
-            int3 current = blockInt;
-            while (all(current == blockInt))
+#if !CHECK_PRIMITIVE
+            HitResult hit = { true, cellInt, cellInt + 0.5f, -1.0f,
+                float4(cellInt + 0.5f, 1.0f) };
+            return hit;
+#else
+            uint offset = CellToIndex(cellInt, gGridDataParamBlock.voxelCount);
+            Ellipsoid ellipsoid = gGridDataParamBlock.gridDataBuffer[offset].ellipsoid;
+            HitResult hit = checkPrimitive(ellipsoid, cell, direction, cellInt);
+
+            // hard-hit不放入candidate数组，直接返回。
+            // 随后会被写入VoxelRecord。
+            if (hit.hit)
+                return hit;
+
+#if !PREVIEW_ONLY
+            // candidate数组只保存未命中的体素
+            bool validMiss = !isnan(hit.gmin) && !isinf(hit.gmin) && hit.gmin >= 0.0f;
+            if (enableReconstruction && validMiss)
             {
-                if (any(cellInt < int3(0)) || any(cellInt >= (int3)voxelCount))
-                    break;
-                //int offset;
-                if (isSolidVoxel(cellInt)) 
+                GeometryCandidateRecord cand;
+                cand.valid = 1;
+                cand.cellInt = cellInt;
+                cand.gmin = hit.gmin;
+                cand.xStar = hit.xStar;
+                cand.transmittanceBefore = transmittanceBefore;
+                cand.frontHitCount = frontHitCount;
+
+                cand.sortScore = calcCandidateSortScore(
+                    ellipsoid,
+                    cellInt,
+                    hit.gmin,
+                    hit.xStar.xyz,
+                    rayOriginCell
+                );
+
+                // candidate数组还没有装满
+                if (candidateCount < (uint)MAX_CANDIDATES)
                 {
-    #if !CHECK_PRIMITIVE
-                    HitResult hit = { true, cellInt, cellInt + 0.5f, -1.0f,
-                        float4(cellInt + 0.5f, 1.0f) };
-                    return hit;
-    #else
-                    uint offset = CellToIndex(cellInt, gGridDataParamBlock.voxelCount);
-                    Ellipsoid ellipsoid = gGridDataParamBlock.gridDataBuffer[offset].ellipsoid;
-                    HitResult hit = checkPrimitive(ellipsoid, cell, direction, cellInt);
+                    uint insertIndex = candidateCount;
 
-                    // hard-hit不放入candidate数组，直接返回。
-                    // 随后会被写入VoxelRecord。
-                    if (hit.hit)
-                        return hit;
-
-                    // candidate数组只保存未命中的体素
-                    bool validMiss = !isnan(hit.gmin) && !isinf(hit.gmin) && hit.gmin >= 0.0f;
-                    if (enableReconstruction && validMiss)
+                    // 数组按gmin从小到大排序
+                    while (insertIndex > 0 && gPathRecordBuffer[bufferIndex].candidates[insertIndex - 1].sortScore > cand.sortScore)
                     {
-                        GeometryCandidateRecord cand;
-                        cand.valid = 1;
-                        cand.cellInt = cellInt;
-                        cand.gmin = hit.gmin;
-                        cand.xStar = hit.xStar;
-                        cand.transmittanceBefore = transmittanceBefore;
-                        cand.frontHitCount = frontHitCount;
-
-                        cand.sortScore = calcCandidateSortScore(
-                            ellipsoid,
-                            cellInt,
-                            hit.gmin,
-                            hit.xStar.xyz,
-                            rayOriginCell
-                        );
-
-                        // candidate数组还没有装满
-                        if (candidateCount < (uint)MAX_CANDIDATES)
-                        {
-                            uint insertIndex = candidateCount;
-
-                            // 数组按gmin从小到大排序
-                            while (insertIndex > 0 && gPathRecordBuffer[bufferIndex].candidates[insertIndex - 1].sortScore > cand.sortScore)
-                            {
-                                gPathRecordBuffer[bufferIndex].candidates[insertIndex] =
-                                    gPathRecordBuffer[bufferIndex].candidates[insertIndex - 1];
-                                insertIndex--;
-                            }
-
-                            gPathRecordBuffer[bufferIndex].candidates[insertIndex] = cand;
-                            candidateCount++;
-                        }
-                        // 数组已经装满，只考虑替换当前最大的sortScore
-                        else if (cand.sortScore < gPathRecordBuffer[bufferIndex].candidates[MAX_CANDIDATES - 1].sortScore)
-                        {
-                            uint insertIndex = MAX_CANDIDATES - 1;
-
-                            while (insertIndex > 0 && gPathRecordBuffer[bufferIndex].candidates[insertIndex - 1].sortScore > cand.sortScore)
-                            {
-                                gPathRecordBuffer[bufferIndex].candidates[insertIndex] =
-                                    gPathRecordBuffer[bufferIndex].candidates[insertIndex - 1];
-                                insertIndex--;
-                            }
-
-                            gPathRecordBuffer[bufferIndex].candidates[insertIndex] = cand;
-                        }
+                        gPathRecordBuffer[bufferIndex].candidates[insertIndex] =
+                            gPathRecordBuffer[bufferIndex].candidates[insertIndex - 1];
+                        insertIndex--;
                     }
 
-    #endif
+                    gPathRecordBuffer[bufferIndex].candidates[insertIndex] = cand;
+                    candidateCount++;
                 }
-                leave(cell, cellInt, directions, direction, reciprocal_direction);
-                current = cellInt / BLOCK_TO_VOXEL;
+                // 数组已经装满，只考虑替换当前最大的sortScore
+                else if (cand.sortScore < gPathRecordBuffer[bufferIndex].candidates[MAX_CANDIDATES - 1].sortScore)
+                {
+                    uint insertIndex = MAX_CANDIDATES - 1;
+
+                    while (insertIndex > 0 && gPathRecordBuffer[bufferIndex].candidates[insertIndex - 1].sortScore > cand.sortScore)
+                    {
+                        gPathRecordBuffer[bufferIndex].candidates[insertIndex] =
+                            gPathRecordBuffer[bufferIndex].candidates[insertIndex - 1];
+                        insertIndex--;
+                    }
+
+                    gPathRecordBuffer[bufferIndex].candidates[insertIndex] = cand;
+                }
             }
+
+#endif // !PREVIEW_ONLY
+#endif // CHECK_PRIMITIVE
         }
-        else
-        {
-            leaveBlock(cell, cellInt, directions, direction, reciprocal_direction);
-        }
+        leave(cell, cellInt, directions, direction, reciprocal_direction);
     }
     HitResult hit = { false, cellInt, cellInt + 0.5f,
                       1e30f,float4(cellInt + 0.5f, 1.0f) };
@@ -422,7 +412,7 @@ HitResult rayMarching(
         return hit;
     }
 
-    return rayMarching_Mipmap(
+    return rayMarchingDDA(
         from,
         direction,
         ignoreFirst,
@@ -486,6 +476,7 @@ float4 shadingGlobal(
         float opacity = data.opacity.calcOpacity(-direction);
         opacity = saturate(opacity);
 
+#if !PREVIEW_ONLY
         if (enableReconstruction) {
             VoxelRecord voxelRecord;
             voxelRecord.cellInt = currentHit.cellInt;
@@ -499,6 +490,7 @@ float4 shadingGlobal(
 
             gPathRecordBuffer[bufferIndex].voxels[i] = voxelRecord;
         }
+#endif
 
         {
             //float weight = transmittance * opacity;
@@ -540,12 +532,14 @@ float4 shadingGlobal(
     accumulatedColor += transmittance * renderBackground(direction).xyz;
     float renderAlpha = 1.0f - transmittance;
 
+#if !PREVIEW_ONLY
     if (enableReconstruction) {
         gPathRecordBuffer[bufferIndex].contributingVoxelCount = actualHitCount;
         gPathRecordBuffer[bufferIndex].viewDir = normalize(-direction);
         gPathRecordBuffer[bufferIndex].backgroundColor = renderBackground(direction).xyz;
         gPathRecordBuffer[bufferIndex].finalColor = accumulatedColor;
     }
+#endif
 
     print("actualHitCount : ", actualHitCount);
 
@@ -574,9 +568,11 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
     float3 rayOriginCell = from;
 
     uint bufferIndex = PixelToIndex(pixel, pixelCount);
+#if !PREVIEW_ONLY
     gPathRecordBuffer[bufferIndex].init();
     gPathRecordBuffer[bufferIndex].backgroundColor = renderBackground(direction).xyz;
     gPathRecordBuffer[bufferIndex].viewDir = normalize(-direction);
+#endif
 
     float2 inOut = clip(float3(0), float3(voxelCount), from, to);
     if (inOut.x < 0) {
@@ -607,7 +603,9 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
 
     if (hit.hit)
     {
+#if !PREVIEW_ONLY
         gPathRecordBuffer[bufferIndex].valid = 1;
+#endif
 
         switch (drawMode)
         {
@@ -617,10 +615,12 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
         }
     }
 
+#if !PREVIEW_ONLY
     if (enableReconstruction)
     {
         gPathRecordBuffer[bufferIndex].candidateCount = candidateCount;
     }
+#endif
 
     //print("candidateCount : ", candidateCount);
 

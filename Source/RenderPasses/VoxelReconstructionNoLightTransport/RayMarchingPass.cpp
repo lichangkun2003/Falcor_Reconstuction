@@ -42,7 +42,9 @@ void VoxelReconstructionNoLightTransport::createRayMarchingPassResource(RenderCo
         desc.addShaderLibrary(RayMarchingShaderFilePath).psEntry("main");
         desc.setShaderModel(ShaderModel::SM6_5);
         desc.addTypeConformances(mpScene->getTypeConformances());
-        mRayMarchingPass.mpFullScreenPass = FullScreenPass::create(mpDevice, desc, mpScene->getSceneDefines());
+        auto defines = mpScene->getSceneDefines();
+        defines.add(getReconstructionDefines());
+        mRayMarchingPass.mpFullScreenPass = FullScreenPass::create(mpDevice, desc, defines);
     }
 
 
@@ -56,10 +58,24 @@ void VoxelReconstructionNoLightTransport::rayMarchingPass(RenderContext* pRender
 
     RayMarchingPass& pass = mRayMarchingPass;
 
+#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
+    // Display outputs may show a saved stage while training accumulates several samples.
+    if (!pass.accuColor || pass.accuColor->getWidth() != pass.mOutputResolution.x ||
+        pass.accuColor->getHeight() != pass.mOutputResolution.y)
+    {
+        pass.accuColor = mpDevice->createTexture2D(pass.mOutputResolution.x, pass.mOutputResolution.y,
+            ResourceFormat::RGBA32Float, 1u, 1u, nullptr,
+            ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess);
+        pRenderContext->clearUAV(pass.accuColor->getUAV().get(), float4(0));
+    }
+    const auto accumulation = pass.accuColor;
+#else
+    const auto accumulation = renderData.getTexture(kAccumulateOutputColor);
+#endif
 
     if ((pass.mSampleIndex == 0 && mEnableReconstruction) || !mEnableReconstruction)
     {
-        pRenderContext->clearUAV(renderData.getTexture(kAccumulateOutputColor)->getUAV().get(), float4(0.f));
+        pRenderContext->clearUAV(accumulation->getUAV().get(), float4(0.f));
     }
 
 
@@ -107,7 +123,7 @@ void VoxelReconstructionNoLightTransport::rayMarchingPass(RenderContext* pRender
 
         var["gGridDataParamBlock"] = mpGridBlock;
         var["gPathRecordBuffer"] = mpPathRecordBuffer;
-        var["gAccuColor"] = renderData.getTexture(kAccumulateOutputColor);
+        var["gAccuColor"] = accumulation;
 
         auto cb_GridData = var["GridData"];
         cb_GridData["gridMin"] = mGridResources.gridData.gridMin;
@@ -117,7 +133,6 @@ void VoxelReconstructionNoLightTransport::rayMarchingPass(RenderContext* pRender
 
         auto cb = var["CB"];
         cb["pixelCount"] = pass.mOutputResolution;
-        cb["blockCount"] = mGridResources.gridData.blockCount3D();
         cb["invVP"] = math::inverse(pCamera->getViewProjMatrixNoJitter());
         cb["shadowBias"] = pass.mShadowBias100 / 100 / mGridResources.gridData.voxelSize.x;
         cb["drawMode"] = pass.mDrawMode;
@@ -129,7 +144,11 @@ void VoxelReconstructionNoLightTransport::rayMarchingPass(RenderContext* pRender
         cb["renderBackGround"] = pass.mRenderBackGround;
         cb["clearColor"] = float4(pass.mClearColor, 0);
         cb["enableReconstruction"] = mEnableReconstruction;
+#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
+        cb["invSpp"] = mEnableReconstruction ? 1.0f / pass.mSpp : 1.0f;
+#else
         cb["invSpp"] = 1.0f / pass.mSpp;
+#endif
 
         ref<Fbo> fbo = Fbo::create(mpDevice);
         fbo->attachColorTarget(pOutputColor, 0);

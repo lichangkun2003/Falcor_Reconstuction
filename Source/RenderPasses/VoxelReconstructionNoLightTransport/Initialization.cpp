@@ -27,20 +27,30 @@
  **************************************************************************/
 #include "VoxelReconstructionNoLightTransport.h"
 
+DefineList VoxelReconstructionNoLightTransport::getReconstructionDefines()
+{
+    DefineList defines;
+    defines.add("RECON_MODE", std::to_string(RECON_MODE));
+    defines.add("GRID_RESOLUTION", std::to_string(GRID_RESOLUTION));
+    return defines;
+}
+
 void VoxelReconstructionNoLightTransport::createInitializationPassResource()
 {
-#if RECON_MODE == RECON_MODE_ORIGINAL
     ProgramDesc desc;
     desc.addShaderLibrary(InitializeDataShaderFilePath).csEntry("main");
-    DefineList defines;
+    DefineList defines = getReconstructionDefines();
     mpInitializeDataPass = ComputePass::create(mpDevice, desc, defines, true);
-#endif
 }
 
 void VoxelReconstructionNoLightTransport::initializeVoxelData(RenderContext* pRenderContext)
 {
-#if RECON_MODE == RECON_MODE_ORIGINAL
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    initializePointCloudVoxelData(pRenderContext);
+#elif RECON_MODE == RECON_MODE_ORIGINAL
     initializeOriginalVoxelData(pRenderContext);
+#elif RECON_MODE == RECON_MODE_COARSE_TO_FINE
+    initializeCoarseVoxelData(pRenderContext);
 #endif
 }
 
@@ -56,10 +66,6 @@ void VoxelReconstructionNoLightTransport::initializeOriginalVoxelData(RenderCont
     cb["gLrB"] = mUpdatePass.mLrB;
     cb["gLrRadiance"] = mUpdatePass.mLrRadiance;
     cb["gLrOpacity"] = mUpdatePass.mLrOpacity;
-
-    ShaderVar gridBlock = mpGridBlock->getRootVar();
-    pRenderContext->clearUAV(mGridResources.blockOM->getUAV().get(), uint4(0xFFFFFFFFu));
-    gridBlock["blockOM"] = mGridResources.blockOM;
 
     mpInitializeDataPass->execute(pRenderContext, mGridResources.gridData.voxelCount);
 }
