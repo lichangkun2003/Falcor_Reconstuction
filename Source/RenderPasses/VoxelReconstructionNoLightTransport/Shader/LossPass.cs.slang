@@ -40,31 +40,10 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
     // Alpha loss
     const float alphaLossWeight = 0.3f;
 
-    float alphaLoss = 0.0f;
-    float dL_dAlpha = 0.0f;
+    float alphaDiff = renderAlpha - refAlpha;
+    float alphaLoss = alphaLossWeight * alphaDiff * alphaDiff;
+    float dL_dAlpha = 2.0f * alphaLossWeight * alphaDiff;
 
-    // Pure foreground
-    if (refAlpha > 0.99f)
-    {
-        float alphaDiff = renderAlpha - 1.0f;
-
-        alphaLoss =
-            alphaLossWeight * alphaDiff * alphaDiff;
-
-        dL_dAlpha =
-            2.0f * alphaLossWeight * alphaDiff;
-    }
-    // Pure background
-    else if (refAlpha < 0.01f)
-    {
-        float alphaDiff = renderAlpha;
-
-        alphaLoss =
-            alphaLossWeight * alphaDiff * alphaDiff;
-
-        dL_dAlpha =
-            2.0f * alphaLossWeight * alphaDiff;
-    }
 
     // Total loss
     gLossBuffer[pixel] = rgbLoss + alphaLoss;

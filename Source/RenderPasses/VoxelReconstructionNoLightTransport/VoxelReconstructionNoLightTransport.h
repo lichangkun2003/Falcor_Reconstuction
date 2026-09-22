@@ -70,8 +70,8 @@ inline std::string kAccumulateOutputColor = "AccuColor";
 
 // Relative paths are rooted at the Falcor source project, independently of the process working directory.
 inline std::string ReconstructionDataDir = "Reconstruction_Output";
-inline std::string ReferenceImageDir = "Reconstruction_Input/chair";
-inline std::string ReferenceCameraFile = "Reconstruction_Input/chair/transforms_train.json";
+inline std::string ReferenceImageDir = "Reconstruction_Input/ship";
+inline std::string ReferenceCameraFile = "Reconstruction_Input/ship/transforms_train.json";
 
 inline std::filesystem::path resolveReconstructionPath(const std::filesystem::path& path)
 {

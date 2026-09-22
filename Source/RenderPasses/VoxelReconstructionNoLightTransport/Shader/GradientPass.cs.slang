@@ -297,6 +297,7 @@ void calcMissCandidateGeometryGrad(
     float w = sigmoid(-gmin / tau);
 
     float3 radiance = sanitizeFloat3(voxel.radiance.calc(viewDir));
+    radiance = max(radiance, 0.0f);
 
     float opacity = clamp( sanitizeFloat( voxel.opacity.calcOpacity(viewDir) ),0.0f,1.0f );
 
@@ -505,8 +506,8 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
             float dL_dOpacityRGB = dot(dL_dC, transmittanceBefore * (radiance - behindColor));
             float dA_dOpacity = transmittanceBefore * transmittanceAfter;
             float dL_dOpacityAlpha = dL_dA * dA_dOpacity;
-            float dL_dOpacityBinary = gBinaryOpacityWeight * (1.0f - 2.0f * opacity);
-            float dL_dOpacity = dL_dOpacityRGB + dL_dOpacityAlpha + dL_dOpacityBinary ;
+            //float dL_dOpacityBinary = gBinaryOpacityWeight * (1.0f - 2.0f * opacity);
+            float dL_dOpacity = dL_dOpacityRGB + dL_dOpacityAlpha;
 
             dL_dRadiance = sanitizeFloat3(dL_dRadiance);
             dL_dOpacity = sanitizeFloat(dL_dOpacity);
@@ -565,7 +566,7 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
             transmittanceAfter *= (1.0f - opacity);
             transmittanceAfter = clamp(sanitizeFloat(transmittanceAfter), 0.0f, 1.0f);
         }
-  
+
     }
 
     // -------------------------
@@ -697,7 +698,7 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
             print("average B grad norm:",
                 BGradNorm);
         }
-        
+
     }
 
 
