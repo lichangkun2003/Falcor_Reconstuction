@@ -2,6 +2,8 @@
 #include "VoxelizationBase.h"
 #include <Rendering/Lights/EnvMapSampler.h>
 #include <Core/Pass/FullScreenPass.h>
+#include <fstream>
+#include <filesystem>
 
 using namespace Falcor;
 
@@ -52,4 +54,24 @@ private:
     bool mOptionsChanged;
     uint mFrameIndex;
     uint2 mOutputResolution;
+
+    // ------------------------------------------------------------------
+    // 烘焙：把 Voxelization 的 ABSDF 表达转成 VoxelReconstructionNoLightTransport 的表达。
+    // 假设纯白天光、只算直接光。输出重建端 v1 格式的 .bin。
+    // ------------------------------------------------------------------
+    struct BakeState
+    {
+        bool requested = false;
+        // logit 之前把 coverage 夹到的边界，避免 log(0)
+        float coverageEps = 1e-3f;
+        std::string status = "Not baked";
+        std::string outputDirectory;
+        ref<ComputePass> pass;
+        ref<Buffer> output;
+    };
+
+    void bakeReconstruction(RenderContext* pRenderContext, const RenderData& renderData);
+    void renderBakeUI(Gui::Widgets& widget);
+
+    BakeState mBake;
 };

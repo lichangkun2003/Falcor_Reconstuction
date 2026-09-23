@@ -337,7 +337,7 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
 #if RECON_MODE == RECON_MODE_COARSE_TO_FINE
     widget.var("Geometry Grad Clamp", mGradientPass.geometryGradClamp, 0.0f, 10.0f, 1e-4f);
 #else
-    widget.var("Geometry Grad Clamp", mGradientPass.geometryGradClamp, 0.0f, 0.2f, 1e-4f);
+    widget.var("Geometry Grad Clamp", mGradientPass.geometryGradClamp, 0.0f, 10.0f, 1e-4f);
 #endif
 #if RECON_MODE == RECON_MODE_COARSE_TO_FINE
     if (!mOptimizerParams.isRunning)

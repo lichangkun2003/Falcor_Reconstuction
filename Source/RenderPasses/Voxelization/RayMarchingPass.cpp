@@ -7,7 +7,23 @@ namespace
 {
 const std::string kShaderFile = "RenderPasses/Voxelization/RayMarching.ps.slang";
 const std::string kDisplayShaderFile = "RenderPasses/Voxelization/DisplayNDF.ps.slang";
+const std::string kBakeShaderFile = "RenderPasses/Voxelization/BakeReconstruction.cs.slang";
 const std::string kOutputColor = "color";
+
+// 烘焙输出的 CPU 侧镜像，必须与 BakeReconstruction.cs.slang 里的 ReconVoxelData
+// 以及重建端 VoxelReconstructionNoLightTransport 的 VoxelData 三者逐字节一致。
+// Ellipsoid 直接复用 Math/Ellipsoid.slang 的宿主版本（48 字节，与设备端相同）。
+struct BakeVoxelData
+{
+    uint32_t occupied;
+    Ellipsoid ellipsoid;
+    float3 radiance[9];
+    float opacity[9];
+};
+static_assert(sizeof(BakeVoxelData) == 196, "Bake layout must match VoxelReconstructionNoLightTransport::VoxelData");
+
+// 重建端 v1 文件头的魔数，必须与 DataProcess.cpp 里的 kReconstructionMagic 相同
+constexpr uint32_t kBakeMagic = 0x56525831; // "VRX1"
 } // namespace
 
 RayMarchingPass::RayMarchingPass(ref<Device> pDevice, const Properties& props)
@@ -79,6 +95,11 @@ void RayMarchingPass::execute(RenderContext* pRenderContext, const RenderData& r
     if (!mpScene)
         return;
 
+    if (mBake.requested)
+    {
+        mBake.requested = false;
+        bakeReconstruction(pRenderContext, renderData);
+    }
 
     auto& dict = renderData.getDictionary();
     if (mOptionsChanged)
@@ -210,6 +231,143 @@ void RayMarchingPass::compile(RenderContext* pRenderContext, const CompileData& 
     VoxelizationBase::LightChanged = true;
 }
 
+void RayMarchingPass::bakeReconstruction(RenderContext* pRenderContext, const RenderData& renderData)
+{
+    try
+    {
+        // 网格必须是等大的立方体。网格空间与世界空间方向一致这个前提依赖它，
+        // 否则 Lebedev 方向不能同时喂给 DDA 和 BRDF。
+        if (gridData.voxelSize.x != gridData.voxelSize.y || gridData.voxelSize.x != gridData.voxelSize.z ||
+            gridData.voxelCount.x != gridData.voxelCount.y || gridData.voxelCount.x != gridData.voxelCount.z)
+        {
+            throw std::runtime_error(
+                "Baking needs an isotropic cubic grid. In the Voxelization pass, tick \"Match Reconstruction Grid\" "
+                "(AABB [-1.3, 1.3]^3, resolution 128), then Generate and Read before baking."
+            );
+        }
+        if (gridData.solidVoxelCount == 0)
+            throw std::runtime_error("No solid voxels loaded. Press Read in ReadVoxelPass first.");
+
+        if (!mBake.pass)
+        {
+            ProgramDesc desc;
+            desc.addShaderModules(mpScene->getShaderModules());
+            desc.addShaderLibrary(kBakeShaderFile).csEntry("main");
+            desc.setShaderModel(ShaderModel::SM6_5);
+            desc.addTypeConformances(mpScene->getTypeConformances());
+
+            DefineList defines;
+            defines.add(mpScene->getSceneDefines());
+            // 这三个必须为 1：关掉的话 calcCoverage / calcInternalVisibility / 椭球裁剪
+            // 会退化成常量，烘焙出来的 alpha 和 radiance 就全是错的。
+            defines.add("CHECK_ELLIPSOID", "1");
+            defines.add("CHECK_COVERAGE", "1");
+            defines.add("CHECK_VISIBILITY", "1");
+            defines.add("USE_MIP_MAP", "0"); // 用 DDA，逐格精确
+            mBake.pass = ComputePass::create(mpDevice, desc, defines, true);
+        }
+
+        const uint64_t elementCount = gridData.totalVoxelCount();
+        const uint64_t byteSize = elementCount * sizeof(BakeVoxelData);
+        if (!mBake.output || mBake.output->getSize() < byteSize)
+        {
+            mBake.output = mpDevice->createStructuredBuffer(
+                sizeof(BakeVoxelData), elementCount, ResourceBindFlags::UnorderedAccess | ResourceBindFlags::ShaderResource
+            );
+        }
+
+        auto var = mBake.pass->getRootVar();
+        var[kVBuffer] = renderData.getTexture(kVBuffer);
+        var[kGBuffer] = renderData.getResource(kGBuffer)->asBuffer();
+        var[kPBuffer] = renderData.getResource(kPBuffer)->asBuffer();
+        var[kBlockMap] = renderData.getTexture(kBlockMap);
+        var["bakeOutput"] = mBake.output;
+
+        auto cbGrid = var["GridData"];
+        cbGrid["gridMin"] = gridData.gridMin;
+        cbGrid["voxelSize"] = gridData.voxelSize;
+        cbGrid["voxelCount"] = gridData.voxelCount;
+        cbGrid["solidVoxelCount"] = (uint)gridData.solidVoxelCount;
+
+        auto cb = var["BakeCB"];
+        cb["coverageEps"] = mBake.coverageEps;
+
+        // 着色器对每个下标都会写一次（空体素写 occupied=0），所以不需要预先 clear
+        mBake.pass->execute(pRenderContext, uint3((uint)((elementCount + 63) / 64), 1, 1));
+        pRenderContext->submit(true);
+
+        std::vector<uint8_t> data((size_t)byteSize);
+        mBake.output->getBlob(data.data(), 0, data.size());
+
+        // 输出到 <project>/resource/new/，和 Voxelization 写出的 resource/*.bin_CPU 放在一起。
+        // 用 getProjectDirectory() 而不是 VoxelizationBase::ResourceFolder：后者是硬编码的绝对路径，
+        // 工程换个位置就断了，而 getProjectDirectory() 来自 CMake 的 FALCOR_PROJECT_DIR。
+        //
+        // 注意：重建端 loadReconstruction 的 requireModeFile() 只认
+        // <project>/Reconstruction_Output/mode3 之内的文件，所以这里产出的文件
+        // 暂时不能直接在重建 pass 里加载。
+        const std::filesystem::path directory = Falcor::getProjectDirectory() / "resource" / "new";
+        std::filesystem::create_directories(directory);
+        const std::filesystem::path path = directory / fmt::format(
+            "{}_bake_{}x{}x{}.bin",
+            mpScene->getPath().stem().string(),
+            gridData.voxelCount.x, gridData.voxelCount.y, gridData.voxelCount.z
+        );
+
+        std::ofstream out(path, std::ios::binary);
+        if (!out)
+            throw std::runtime_error("Cannot open for writing: " + path.string());
+        const uint32_t version = 1;
+        const uint32_t voxelDataSize = (uint32_t)sizeof(BakeVoxelData);
+        out.write(reinterpret_cast<const char*>(&kBakeMagic), sizeof(kBakeMagic));
+        out.write(reinterpret_cast<const char*>(&version), sizeof(version));
+        out.write(reinterpret_cast<const char*>(&gridData.voxelCount), sizeof(gridData.voxelCount));
+        out.write(reinterpret_cast<const char*>(&voxelDataSize), sizeof(voxelDataSize));
+        out.write(reinterpret_cast<const char*>(data.data()), (std::streamsize)byteSize);
+        out.close();
+        if (!out)
+            throw std::runtime_error("Write failed: " + path.string());
+
+        // 写出的 occupied 数。重建端加载时会报它自己数出来的 occupied 数，两者必须相同；
+        // 不同就说明布局对不上。
+        const BakeVoxelData* voxels = reinterpret_cast<const BakeVoxelData*>(data.data());
+        uint64_t occupied = 0;
+        for (uint64_t i = 0; i < elementCount; i++)
+            occupied += voxels[i].occupied != 0 ? 1 : 0;
+
+        mBake.outputDirectory = directory.string();
+        mBake.status = fmt::format("Baked {} voxels -> {}", occupied, path.filename().string());
+        logInfo(
+            "Bake done: {} (source solid={}, written occupied={}, bytes={})",
+            path.string(), gridData.solidVoxelCount, occupied, byteSize
+        );
+    }
+    catch (const std::exception& e)
+    {
+        mBake.status = std::string("Bake failed: ") + e.what();
+        logError("{}", mBake.status);
+    }
+}
+
+void RayMarchingPass::renderBakeUI(Gui::Widgets& widget)
+{
+    widget.text("--- Bake ---");
+    bool clicked = widget.button("Bake To Reconstruction Format");
+    // 字符串字面量必须保持 ASCII：本工程按 GBK(936) 编译，源码里的 UTF-8 中文
+    // 一旦出现在字面量中就可能有字节被当成转义符，导致 C2001。中文只写进注释。
+    widget.tooltip(
+        "Bake the loaded ABSDF voxels into the VoxelReconstructionNoLightTransport\n"
+        "representation: pure white sky, direct light only, alpha = coverage,\n"
+        "radiance projected onto 9-coefficient SH.\n"
+        "Output goes to <project>/resource/new/."
+    );
+    if (clicked)
+        mBake.requested = true;
+
+    widget.slider("Coverage Eps", mBake.coverageEps, 1e-5f, 1e-1f);
+    widget.text("Status: " + mBake.status);
+}
+
 void RayMarchingPass::renderUI(Gui::Widgets& widget)
 {
     if (widget.checkbox("Debug", mDebug))
@@ -262,6 +420,8 @@ void RayMarchingPass::renderUI(Gui::Widgets& widget)
     }
 
     widget.text("Selected Pixel: " + ToString(mSelectedPixel));
+
+    renderBakeUI(widget);
 }
 
 void RayMarchingPass::setScene(RenderContext* pRenderContext, const ref<Scene>& pScene)
@@ -269,6 +429,7 @@ void RayMarchingPass::setScene(RenderContext* pRenderContext, const ref<Scene>& 
     mpScene = pScene;
     mpFullScreenPass = nullptr;
     mpDisplayNDFPass = nullptr;
+    mBake.pass = nullptr;
     mDebug = false;
     mUseEmissiveLight = false;
 }

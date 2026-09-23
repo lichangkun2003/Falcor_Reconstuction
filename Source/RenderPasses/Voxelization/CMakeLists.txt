@@ -47,7 +47,9 @@ target_sources(Voxelization PRIVATE
     RayMarchingPass.cpp
     RayMarchingPass.h
     PrepareShadingData.cs.slang
+    RayMarchingCommon.slang
     RayMarching.ps.slang
+    BakeReconstruction.cs.slang
     DisplayNDF.ps.slang
 
     ReadVoxelPass.cpp

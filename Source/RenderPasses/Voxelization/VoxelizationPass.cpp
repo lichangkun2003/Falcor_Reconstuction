@@ -5,6 +5,13 @@
 namespace
 {
 const std::string kAnalyzePolygonProgramFile = "RenderPasses/Voxelization/AnalyzePolygon.cs.slang";
+
+// 与 VoxelReconstructionNoLightTransport 的固定重建网格保持一致。
+// 那边在 Defines.h 里定义 GRID_RESOLUTION=128，AABB 硬编码为 [-1.3, 1.3]^3。
+// 改这里必须同步改那边，否则两个网格对不上，椭球就不能直接搬了。
+constexpr uint kReconstructionGridResolution = 128;
+const float3 kReconstructionAABBMin = float3(-1.3f);
+const float3 kReconstructionAABBMax = float3(1.3f);
 }; // namespace
 
 VoxelizationPass::VoxelizationPass(ref<Device> pDevice, const Properties& props)
@@ -133,6 +140,37 @@ void VoxelizationPass::renderUI(Gui::Widgets& widget)
     }
 
     widget.checkbox("LerpNormal", mLerpNormal);
+
+    // 与重建 pass 的网格对齐。开启后不使用场景 AABB，改用固定重建范围，
+    // 并把分辨率锁定到 kReconstructionGridResolution。
+    {
+        bool useManual = VoxelizationBase::UseManualAABB;
+        if (widget.checkbox("Match Reconstruction Grid", useManual))
+        {
+            VoxelizationBase::UseManualAABB = useManual;
+            if (useManual)
+            {
+                VoxelizationBase::ManualAABBMin = kReconstructionAABBMin;
+                VoxelizationBase::ManualAABBMax = kReconstructionAABBMax;
+                mVoxelResolution = kReconstructionGridResolution;
+            }
+            VoxelizationBase::UpdateVoxelGrid(mpScene, mVoxelResolution);
+        }
+
+        if (VoxelizationBase::UseManualAABB)
+        {
+            widget.text("Manual AABB: [" + ToString(VoxelizationBase::ManualAABBMin) + ", " +
+                ToString(VoxelizationBase::ManualAABBMax) + "]");
+        }
+    }
+
+    // 建格结果。点 Generate 之前先看这里，和重建 pass 日志里的
+    // "Reconstruction voxel grid initialized" 对照，三个数必须完全一致。
+    {
+        widget.text("Grid Min: " + ToString(gridData.gridMin));
+        widget.text("Voxel Size: " + ToString(gridData.voxelSize));
+        widget.text("Voxel Count: " + ToString((int3)gridData.voxelCount));
+    }
 
     if (mpScene && mVoxelizationComplete && mSamplingComplete && widget.button("Generate"))
     {

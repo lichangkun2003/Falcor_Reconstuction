@@ -70,8 +70,8 @@ inline std::string kAccumulateOutputColor = "AccuColor";
 
 // Relative paths are rooted at the Falcor source project, independently of the process working directory.
 inline std::string ReconstructionDataDir = "Reconstruction_Output";
-inline std::string ReferenceImageDir = "Reconstruction_Input/ship";
-inline std::string ReferenceCameraFile = "Reconstruction_Input/ship/transforms_train.json";
+inline std::string ReferenceImageDir = "Reconstruction_Input/hotdog";
+inline std::string ReferenceCameraFile = "Reconstruction_Input/hotdog/transforms_train.json";
 
 inline std::filesystem::path resolveReconstructionPath(const std::filesystem::path& path)
 {
@@ -261,7 +261,7 @@ public:
         bool isRunning = false;
 
         // 控制一次优化过程
-        uint32_t maxIteration = 100;
+        uint32_t maxIteration = 200;
         uint32_t currentIteration = 0;
 
         // 每次 iteration 使用多少个 camera/view

@@ -19,6 +19,11 @@ bool VoxelizationBase::FileUpdated = true;
 bool VoxelizationBase::LightChanged = true;
 std::string VoxelizationBase::ResourceFolder = "D:/study/vs/Falcor_Reconstuction/resource/";
 
+// 默认关闭，保持原有的"按场景 AABB 建网格"行为不变。
+bool VoxelizationBase::UseManualAABB = false;
+float3 VoxelizationBase::ManualAABBMin = float3(-1.3f);
+float3 VoxelizationBase::ManualAABBMax = float3(1.3f);
+
 std::random_device rd;
 std::mt19937 Random::Generator{ rd() };
 std::uniform_real_distribution<double> Random::Distribution{ 0.0, 1.0 };

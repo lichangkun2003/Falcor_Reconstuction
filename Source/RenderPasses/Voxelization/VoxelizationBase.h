@@ -59,12 +59,30 @@ public:
     static std::string ResourceFolder;
     static bool LightChanged;
 
+    // 手动网格。用于把 Voxelization 的网格对齐到 VoxelReconstructionNoLightTransport 的固定重建网格。
+    // 开启后忽略场景 AABB，改用 ManualAABBMin / ManualAABBMax。
+    // 两侧的建格算法逐行相同（见下面 UpdateVoxelGrid 的手动分支），因此只要 AABB 与 voxelResolution
+    // 一致，得到的 gridMin / voxelSize / voxelCount 就是逐位相同的，椭球可以直接按体素坐标搬运。
+    static bool UseManualAABB;
+    static float3 ManualAABBMin;
+    static float3 ManualAABBMax;
+
     static void UpdateVoxelGrid(ref<Scene> scene, uint voxelResolution)
     {
         float3 diag;
         float length;
         float3 center;
-        if (scene)
+        if (UseManualAABB)
+        {
+            // 与 VoxelReconstructionNoLightTransport::UpdateVoxelGrid 完全相同的算法，
+            // 只把 AABB 换成手动范围。改动这里时必须同步改那边，否则两个网格会对不上。
+            center = 0.5f * (ManualAABBMin + ManualAABBMax);
+            diag = ManualAABBMax - ManualAABBMin;
+            length = std::max(diag.z, std::max(diag.x, diag.y));
+            diag *= 1.02f;
+            length *= 1.02f;
+        }
+        else if (scene)
         {
             AABB aabb = scene->getSceneBounds();
             diag = aabb.maxPoint - aabb.minPoint;
@@ -90,6 +108,24 @@ public:
         );
         GlobalGridData.gridMin = center - 0.5f * GlobalGridData.voxelSize * float3(GlobalGridData.voxelCount);
         GlobalGridData.solidVoxelCount = 0;
+
+        // 打印出来直接和重建 pass 启动时那行 "Reconstruction voxel grid initialized" 对照。
+        logInfo(
+            "Voxelization voxel grid initialized (manual={}):"
+            " voxelSize=({}, {}, {}),"
+            " voxelCount=({}, {}, {}),"
+            " gridMin=({}, {}, {})",
+            UseManualAABB,
+            GlobalGridData.voxelSize.x,
+            GlobalGridData.voxelSize.y,
+            GlobalGridData.voxelSize.z,
+            GlobalGridData.voxelCount.x,
+            GlobalGridData.voxelCount.y,
+            GlobalGridData.voxelCount.z,
+            GlobalGridData.gridMin.x,
+            GlobalGridData.gridMin.y,
+            GlobalGridData.gridMin.z
+        );
     }
 };
 
