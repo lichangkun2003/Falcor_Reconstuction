@@ -109,19 +109,11 @@ void VoxelReconstructionNoLightTransport::resetLoadedReconstruction(RenderContex
     mReduceLossPass.iterationLossHistory.clear();
     if (mpPathRecordBuffer) pRenderContext->clearUAV(mpPathRecordBuffer->getUAV().get(), uint4(0));
     if (mGradientPass.gradBuffer) pRenderContext->clearUAV(mGradientPass.gradBuffer->getUAV().get(), uint4(0));
-    if (mRayMarchingPass.accuColor) pRenderContext->clearUAV(mRayMarchingPass.accuColor->getUAV().get(), float4(0));
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
     mPointCloud.startRequested = false;
     mPointCloud.initialized = true;
     mPointCloud.clearAccumulation = true;
     mPointCloud.status = "Loaded voxel reconstruction; PLY initialization is not required.";
-#elif RECON_MODE == RECON_MODE_COARSE_TO_FINE
-    mRestoreCoarseCheckpointRequested = false;
-    mCoarseToFine.startRequested = false;
-    mCoarseToFine.pauseRequested = false;
-    mCoarseToFine.advanceRequested = false;
-    mCoarseToFine.paused = true;
-    mCoarseToFine.clearAccumulation = true;
 #endif
 }
 
@@ -147,8 +139,6 @@ void VoxelReconstructionNoLightTransport::initializeVoxelData(RenderContext* pRe
     initializePointCloudVoxelData(pRenderContext);
 #elif RECON_MODE == RECON_MODE_ORIGINAL
     initializeOriginalVoxelData(pRenderContext);
-#elif RECON_MODE == RECON_MODE_COARSE_TO_FINE
-    initializeCoarseVoxelData(pRenderContext);
 #endif
 }
 

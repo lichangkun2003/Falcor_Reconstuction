@@ -4,7 +4,6 @@ set(voxel_reconstruction_sources
     VoxelReconstructionNoLightTransport.cpp
     Initialization.cpp
     PointCloudInitialization.cpp
-    CoarseToFine.cpp
     RayMarchingPass.cpp
     LossPass.cpp
     ReducePass.cpp
@@ -45,8 +44,6 @@ target_sources(VoxelReconstructionNoLightTransport PRIVATE
     Shader/ReflectTypes.cs.slang
     Shader/InitializeData.cs.slang
     Shader/InitializePointCloud.cs.slang
-    Shader/RefineVoxelGrid.cs.slang
-    Shader/EvaluationImages.cs.slang
     Shader/RayMarchingPass.ps.slang
     Shader/LossPass.cs.slang
     Shader/ReduceTexturePass.cs.slang

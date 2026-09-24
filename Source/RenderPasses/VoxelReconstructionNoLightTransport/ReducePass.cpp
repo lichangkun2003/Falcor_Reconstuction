@@ -124,10 +124,9 @@ void VoxelReconstructionNoLightTransport::runReducePass(RenderContext* pRenderCo
     // pInput[0] 就是最终 total loss
     pRenderContext->copyBufferRegion(mReduceLossPass.mpTotalLossReadback.get(), 0, pInput.get(), 0, sizeof(float));
 
-#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
-    // Buffer::map() does not wait for GPU work. Stage loss must describe this update, not an older frame.
+    // Buffer::map() does not wait for GPU work, so without this flush the mean loss read back below
+    // can describe an older frame. It only feeds the displayed/saved loss curve, never the gradients.
     pRenderContext->submit(true);
-#endif
 
     const float* pData = reinterpret_cast<const float*>(mReduceLossPass.mpTotalLossReadback->map());
 

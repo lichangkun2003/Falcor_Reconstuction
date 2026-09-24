@@ -85,22 +85,13 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
         // -------------------------
         // geometry init
         // -------------------------
-#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
-        // New coarse experiments need defined geometry even when its learning rate is zero.
-        if (true)
-#else
         if (gLrCenter > 0.0f)
-#endif
         {
             data.ellipsoid.center = float3(0.5f, 0.5f, 0.5f);
         }
 
         // phi = (x-c)^T B (x-c) - 1
-#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
-        if (true)
-#else
         if (gLrB > 0.0f)
-#endif
         {
             float r = 0.6f;
             float invR2 = 1.0f / max(r * r, 1e-6f);

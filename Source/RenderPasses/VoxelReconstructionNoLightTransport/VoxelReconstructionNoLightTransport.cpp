@@ -151,8 +151,6 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
     bool needsTrainingData = mEnableReconstruction || mOptimizerParams.isRunning || mInitVoxelData;
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
     needsTrainingData |= mPointCloud.startRequested;
-#elif RECON_MODE == RECON_MODE_COARSE_TO_FINE
-    needsTrainingData |= mCoarseToFine.startRequested || mCoarseToFine.advanceRequested || mRestoreCoarseCheckpointRequested;
 #endif
     if ((needsTrainingData || mUseReferenceCamera || !mLoadedReconstructionForViewing) && mReferenceDataError.empty())
     {
@@ -182,25 +180,10 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
         mInitVoxelData = false;
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
         mPointCloud.startRequested = false;
-#elif RECON_MODE == RECON_MODE_COARSE_TO_FINE
-        mRestoreCoarseCheckpointRequested = false;
-        mCoarseToFine.startRequested = false;
-        mCoarseToFine.advanceRequested = false;
-        mCoarseToFine.pauseRequested = false;
-        mCoarseToFine.paused = true;
 #endif
         mReconstructionIOStatus = "Training/restore request cancelled: reference data is unavailable. The current grid remains available for viewing.";
     }
 
-#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
-    if (mRestoreCoarseCheckpointRequested)
-    {
-        mRestoreCoarseCheckpointRequested = false;
-        if (mSelectedReconstructionFile < mReconstructionFilePaths.size())
-            restoreCoarseCheckpoint(pRenderContext, mReconstructionFilePaths[mSelectedReconstructionFile]);
-        else mReconstructionIOStatus = "Restore failed: no file selected.";
-    }
-#endif
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
     bool pointCloudInitFailed = false;
 #endif
@@ -238,37 +221,6 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
         mPointCloud.clearAccumulation = false;
     }
 #endif
-#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
-    if (mCoarseToFine.startRequested)
-    {
-        const bool ready = mCoarseToFine.initialized || initializeCoarseVoxelData(pRenderContext);
-        mCoarseToFine.startRequested = false;
-        if (ready)
-        {
-            mCoarseToFine.paused = false;
-            mCoarseToFine.finished = false;
-            mEnableReconstruction = true;
-            mOptimizerParams.isRunning = true;
-            resetCoarseSampling(pRenderContext);
-        }
-    }
-    if (mCoarseToFine.advanceRequested)
-    {
-        mCoarseToFine.advanceRequested = false;
-        advanceCoarseStage(pRenderContext);
-    }
-    if (mSaveReconstructionRequested && !mOptimizerParams.isRunning && mCoarseToFine.initialized)
-    {
-        saveCoarseStage(pRenderContext, renderData);
-        mSaveReconstructionRequested = false;
-    }
-    if (mCoarseToFine.clearAccumulation)
-    {
-        if (mRayMarchingPass.accuColor)
-            pRenderContext->clearUAV(mRayMarchingPass.accuColor->getUAV().get(), float4(0));
-        mCoarseToFine.clearAccumulation = false;
-    }
-#else
     if (mSaveReconstructionRequested)
     {
         saveReconstruction(pRenderContext);
@@ -277,7 +229,6 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
         // 保存后刷新列表，立刻能在 dropdown 看到新文件
         mReconstructionFileListDirty = true;
     }
-#endif
 
     // test input
     {
@@ -311,24 +262,15 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
         {
             mOptimizerParams.currentView = 0;
             mOptimizerParams.currentIteration++;
-#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
-            completeCoarseIteration(pRenderContext, renderData);
-#else
             if (mOptimizerParams.currentIteration >= mOptimizerParams.maxIteration)
             {
                 stopReconstruction();
                 mSaveReconstructionRequested = true;
             }
-#endif
         }
     }
 
 
-#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
-    // Publish only after loss, gradients, updates and checkpoint evaluation have finished.
-    pRenderContext->copyResource(renderData.getTexture(kAccumulateOutputColor).get(), mRayMarchingPass.accuColor.get());
-    renderCoarsePreview(pRenderContext, renderData);
-#endif
     endFrame(pRenderContext);
 }
 
@@ -349,19 +291,8 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
 
 
     widget.var("Geometry Tau", mGradientPass.geometryTau, 0.0f, 0.2f, 1e-4f);
-#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
     widget.var("Geometry Grad Clamp", mGradientPass.geometryGradClamp, 0.0f, 10.0f, 1e-4f);
-#else
-    widget.var("Geometry Grad Clamp", mGradientPass.geometryGradClamp, 0.0f, 10.0f, 1e-4f);
-#endif
-#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
-    if (!mOptimizerParams.isRunning)
-        widget.var("Spp", mRayMarchingPass.mSpp, 1u, 100u, 1u);
-    else
-        widget.text("Training Spp: " + std::to_string(mRayMarchingPass.mSpp));
-#else
     widget.var("Spp", mRayMarchingPass.mSpp, 1u, 100u,1u);
-#endif
 
     if (widget.checkbox("Use ReferenceCamera", mUseReferenceCamera))
     {
@@ -378,9 +309,6 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
     }
     else if (!mReferenceCameras.empty() && mReferenceImages.size() < mReferenceCameras.size())
         widget.text(fmt::format("Loading reference images: {} / {}", mReferenceImages.size(), mReferenceCameras.size()));
-#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
-    renderCoarseUI(widget);
-#else
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
     widget.text("Mode 1: point-cloud initialization");
     widget.text("PLY: " + (resolveReconstructionPath(ReferenceImageDir) / "init_points.ply").string());
@@ -397,7 +325,6 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
         else
             stopReconstruction();
     }
-#endif
 
     renderUIUpdatePass(widget);
 
@@ -445,13 +372,6 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
             {
                 mLoadReconstructionRequested = true;
             }
-#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
-            if (widget.button("Restore Training Checkpoint"))
-            {
-                mReferenceDataError.clear();
-                mRestoreCoarseCheckpointRequested = true;
-            }
-#endif
         }
         else
         {
@@ -460,9 +380,6 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
 
         if (!mReconstructionIOStatus.empty()) widget.text(mReconstructionIOStatus);
         widget.textbox("Name Tag", mReconstructionNameTag);
-#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
-        if (!mLoadedReconstructionForViewing)
-#endif
         if (widget.button("Save Reconstruction"))
         {
             mSaveReconstructionRequested = true;
@@ -576,9 +493,6 @@ void VoxelReconstructionNoLightTransport::setScene(RenderContext* pRenderContext
     mGridResources.gridData.solidVoxelCount = 0;
     mEnableReconstruction = false;
     mOptimizerParams.reset();
-#endif
-#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
-    configureCoarseStages();
 #endif
     UpdateVoxelGrid(mVoxelResolution);
     setupGridResouce(pRenderContext, true);
@@ -796,13 +710,6 @@ void VoxelReconstructionNoLightTransport::startReconstruction()
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
     // GPU work and first-use initialization are performed at the next frame boundary.
     mPointCloud.startRequested = true;
-#elif RECON_MODE == RECON_MODE_COARSE_TO_FINE
-    if (mLoadedReconstructionForViewing)
-    {
-        mReconstructionIOStatus = "Viewing a saved result. Restore Training Checkpoint to continue its optimization.";
-        return;
-    }
-    mCoarseToFine.startRequested = true;
 #else
     mLoadedReconstructionForViewing = false;
     mEnableReconstruction = true;
@@ -829,8 +736,6 @@ void VoxelReconstructionNoLightTransport::stopReconstruction()
     mOptimizerParams.currentView = 0;
     mRayMarchingPass.mSampleIndex = 0;
     mPointCloud.clearAccumulation = true;
-#elif RECON_MODE == RECON_MODE_COARSE_TO_FINE
-    mCoarseToFine.pauseRequested = true;
 #else
     mEnableReconstruction = false;
 

@@ -51,19 +51,12 @@ void VoxelReconstructionNoLightTransport::runUpdatePass(RenderContext* pRenderCo
     mUpdatePass.mLrCenter = mLrCenterScale * 1e-3f;
     mUpdatePass.mLrB = mLrBScale * 1e-1f;
 
-#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
-    // Prune at every level, once at the end of each local pruning interval.
-    mUpdatePass.mEnableEllipsoidPruning =
-        (mCoarseToFine.stageIteration + 1) % CTF_PRUNE_INTERVAL == 0 &&
-        mOptimizerParams.currentView + 1 == mOptimizerParams.viewsPerIteration;
-#else
-    // 非 CTF 模式下 prune 默认关闭. pruneEllipsoid 直接写 occupied = 0.
+    // prune 默认关闭. pruneEllipsoid 直接写 occupied = 0.
     // 而全工程只有初始化阶段会写回 1，被删的体素本次运行里永远回不来.
     if ((mOptimizerParams.currentIteration) % 10 == 0)
     {
         //mUpdatePass.mEnableEllipsoidPruning = true;
     }
-#endif
 
 
     auto var = mUpdatePass.mpComputePass->getRootVar();

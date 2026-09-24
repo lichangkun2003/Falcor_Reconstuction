@@ -58,20 +58,7 @@ void VoxelReconstructionNoLightTransport::rayMarchingPass(RenderContext* pRender
 
     RayMarchingPass& pass = mRayMarchingPass;
 
-#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
-    // Display outputs may show a saved stage while training accumulates several samples.
-    if (!pass.accuColor || pass.accuColor->getWidth() != pass.mOutputResolution.x ||
-        pass.accuColor->getHeight() != pass.mOutputResolution.y)
-    {
-        pass.accuColor = mpDevice->createTexture2D(pass.mOutputResolution.x, pass.mOutputResolution.y,
-            ResourceFormat::RGBA32Float, 1u, 1u, nullptr,
-            ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess);
-        pRenderContext->clearUAV(pass.accuColor->getUAV().get(), float4(0));
-    }
-    const auto accumulation = pass.accuColor;
-#else
     const auto accumulation = renderData.getTexture(kAccumulateOutputColor);
-#endif
 
     if ((pass.mSampleIndex == 0 && mEnableReconstruction) || !mEnableReconstruction)
     {

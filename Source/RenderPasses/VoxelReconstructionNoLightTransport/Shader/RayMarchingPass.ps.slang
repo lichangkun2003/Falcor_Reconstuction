@@ -14,9 +14,6 @@ import Utils.Debug.PixelDebug;
 #include "../Voxel/VoxelGrid.slang"
 #include "../PathRecord.slang"
 
-#ifndef PREVIEW_ONLY
-#define PREVIEW_ONLY 0
-#endif
 
 
 cbuffer GridData
@@ -44,9 +41,7 @@ cbuffer CB
     float transmittanceThreshold;
 }
 
-#if !PREVIEW_ONLY
 RWStructuredBuffer<PathRecord> gPathRecordBuffer;
-#endif
 RWTexture2D gAccuColor;
 
 
@@ -329,7 +324,6 @@ HitResult rayMarchingDDA(
             if (hit.hit)
                 return hit;
 
-#if !PREVIEW_ONLY
             // candidate数组只保存未命中的体素
             bool validMiss = !isnan(hit.gmin) && !isinf(hit.gmin) && hit.gmin >= 0.0f;
             if (enableReconstruction && validMiss)
@@ -382,7 +376,6 @@ HitResult rayMarchingDDA(
                 }
             }
 
-#endif // !PREVIEW_ONLY
 #endif // CHECK_PRIMITIVE
         }
         leave(cell, cellInt, directions, direction, reciprocal_direction);
@@ -476,7 +469,6 @@ float4 shadingGlobal(
         float opacity = data.opacity.calcOpacity(-direction);
         opacity = saturate(opacity);
 
-#if !PREVIEW_ONLY
         if (enableReconstruction) {
             VoxelRecord voxelRecord;
             voxelRecord.cellInt = currentHit.cellInt;
@@ -490,7 +482,6 @@ float4 shadingGlobal(
 
             gPathRecordBuffer[bufferIndex].voxels[i] = voxelRecord;
         }
-#endif
 
         {
             //float weight = transmittance * opacity;
@@ -532,14 +523,12 @@ float4 shadingGlobal(
     accumulatedColor += transmittance * renderBackground(direction).xyz;
     float renderAlpha = 1.0f - transmittance;
 
-#if !PREVIEW_ONLY
     if (enableReconstruction) {
         gPathRecordBuffer[bufferIndex].contributingVoxelCount = actualHitCount;
         gPathRecordBuffer[bufferIndex].viewDir = normalize(-direction);
         gPathRecordBuffer[bufferIndex].backgroundColor = renderBackground(direction).xyz;
         gPathRecordBuffer[bufferIndex].finalColor = accumulatedColor;
     }
-#endif
 
     return float4(accumulatedColor, renderAlpha);
 }
@@ -566,11 +555,9 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
     float3 rayOriginCell = from;
 
     uint bufferIndex = PixelToIndex(pixel, pixelCount);
-#if !PREVIEW_ONLY
     gPathRecordBuffer[bufferIndex].init();
     gPathRecordBuffer[bufferIndex].backgroundColor = renderBackground(direction).xyz;
     gPathRecordBuffer[bufferIndex].viewDir = normalize(-direction);
-#endif
 
     float2 inOut = clip(float3(0), float3(voxelCount), from, to);
     if (inOut.x < 0) {
@@ -601,9 +588,7 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
 
     if (hit.hit)
     {
-#if !PREVIEW_ONLY
         gPathRecordBuffer[bufferIndex].valid = 1;
-#endif
 
         switch (drawMode)
         {
@@ -613,12 +598,10 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
         }
     }
 
-#if !PREVIEW_ONLY
     if (enableReconstruction)
     {
         gPathRecordBuffer[bufferIndex].candidateCount = candidateCount;
     }
-#endif
 
     //print("candidateCount : ", candidateCount);
 

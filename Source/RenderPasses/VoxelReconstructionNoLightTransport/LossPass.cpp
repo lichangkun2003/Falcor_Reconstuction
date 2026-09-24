@@ -77,12 +77,7 @@ void VoxelReconstructionNoLightTransport::runLossPass(RenderContext* pRenderCont
 
     auto var = mLossPass.mpComputePass->getRootVar();
 
-    //var["gRenderedColor"] = renderData.getTexture(kOutputColor);
-#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
-    var["gRenderedColor"] = mRayMarchingPass.accuColor;
-#else
     var["gRenderedColor"] = renderData.getTexture(kAccumulateOutputColor);
-#endif
     // 本帧（整批最后一个采样）未乘 invSpp 的渲染结果，loss shader 用它剥出前缀平均.
     // kOutputColor 就是 rayMarchingPass 里 attach 到 FBO 的那张，每帧被 clear 后重写.
     var["gCurrentFrameColor"] = renderData.getTexture(kOutputColor);

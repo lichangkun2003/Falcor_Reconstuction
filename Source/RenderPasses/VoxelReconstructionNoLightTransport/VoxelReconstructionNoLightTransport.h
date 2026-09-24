@@ -170,7 +170,6 @@ public:
         ref<FullScreenPass> mpFullScreenPass;
         ref<FullScreenPass> mpDisplayNDFPass;
         ref<Sampler> mpPointSampler;
-        ref<Texture> accuColor;
         void init()
         {
             mpFullScreenPass = nullptr;
@@ -187,9 +186,6 @@ public:
             mRenderBackGround = true;
             mMaxContributingVoxelCount = MAX_CONTRIBUTING_VOXELS_PER_RAY;
             mTransmittanceThreshold = 0.01f;
-
-            accuColor = nullptr;
-
         }
     };
 
@@ -326,67 +322,6 @@ private:
     ref<ComputePass> mpInitializePointCloudPass;
     bool initializePointCloudVoxelData(RenderContext* pRenderContext);
     void resetPointCloudOptimization(RenderContext* pRenderContext);
-#endif
-
-#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
-    struct StageLossRecord
-    {
-        uint32_t globalIteration, stageIndex, resolution, stageIteration;
-        float loss;
-    };
-    struct CoarseStageResult
-    {
-        uint32_t stageIndex = 0, resolution = 0, stageIteration = 0;
-        std::filesystem::path path;
-    };
-    struct CoarsePreviewState
-    {
-        // Zero follows the active grid; stageIndex + 1 selects a saved, immutable checkpoint.
-        uint32_t selectedStage = 0;
-        bool reloadRequested = false;
-        std::vector<CoarseStageResult> stages;
-        std::filesystem::path loadedPath;
-        std::string status;
-        GridResources grid;
-        ref<ParameterBlock> gridBlock;
-        ref<FullScreenPass> pass;
-        ref<Texture> accumulation;
-    };
-    struct CoarseToFineState
-    {
-        std::vector<uint32_t> resolutions;
-        uint32_t stageIndex = 0, stageIteration = 0, stageBudget = 0;
-        bool initialized = false, paused = false, finished = false, pauseAfterStage = false;
-        bool lastSaveSucceeded = false;
-        bool startRequested = false, pauseRequested = false, advanceRequested = false;
-        bool clearAccumulation = true;
-        uint32_t extraIterations = 10;
-        std::filesystem::path runDirectory;
-        std::filesystem::path lastCheckpointPath;
-        std::vector<StageLossRecord> lossHistory;
-        CoarsePreviewState preview;
-    };
-    CoarseToFineState mCoarseToFine;
-    ref<ComputePass> mpRefineVoxelGridPass;
-    ref<ComputePass> mpEvaluationImagesPass;
-
-    void configureCoarseStages();
-    uint32_t getCoarseStageBudget(uint32_t stageIndex) const;
-    bool initializeCoarseVoxelData(RenderContext* pRenderContext);
-    void replaceCoarseGrid(RenderContext* pRenderContext, const GridData& grid, uint32_t resolution);
-    void resetCoarseSampling(RenderContext* pRenderContext);
-    void advanceCoarseStage(RenderContext* pRenderContext);
-    void completeCoarseIteration(RenderContext* pRenderContext, const RenderData& renderData);
-    void renderCoarseUI(Gui::Widgets& widget);
-    void ensureCoarseRunDirectory();
-    void saveCoarseStage(RenderContext* pRenderContext, const RenderData& renderData);
-    void exportCoarseEvaluation(RenderContext* pRenderContext, const RenderData& renderData);
-    void recordCoarseStageResult();
-    bool loadCoarsePreview(RenderContext* pRenderContext, const CoarseStageResult& result);
-    void renderCoarsePreviewUI(Gui::Widgets& widget);
-    void renderCoarsePreview(RenderContext* pRenderContext, const RenderData& renderData);
-    void restoreCoarseCheckpoint(RenderContext* pRenderContext, const std::filesystem::path& path);
-    bool mRestoreCoarseCheckpointRequested = false;
 #endif
 
     ref<Device> mpDevice;
