@@ -42,8 +42,8 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
     // 反之若直接用累积图，它与被反传的那一帧同源，会引入 + grad Var(C) 的偏差，
     // 该偏差的最优解就是把几何吃掉、把 alpha 摊成覆盖率。
     //
-    // 不变式：第 k 帧调用时 gSampleCount == k + 1（调用方传 mSampleIndex + 1，
-    // 它在本帧渲染完之后已经自增过），所以除数 gSampleCount - 1 就是 k。
+    // 不变式：第 k 帧调用时 gSampleCount == k + 1（调用方传的就是本帧渲染完之后
+    // 已经自增过的 mSampleIndex），所以除数 gSampleCount - 1 就是 k。
     // k == 0 时前缀为空（N * accu - C_0 == 0，除数为 0），直接用本帧的 C_0；
     // 累积图此时是 C_0 / N，只有 N == 1 才等于 C_0，所以回退不能用累积图。
     float4 current = gCurrentFrameColor.Load(int3(pixel, 0));
