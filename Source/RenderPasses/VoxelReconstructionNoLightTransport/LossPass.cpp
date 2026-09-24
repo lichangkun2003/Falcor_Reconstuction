@@ -78,8 +78,9 @@ void VoxelReconstructionNoLightTransport::runLossPass(RenderContext* pRenderCont
     auto var = mLossPass.mpComputePass->getRootVar();
 
     var["gRenderedColor"] = renderData.getTexture(kAccumulateOutputColor);
-    // 本帧（整批最后一个采样）未乘 invSpp 的渲染结果，loss shader 用它剥出前缀平均.
+    // 本帧未乘 invSpp 的渲染结果 C_k，loss shader 用它剥出前缀平均.
     // kOutputColor 就是 rayMarchingPass 里 attach 到 FBO 的那张，每帧被 clear 后重写.
+    // 注意 mSampleIndex 已经在本帧的 rayMarchingPass 里自增过，所以此刻它等于 k + 1.
     var["gCurrentFrameColor"] = renderData.getTexture(kOutputColor);
     var["gReferenceImage"] = mReferenceImages[mLossPass.mView];
     var["gLossBuffer"] = mLossPass.lossBuffer;
@@ -89,6 +90,9 @@ void VoxelReconstructionNoLightTransport::runLossPass(RenderContext* pRenderCont
     auto cb = var["CB"];
     cb["gResolution"] = mRayMarchingPass.mOutputResolution;
     cb["gSpp"] = mRayMarchingPass.mSpp;
+    // 前缀平均的除数是"已累积采样数"，不是整批的 gSpp.
+    // (gSpp * accu - C_k) 还原的是累积和，除以 (gSampleCount - 1) == k 才是前 k 帧的平均.
+    cb["gSampleCount"] = mRayMarchingPass.mSampleIndex + 1u;
 
 
     mLossPass.mpComputePass->execute(pRenderContext, uint3(mRayMarchingPass.mOutputResolution.x, mRayMarchingPass.mOutputResolution.y, 1)

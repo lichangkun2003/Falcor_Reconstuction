@@ -1,7 +1,8 @@
 
 // Input
+// 累积图：第 k 帧时是 (1/N) * sum_{j<=k} C_j。
 Texture2D<float4> gRenderedColor;
-// 本帧（整批的最后一个采样）未乘 invSpp 的渲染结果，只用于剥出前缀平均。
+// 本帧未乘 invSpp 的渲染结果 C_k，用于从累积图里剥出前缀平均。
 Texture2D<float4> gCurrentFrameColor;
 Texture2D<float4> gReferenceImage;
 
@@ -12,7 +13,10 @@ RWTexture2D<uint> gBackgroundMaskBuffer;
 
 cbuffer CB {
     uint2 gResolution;
+    // 一整批的目标采样数 N，也是累积图的缩放分母（invSpp == 1/N）。
     uint gSpp;
+    // 到当前帧为止这一批里已经累积的采样数，第 k 帧时等于 k + 1。
+    uint gSampleCount;
 }
 
 
@@ -26,22 +30,27 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
 
     gBackgroundMaskBuffer[pixel] = 0;
 
-    // 前缀平均（leave-one-out）：
-    // 累积图在整批跑完后是 (1/N) * sum_{k<N} C_k，而 gCurrentFrameColor 是未缩放的 C_{N-1}。
-    // 所以 (N * accu - C_{N-1}) / (N - 1) 就是前 N-1 帧的平均。
+    // 前缀平均（leave-one-out），整批内逐帧计算：
+    // 第 k 帧时累积图是 (1/N) * sum_{j<=k} C_j（gSpp == N，累积器永远按 1/N 累加），
+    // 而 gCurrentFrameColor 是未缩放的 C_k，所以 (N * accu - C_k) / k 就是前 k 帧的平均，
+    // 也就是不含当前帧的前缀平均；k == N-1 时退化成 (N * accu - C_{N-1}) / (N - 1)，
+    // 与只调一次的那个实现逐字节一致。
     //
-    // 这样上游梯度只依赖 xi_0..xi_{N-2}，而 gradient pass 反传的是第 N-1 帧的 PathRecord
-    // （只依赖 xi_{N-1}），两者独立，E[grad] 才严格等于 grad L_avg。
+    // 这样上游梯度只依赖 xi_0..xi_{k-1}，而 gradient pass 反传的是第 k 帧的 PathRecord
+    // （只依赖 xi_k），两者独立，E[grad] 才严格等于 grad L_avg。
+    // 整批内每一帧都这样算一次，梯度在 gradBuffer 里原子累加，最后一次按计数求平均。
     // 反之若直接用累积图，它与被反传的那一帧同源，会引入 + grad Var(C) 的偏差，
     // 该偏差的最优解就是把几何吃掉、把 alpha 摊成覆盖率。
     //
-    // 不变式：本 pass 必须在一整批 gSpp 个采样全部渲染完之后才调用。
-    // N == 1 时前缀为空（N * accu - C_0 == 0），必须回退到累积图本身。
-    float4 rendered = gRenderedColor.Load(int3(pixel, 0));
-    if (gSpp >= 2u)
+    // 不变式：第 k 帧调用时 gSampleCount == k + 1（调用方传 mSampleIndex + 1，
+    // 它在本帧渲染完之后已经自增过），所以除数 gSampleCount - 1 就是 k。
+    // k == 0 时前缀为空（N * accu - C_0 == 0，除数为 0），直接用本帧的 C_0；
+    // 累积图此时是 C_0 / N，只有 N == 1 才等于 C_0，所以回退不能用累积图。
+    float4 current = gCurrentFrameColor.Load(int3(pixel, 0));
+    float4 rendered = current;
+    if (gSampleCount >= 2u)
     {
-        float4 current = gCurrentFrameColor.Load(int3(pixel, 0));
-        rendered = (float(gSpp) * rendered - current) / float(gSpp - 1u);
+        rendered = (float(gSpp) * gRenderedColor.Load(int3(pixel, 0)) - current) / float(gSampleCount - 1u);
     }
 
     float3 C = rendered.rgb;

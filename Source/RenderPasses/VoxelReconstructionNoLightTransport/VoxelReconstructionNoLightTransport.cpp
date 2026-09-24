@@ -242,30 +242,51 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
         else if (pDummy) pRenderContext->clearRtv(pDummy->getRTV().get(), float4(0));
     }
 
+    bool isFirstSample = mRayMarchingPass.mSampleIndex == 0u;
     bool isLastSample = mRayMarchingPass.mSpp > 0 && mRayMarchingPass.mSampleIndex == mRayMarchingPass.mSpp - 1u;
+    // 前缀平均至少要有一个"别人"的采样：第 0 帧前缀为空，它的渲染结果只当后续采样的基线，不出梯度.
+    // 只有 Spp == 1 时第 0 帧同时是唯一一帧，照旧出梯度（loss shader 会回退到累积图本身）.
+    bool hasResidualBaseline = mRayMarchingPass.mSpp <= 1u || !isFirstSample;
 
     rayMarchingPass(pRenderContext, renderData);
 
 
-    if (mEnableReconstruction && mOptimizerParams.isRunning && isLastSample)
+    if (mEnableReconstruction && mOptimizerParams.isRunning)
     {
-        mLossPass.mView = mOptimizerParams.currentView;
-        runLossPass(pRenderContext, renderData);
-        runGradientPass(pRenderContext, renderData);
-        runUpdatePass(pRenderContext, renderData);
-        runReducePass(pRenderContext, renderData);
-
-
-        mRayMarchingPass.mSampleIndex = 0;
-        mOptimizerParams.currentView++;
-        if (mOptimizerParams.currentView >= mOptimizerParams.viewsPerIteration)
+        // 批开始时清掉上一批留下的梯度，整批之内只做原子累加.
+        // gradBuffer 的元素与 appearanceValid/geometryValid 计数一起累加.
+        // update 时按计数求平均，得到的就是本批所有无偏梯度的平均.
+        if (isFirstSample && mGradientPass.gradBuffer)
         {
-            mOptimizerParams.currentView = 0;
-            mOptimizerParams.currentIteration++;
-            if (mOptimizerParams.currentIteration >= mOptimizerParams.maxIteration)
+            pRenderContext->clearUAV(mGradientPass.gradBuffer->getUAV().get(), uint4(0));
+        }
+
+        if (hasResidualBaseline)
+        {
+            // 每一帧都反传自己的 PathRecord 并原子累加到 gradBuffer.
+            // 第 0 帧没有前缀可用（见 hasResidualBaseline），只当基线.
+            mLossPass.mView = mOptimizerParams.currentView;
+            runLossPass(pRenderContext, renderData);
+            runGradientPass(pRenderContext, renderData);
+        }
+
+        if (isLastSample)
+        {
+            runUpdatePass(pRenderContext, renderData);
+            runReducePass(pRenderContext, renderData);
+
+
+            mRayMarchingPass.mSampleIndex = 0;
+            mOptimizerParams.currentView++;
+            if (mOptimizerParams.currentView >= mOptimizerParams.viewsPerIteration)
             {
-                stopReconstruction();
-                mSaveReconstructionRequested = true;
+                mOptimizerParams.currentView = 0;
+                mOptimizerParams.currentIteration++;
+                if (mOptimizerParams.currentIteration >= mOptimizerParams.maxIteration)
+                {
+                    stopReconstruction();
+                    mSaveReconstructionRequested = true;
+                }
             }
         }
     }
@@ -292,7 +313,12 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
 
     widget.var("Geometry Tau", mGradientPass.geometryTau, 0.0f, 0.2f, 1e-4f);
     widget.var("Geometry Grad Clamp", mGradientPass.geometryGradClamp, 0.0f, 10.0f, 1e-4f);
-    widget.var("Spp", mRayMarchingPass.mSpp, 1u, 100u,1u);
+    // 改 Spp 后立刻重开一批：否则若 mSampleIndex 已经 >= 新的 Spp.
+    // isLastSample 就会永远为假，训练卡在"index 一直涨、loss 和 update 再也不跑"的状态.
+    if (widget.var("Spp", mRayMarchingPass.mSpp, 1u, 100u, 1u))
+    {
+        mRayMarchingPass.mSampleIndex = 0;
+    }
 
     if (widget.checkbox("Use ReferenceCamera", mUseReferenceCamera))
     {

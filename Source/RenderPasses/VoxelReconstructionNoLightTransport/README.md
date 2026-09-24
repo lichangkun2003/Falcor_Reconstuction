@@ -38,7 +38,7 @@ inline std::string ReferenceCameraFile = "Reconstruction_Input/hotdog/transforms
 - 占据体素的局部椭球中心为 `(0.5, 0.5, 0.5)`，半径为 `0.6`，`B=I/0.36`。这些初值不依赖学习率；学习率为零表示不优化该参数。
 - 占据体素调用 `radiance.init()`，所有 radiance SH 系数（含 DC）为零，初始颜色全黑。opacity 直接调用与 mode3 相同的 `opacity.init()`，所有 opacity SH 系数为零，对应初始 alpha=`sigmoid(0)=0.5`。mode1 不额外写入 mode3 在 opacity 学习率为零时保留的 `16.29` DC 系数。
 
-等待参考图片加载完，点击 **Init / Reset from PLY** 可先查看初始化结果，再勾选 **Enable Reconstruction** 开始训练。也可以直接勾选 **Enable Reconstruction**，首次会自动初始化。重置按钮会重新读取 PLY、清除迭代和 loss 状态并停止训练。训练建议保持默认 Spp=8：loss 使用前缀平均，N ≥ 2 才有意义。
+等待参考图片加载完，点击 **Init / Reset from PLY** 可先查看初始化结果，再勾选 **Enable Reconstruction** 开始训练。也可以直接勾选 **Enable Reconstruction**，首次会自动初始化。重置按钮会重新读取 PLY、清除迭代和 loss 状态并停止训练。训练建议保持默认 Spp=8。整批 Spp 帧里，每一帧都用“不含自己”的前缀平均残差算出自己那一份无偏梯度，原子累加到梯度缓冲；整批结束后统一更新一次，按各体素的累积计数求平均，也就是整批的平均梯度。第 0 帧没有前缀可用，只作为后续采样的基线，所以 N ≥ 2 才有意义，Spp=1 退化成单样本的旧行为。
 
 结果及 loss 保存到 `Reconstruction_Output/mode1`。当前使用 v1 体素文件格式，包含全部体素的占据信息及参数；**Load Selected Reconstruction** 成功后停止训练，重新开始时直接使用加载结果，不要求 PLY 存在。加载采用文件中的实际分辨率，并按当前版本的固定重建范围 `[-1.326, 1.326]³` 还原网格。更早使用其他 AABB 或非立方网格的旧文件不在此次兼容范围内。
 

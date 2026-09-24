@@ -54,7 +54,10 @@ void VoxelReconstructionNoLightTransport::createGradientPassResource(RenderConte
 
 void VoxelReconstructionNoLightTransport::runGradientPass(RenderContext* pRenderContext, const RenderData& renderData)
 {
-    pRenderContext->clearUAV(mGradientPass.gradBuffer->getUAV().get(), uint4(0));
+    // gradBuffer 不在这里清零：整批内每一帧都要把自己的梯度原子累加进去.
+    // 只在批开始时清一次（见 frameLoop 里 isFirstSample 的处理）.
+    // 这里的 barrier 保证上一帧的累加对本帧的原子加可见.
+    pRenderContext->uavBarrier(mGradientPass.gradBuffer.get());
     pRenderContext->uavBarrier(mpPathRecordBuffer.get());
 
     //mpSceneGradients->clearGrads(pRenderContext, GradientType::VoxelSH);
