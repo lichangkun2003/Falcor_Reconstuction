@@ -73,6 +73,12 @@ inline std::string ReconstructionDataDir = "Reconstruction_Output";
 inline std::string ReferenceImageDir = "Reconstruction_Input/hotdog";
 inline std::string ReferenceCameraFile = "Reconstruction_Input/hotdog/transforms_train.json";
 
+// 烘焙产物目录，由 Voxelization 的 RayMarchingPass 写出，文件名形如
+// <scene>_bake_<x>x<y>x<z>.bin，内容就是本工程 v1 的点云格式。
+// 注意它和 ReconstructionDataDir 是两个来源：这边的文件有意不经过 mode 目录校验
+// （见 DataProcess.cpp 的 requireModeFile），所以走独立的加载入口。
+inline std::string BakeOutputDir = "resource/new";
+
 inline std::filesystem::path resolveReconstructionPath(const std::filesystem::path& path)
 {
     return (path.is_absolute() ? path : Falcor::getProjectDirectory() / path).lexically_normal();
@@ -157,7 +163,8 @@ public:
         uint mMaxContributingVoxelCount;
         float mTransmittanceThreshold;
 
-        uint mSpp = 1;
+        // loss 的前缀平均需要 N >= 2 才有意义（N == 1 时前缀为空，会退回旧行为）.
+        uint mSpp = 8;
         uint mSampleIndex = 0;
 
         ref<FullScreenPass> mpFullScreenPass;
@@ -303,6 +310,10 @@ private:
         const void* voxelData = nullptr, size_t byteSize = 0);
     void resetLoadedReconstruction(RenderContext* pRenderContext);
 
+    // 读取 Voxelization 烘焙出的结果（BakeOutputDir，v1 点云格式），不走 mode 目录校验。
+    void refreshBakedFileList();
+    void loadBakedReconstruction(RenderContext* pRenderContext, const std::filesystem::path& path);
+
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
     struct PointCloudState
     {
@@ -429,11 +440,19 @@ private:
     bool mLoadedReconstructionForViewing = false;
     std::string mReconstructionIOStatus;
     std::string mReferenceDataError;
+    // 几何学习率的总开关. 实际值在 runUpdatePass 里由 scale 派生，和 UI 面板是否展开无关:
+    // lrCenter = scale * 1e-3, lrB = scale * 1e-1.
     float mLrCenterScale = 0.5f;
     float mLrBScale = 1.0f;
     std::vector<std::filesystem::path> mReconstructionFilePaths;
     uint32_t mSelectedReconstructionFile = 0;
     std::string mReconstructionNameTag = "";
+
+    // 烘焙结果（BakeOutputDir）的选择状态，和上面的 mode 目录列表互不影响。
+    bool mLoadBakedReconstructionRequested = false;
+    bool mBakedFileListDirty = true;
+    std::vector<std::filesystem::path> mBakedFilePaths;
+    uint32_t mSelectedBakedFile = 0;
 };
 
 

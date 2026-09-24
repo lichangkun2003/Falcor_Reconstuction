@@ -5,6 +5,7 @@
 # Local reconstruction datasets and experiment results.
 /Reconstruction_Input/
 /Reconstruction_Output/
+/picture/
 
 # Test output folder.
 /tests/data/

@@ -75,6 +75,7 @@ float bakeLogit(float p)
 void main(uint3 tid : SV_DispatchThreadID)
 {
     int index = (int)tid.x;
+
     if (index >= (int)(voxelCount.x * voxelCount.y * voxelCount.z))
         return;
 

@@ -541,8 +541,6 @@ float4 shadingGlobal(
     }
 #endif
 
-    print("actualHitCount : ", actualHitCount);
-
     return float4(accumulatedColor, renderAlpha);
 }
 
@@ -626,8 +624,6 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
 
     gAccuColor[pixel].xyz += psOut.color.xyz * invSpp;
     gAccuColor[pixel].w += psOut.color.w * invSpp;
-
-    print("Alpha : ", gAccuColor[pixel].w);
 
     return psOut;
 

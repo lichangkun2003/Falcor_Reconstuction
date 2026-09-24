@@ -85,6 +85,39 @@ uint64_t checkedVoxelCount(uint3 count, uint32_t dimensionLimit)
     return elements * count.z;
 }
 
+#if RECON_MODE != RECON_MODE_COARSE_TO_FINE
+// v1 文件头 = magic + version + voxelCount + voxelDataSize, 之后紧跟稠密的 payload.
+// 调用方自己读 payload, 返回时 in 停在第一个数据字节.
+// mode1/3 的 loadReconstruction 和 loadBakedReconstruction 共用它, 两边校验不会跑偏.
+void readV1ReconstructionHeader(std::ifstream& in, const std::filesystem::path& path, uint32_t dimensionLimit,
+    GridData& grid, uint32_t& resolution, uint64_t& byteSize)
+{
+    uint32_t magic = 0, version = 0, voxelDataSize = 0;
+    in.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+    in.read(reinterpret_cast<char*>(&version), sizeof(version));
+    in.read(reinterpret_cast<char*>(&grid.voxelCount), sizeof(grid.voxelCount));
+    in.read(reinterpret_cast<char*>(&voxelDataSize), sizeof(voxelDataSize));
+    if (!in || magic != kReconstructionMagic || version != 1)
+        throw std::runtime_error("This mode loads its current version 1 reconstruction files.");
+    if (voxelDataSize != sizeof(VoxelData))
+        throw std::runtime_error("Reconstruction VoxelData layout differs from the current build.");
+    const uint64_t elementCount = checkedVoxelCount(grid.voxelCount, dimensionLimit);
+    if (grid.voxelCount.x != grid.voxelCount.y || grid.voxelCount.x != grid.voxelCount.z)
+        throw std::runtime_error("Only current cubic-grid mode 1/3 files are supported; older non-cubic/SVO files are not supported.");
+    resolution = grid.voxelCount.x;
+    byteSize = elementCount * sizeof(VoxelData);
+    const uint64_t headerSize = sizeof(magic) + sizeof(version) + sizeof(grid.voxelCount) + sizeof(voxelDataSize);
+    if (std::filesystem::file_size(path) != headerSize + byteSize)
+        throw std::runtime_error("Reconstruction file size does not match its voxel dimensions and layout.");
+    // v1 不存 AABB, 靠这个固定的 NeRF 重建域反推: extent = 2.6f * 1.02f.
+    // Voxelization 那边必须按同一个 AABB 建格, 即勾选 "Match Reconstruction Grid";
+    // 否则椭球会被放到错的位置.
+    constexpr float extent = 2.6f * 1.02f;
+    grid.voxelSize = float3(extent / float(resolution));
+    grid.gridMin = -0.5f * grid.voxelSize * float3(grid.voxelCount);
+}
+#endif
+
 #if RECON_MODE == RECON_MODE_COARSE_TO_FINE
 constexpr uint64_t kMaxCheckpointMetadataBytes = 16ull * 1024 * 1024;
 
@@ -758,6 +791,10 @@ void VoxelReconstructionNoLightTransport::restoreCoarseCheckpoint(RenderContext*
         mFrameCount = frameIndex;
         mRayMarchingPass.mFrameIndex = frameIndex;
         mRayMarchingPass.mSpp = spp;
+        // loss 的前缀平均在 mSpp < 2 时是空操作（前缀为空，会退化成 0），会静默退回旧行为.
+        // 旧 checkpoint 存的 spp 是 1，加载后要手动把 Spp 调回 >= 2 才生效.
+        if (spp < 2u)
+            logWarning("Loaded checkpoint has spp = {}; the prefix-average upstream gradient is inactive below spp = 2. Raise Spp to enable it.", spp);
         mRayMarchingPass.mMaxContributingVoxelCount = maxHits;
         mRayMarchingPass.mTransmittanceThreshold = transmittanceThreshold;
         mRayMarchingPass.mCheckPrimitive = checkPrimitive;
@@ -846,27 +883,8 @@ void VoxelReconstructionNoLightTransport::loadReconstruction(RenderContext* pRen
         }
         viewState.preview.stages.push_back(selectedStage);
 #else
-        uint32_t magic = 0, version = 0, voxelDataSize = 0;
-        in.read(reinterpret_cast<char*>(&magic), sizeof(magic));
-        in.read(reinterpret_cast<char*>(&version), sizeof(version));
-        in.read(reinterpret_cast<char*>(&grid.voxelCount), sizeof(grid.voxelCount));
-        in.read(reinterpret_cast<char*>(&voxelDataSize), sizeof(voxelDataSize));
-        if (!in || magic != kReconstructionMagic || version != 1)
-            throw std::runtime_error("This mode loads its current version 1 reconstruction files.");
-        if (voxelDataSize != sizeof(VoxelData))
-            throw std::runtime_error("Reconstruction VoxelData layout differs from the current build.");
-        elementCount = checkedVoxelCount(grid.voxelCount, dimensionLimit);
-        if (grid.voxelCount.x != grid.voxelCount.y || grid.voxelCount.x != grid.voxelCount.z)
-            throw std::runtime_error("Only current cubic-grid mode 1/3 files are supported; older non-cubic/SVO files are not supported.");
-        resolution = grid.voxelCount.x;
-        byteSize = elementCount * sizeof(VoxelData);
-        const uint64_t headerSize = sizeof(magic) + sizeof(version) + sizeof(grid.voxelCount) + sizeof(voxelDataSize);
-        if (std::filesystem::file_size(path) != headerSize + byteSize)
-            throw std::runtime_error("Reconstruction file size does not match its voxel dimensions and layout.");
-        // Current mode 1/3 v1 files use this fixed NeRF reconstruction domain; v1 does not store its AABB.
-        constexpr float extent = 2.6f * 1.02f;
-        grid.voxelSize = float3(extent / float(resolution));
-        grid.gridMin = -0.5f * grid.voxelSize * float3(grid.voxelCount);
+        readV1ReconstructionHeader(in, path, dimensionLimit, grid, resolution, byteSize);
+        elementCount = byteSize / sizeof(VoxelData);
 #endif
         std::vector<uint8_t> data(static_cast<size_t>(byteSize));
         in.read(reinterpret_cast<char*>(data.data()), std::streamsize(byteSize));
@@ -931,6 +949,95 @@ void VoxelReconstructionNoLightTransport::loadReconstruction(RenderContext* pRen
 }
 
 
+
+void VoxelReconstructionNoLightTransport::refreshBakedFileList()
+{
+    mBakedFilePaths.clear();
+    const auto directory = resolveReconstructionPath(BakeOutputDir);
+    std::error_code error;
+    if (!std::filesystem::exists(directory, error))
+    {
+        mSelectedBakedFile = 0;
+        return;
+    }
+
+    try
+    {
+        for (const auto& entry : std::filesystem::directory_iterator(
+                 directory, std::filesystem::directory_options::skip_permission_denied))
+        {
+            if (entry.is_regular_file() && samePathComponent(entry.path().extension(), ".bin"))
+                mBakedFilePaths.push_back(entry.path());
+        }
+    }
+    catch (const std::filesystem::filesystem_error& e)
+    {
+        logWarning("Cannot list bake results in {}: {}", directory.string(), e.what());
+    }
+
+    std::sort(
+        mBakedFilePaths.begin(),
+        mBakedFilePaths.end(),
+        [](const std::filesystem::path& a, const std::filesystem::path& b) { return a.generic_string() < b.generic_string(); }
+    );
+    mSelectedBakedFile = 0;
+}
+
+void VoxelReconstructionNoLightTransport::loadBakedReconstruction(
+    RenderContext* pRenderContext, const std::filesystem::path& selectedPath
+)
+{
+#if RECON_MODE == RECON_MODE_COARSE_TO_FINE
+    // 烘焙产物是 v1 点云格式, 不是 checkpoint, 这个模式下没有可用的加载路径.
+    mReconstructionIOStatus = "Load failed: baked results are version 1 point-cloud files, not coarse checkpoints.";
+    logWarning("{}", mReconstructionIOStatus);
+    FALCOR_UNUSED(pRenderContext);
+    FALCOR_UNUSED(selectedPath);
+#else
+    try
+    {
+        // 关键: 这里刻意不调用 requireModeFile. 烘焙产物由 Voxelization 写在独立的资源目录里,
+        // 不属于任何一个 mode 目录, 走那条校验会被直接拒绝.
+        const std::filesystem::path directory = resolveReconstructionPath(BakeOutputDir);
+        const std::filesystem::path path = selectedPath.is_absolute() ? selectedPath : directory / selectedPath;
+
+        std::ifstream in(path, std::ios::binary);
+        if (!in) throw std::runtime_error("Cannot open bake result: " + path.string());
+        const uint32_t dimensionLimit = reconstructionDimensionLimit(mpDevice);
+        GridData grid{};
+        uint32_t resolution = 0;
+        uint64_t byteSize = 0;
+        readV1ReconstructionHeader(in, path, dimensionLimit, grid, resolution, byteSize);
+
+        std::vector<uint8_t> data(static_cast<size_t>(byteSize));
+        in.read(reinterpret_cast<char*>(data.data()), std::streamsize(byteSize));
+        if (!in) throw std::runtime_error("Cannot read the complete bake payload.");
+        in.close();
+
+        grid.solidVoxelCount = 0;
+        for (uint64_t i = 0; i < byteSize / sizeof(VoxelData); ++i)
+        {
+            uint32_t occupied = 0;
+            std::memcpy(&occupied, data.data() + i * sizeof(VoxelData) + offsetof(VoxelData, occupied), sizeof(occupied));
+            if (occupied != 0) ++grid.solidVoxelCount;
+        }
+
+        // 这个数字必须和烘焙端日志里 "written occupied=N" 的 N 相等,
+        // 不等就说明两边对 VoxelData 布局的理解不一致.
+        auto status = fmt::format("Loaded bake result: {} ({}x{}x{}, {} occupied voxels)",
+            path.filename().string(), grid.voxelCount.x, grid.voxelCount.y, grid.voxelCount.z, grid.solidVoxelCount);
+        replaceReconstructionGrid(pRenderContext, grid, resolution, data.data(), data.size());
+        resetLoadedReconstruction(pRenderContext);
+        mReconstructionIOStatus = std::move(status);
+        logInfo("{}", mReconstructionIOStatus);
+    }
+    catch (const std::exception& error)
+    {
+        mReconstructionIOStatus = std::string("Load failed: ") + error.what();
+        logError("{}", mReconstructionIOStatus);
+    }
+#endif
+}
 
 void VoxelReconstructionNoLightTransport::refreshReconstructionFileList()
 {

@@ -133,6 +133,21 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
         mLoadReconstructionRequested = false;
     }
 
+    if (mLoadBakedReconstructionRequested)
+    {
+        if (!mBakedFilePaths.empty() && mSelectedBakedFile < mBakedFilePaths.size())
+        {
+            loadBakedReconstruction(pRenderContext, mBakedFilePaths[mSelectedBakedFile]);
+        }
+        else
+        {
+            mReconstructionIOStatus = "Load failed: no bake result selected.";
+            logWarning("Load bake result failed: no file selected.");
+        }
+
+        mLoadBakedReconstructionRequested = false;
+    }
+
     bool needsTrainingData = mEnableReconstruction || mOptimizerParams.isRunning || mInitVoxelData;
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
     needsTrainingData |= mPointCloud.startRequested;
@@ -451,6 +466,40 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
         if (widget.button("Save Reconstruction"))
         {
             mSaveReconstructionRequested = true;
+        }
+    }
+
+    if (auto group = widget.group("Baked Results"))
+    {
+        // Voxelization 的 RayMarchingPass 点 "Bake To Reconstruction Format" 写出的产物。
+        // 目录见头文件里的 BakeOutputDir，走独立加载路径，不经过 mode 目录校验。
+        const auto bakedDirectory = resolveReconstructionPath(BakeOutputDir);
+        widget.text("Directory: " + bakedDirectory.string());
+        if (widget.button("Refresh Baked Files")) mBakedFileListDirty = true;
+        if (mBakedFileListDirty)
+        {
+            refreshBakedFileList();
+            mBakedFileListDirty = false;
+        }
+
+        Gui::DropdownList bakedList;
+        for (uint32_t i = 0; i < mBakedFilePaths.size(); i++)
+        {
+            bakedList.push_back({i, mBakedFilePaths[i].lexically_relative(bakedDirectory).string()});
+        }
+
+        if (!bakedList.empty())
+        {
+            widget.dropdown("Baked File", bakedList, mSelectedBakedFile);
+            widget.text("Selected: " + mBakedFilePaths[mSelectedBakedFile].string());
+            if (widget.button("Load Selected Bake Result"))
+            {
+                mLoadBakedReconstructionRequested = true;
+            }
+        }
+        else
+        {
+            widget.text("No baked .bin files found.");
         }
     }
 

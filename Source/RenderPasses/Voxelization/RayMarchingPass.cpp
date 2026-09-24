@@ -292,8 +292,13 @@ void RayMarchingPass::bakeReconstruction(RenderContext* pRenderContext, const Re
         auto cb = var["BakeCB"];
         cb["coverageEps"] = mBake.coverageEps;
 
-        // 着色器对每个下标都会写一次（空体素写 occupied=0），所以不需要预先 clear
-        mBake.pass->execute(pRenderContext, uint3((uint)((elementCount + 63) / 64), 1, 1));
+        // 着色器对每个下标都会写一次（空体素写 occupied=0），所以不需要预先 clear。
+        //
+        // 注意 ComputePass::execute 的这个重载收的是线程数, 内部会自己
+        // div_round_up(threads, threadGroupSize) 换算成 group 数 (见 ComputePass.cpp)。
+        // 这里必须传体素总数本身, 不能再手动除 [numthreads] 的 64, 否则只会有
+        // elementCount/64 个线程真正跑起来, 网格大部分区域根本没被写过。
+        mBake.pass->execute(pRenderContext, uint3((uint)elementCount, 1, 1));
         pRenderContext->submit(true);
 
         std::vector<uint8_t> data((size_t)byteSize);

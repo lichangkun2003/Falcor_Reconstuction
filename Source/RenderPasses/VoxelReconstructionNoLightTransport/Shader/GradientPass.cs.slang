@@ -467,7 +467,6 @@ void accumulateAppearanceGrad(
 
 [numthreads(8, 8, 1)]
 void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
-    printSetPixel(dispatchThreadId.xy);
     uint2 pixel = dispatchThreadId.xy;
 
     if (pixel.x >= gResolution.x || pixel.y >= gResolution.y)
@@ -638,68 +637,6 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
     // print("appearanceValid :", gGradBuffer[indexGradBuffer].appearanceValid);
     // print("average :        ", gGradBuffer[indexGradBuffer].opacityGrad.coefficients[0] / gGradBuffer[indexGradBuffer].appearanceValid);
     //print("Loss:", dL_dC);
-    print("rec.candidateCount : ", rec.candidateCount);
-    if (rec.candidateCount > 0) {
-        GeometryCandidateRecord cand = rec.candidates[0];
-        uint indexGradBuffer = CellToIndex(uint3(cand.cellInt), gVoxelCount);
-        GradRecord accumulatedGrad = gGradBuffer[indexGradBuffer];
-        if (accumulatedGrad.geometryValid != 0)
-        {
-            float invCount =
-                1.0f / float(accumulatedGrad.geometryValid);
-
-            float3 averageCenterGrad =
-                accumulatedGrad.center * invCount;
-
-            float averageB00 =
-                accumulatedGrad.B00 * invCount;
-            float averageB11 =
-                accumulatedGrad.B11 * invCount;
-            float averageB22 =
-                accumulatedGrad.B22 * invCount;
-
-            float averageB01 =
-                accumulatedGrad.B01 * invCount;
-            float averageB02 =
-                accumulatedGrad.B02 * invCount;
-            float averageB12 =
-                accumulatedGrad.B12 * invCount;
-
-            print("candidate gmin:",
-                cand.gmin);
-
-            print("partial geometryValid:",
-                accumulatedGrad.geometryValid);
-
-            print("average center grad:",
-                averageCenterGrad);
-
-            print("average center grad norm:",
-                length(averageCenterGrad));
-
-            print("average B00 grad:", averageB00);
-            print("average B11 grad:", averageB11);
-            print("average B22 grad:", averageB22);
-
-            print("average B01 grad:", averageB01);
-            print("average B02 grad:", averageB02);
-            print("average B12 grad:", averageB12);
-
-            float BGradNorm =
-                sqrt(
-                    averageB00 * averageB00 +
-                    averageB11 * averageB11 +
-                    averageB22 * averageB22 +
-                     2.0f * averageB01 * averageB01 +
-                    2.0f * averageB02 * averageB02 +
-                    2.0f * averageB12 * averageB12
-                );
-
-            print("average B grad norm:",
-                BGradNorm);
-        }
-
-    }
 
 
     dummy[pixel] = float4(abs(dL_dC), 1.0f);
