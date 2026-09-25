@@ -471,7 +471,7 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
 
     if (pixel.x >= gResolution.x || pixel.y >= gResolution.y)
         return;
-
+    dummy[pixel] = float4(0.0f);
     uint indexPathRecordBuffer = pixel.y * gResolution.x + pixel.x;
     PathRecord rec = gPathRecordBuffer[indexPathRecordBuffer];
 
@@ -510,6 +510,30 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
 
             dL_dRadiance = sanitizeFloat3(dL_dRadiance);
             dL_dOpacity = sanitizeFloat(dL_dOpacity);
+
+            /*
+            RayMarchingPass 里 radiance 被 max(radiance, 0) 夹过，所以 radiance 为 0 的
+            通道正处在死区：渲染值恒为 0，当前视角下 loss 对该通道的偏导确实是 0，
+            任何方向都不会降低 loss。但两半梯度的后果完全不同：
+
+              dL_dRadiance < 0（渲染比目标暗，该更亮）
+                  -> 更新会抬高 SH，是唯一能把它推出死区的方向，保留；
+
+              dL_dRadiance > 0（渲染比目标亮，该更暗）
+                  -> 更新会压低 SH，把系数推得更负，而渲染早已不变，没有恢复力。
+                     这正是之前 radiance DC 跑到 -3.5、单项最大 +44 的机制。
+
+            所以死区里只留"唤醒"的那一半。注意不能直接归零，那会变成 dead ReLU，
+            系数一旦落到负区就永远回不来。
+            已经比目标亮的体素冻在黑色本来就是局部最优：它该做的是变透明（opacity 梯度），
+            不是变亮。
+            */
+            float3 atClampMask = float3(
+                radiance.x <= 0.0f ? 1.0f : 0.0f,
+                radiance.y <= 0.0f ? 1.0f : 0.0f,
+                radiance.z <= 0.0f ? 1.0f : 0.0f
+            );
+            dL_dRadiance = lerp(dL_dRadiance, min(dL_dRadiance, float3(0.0f)), atClampMask);
 
             /*
             对参考图背景区域，不允许错误体素通过修改颜色

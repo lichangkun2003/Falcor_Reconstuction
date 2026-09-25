@@ -231,6 +231,7 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
     }
 
     // test input
+    if(!mEnableReconstruction)
     {
         ref<Texture> pDummy = renderData.getTexture("dummy");
         ref<Texture> pRef = testIndex < mReferenceImages.size() ? mReferenceImages[testIndex] : nullptr;
@@ -311,7 +312,7 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
 #endif
 
 
-    widget.var("Geometry Tau", mGradientPass.geometryTau, 0.0f, 0.2f, 1e-4f);
+    widget.var("Geometry Tau", mGradientPass.geometryTau, 0.0f, 1.0f, 1e-4f);
     widget.var("Geometry Grad Clamp", mGradientPass.geometryGradClamp, 0.0f, 10.0f, 1e-4f);
     // 改 Spp 后立刻重开一批：否则若 mSampleIndex 已经 >= 新的 Spp.
     // isLastSample 就会永远为假，训练卡在"index 一直涨、loss 和 update 再也不跑"的状态.
