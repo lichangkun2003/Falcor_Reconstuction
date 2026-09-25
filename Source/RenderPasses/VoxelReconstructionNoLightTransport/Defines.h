@@ -14,7 +14,7 @@
 #endif
 
 #ifndef GRID_RESOLUTION
-#define GRID_RESOLUTION 256
+#define GRID_RESOLUTION 128
 #endif
 
 #define REFERENCE_IMAGES_COUNT 100
@@ -22,7 +22,7 @@
 
 
 // All modes use the same path-record layout and at most 8 contributing voxels per ray.
-#define MAX_CONTRIBUTING_VOXELS_PER_RAY 16
+#define MAX_CONTRIBUTING_VOXELS_PER_RAY 8
 
 
 #define LOBE_COUNT 4

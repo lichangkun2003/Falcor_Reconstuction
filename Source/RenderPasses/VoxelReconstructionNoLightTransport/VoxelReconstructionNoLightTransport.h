@@ -217,7 +217,7 @@ public:
         {
             gradBuffer = nullptr;
             mpComputePass = nullptr;
-            geometryTau = 0.32f;
+            geometryTau = GRID_RESOLUTION ==128 ? 0.15f :0.32f;
             geometryGradClamp = 5.0f;
         }
     };
