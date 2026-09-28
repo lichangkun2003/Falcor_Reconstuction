@@ -90,10 +90,11 @@ bool VoxelReconstructionNoLightTransport::initializePointCloudVoxelData(RenderCo
         mLoadedReconstructionForViewing = false;
         const auto& stats = points.statistics;
         mPointCloud.status = fmt::format(
-            "PLY: {} points, {} occupied voxels; {} outside, {} invalid, {} below alpha, {} coverage-capped; "
-            "{} cells covered (max {})",
+            "PLY: {} points, {} occupied voxels; {} outside, {} invalid, {} below alpha; "
+            "{} blocks tested, {} full blocks skipped, {} boundary cells tested; {} cells added (max {})",
             stats.inputPoints, grid.solidVoxelCount, stats.outsidePoints, stats.invalidPoints,
-            stats.droppedByOpacity, stats.cappedCoverage, stats.coveredCells, stats.maxCoveredCells);
+            stats.droppedByOpacity, stats.testedBlocks, stats.skippedFullBlocks, stats.testedCells,
+            stats.coveredCells, stats.maxCoveredCells);
         logInfo("Point-cloud initialization: {}. {}. Coordinates: NeRF (x,y,z) -> Falcor (x,z,-y).", path.string(), mPointCloud.status);
         return true;
     }

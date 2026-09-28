@@ -48,9 +48,112 @@ struct Header
     bool hasGaussianProperties = false;
 };
 
-// Cost guard: one Gaussian never sweeps more than this many voxels along one axis. The number of
-// Gaussians whose coverage was clipped is reported, so a binding limit is visible.
-constexpr double kMaxCoverageVoxels = 8.0;
+// Skip fully occupied blocks instead of clipping a Gaussian's physical coverage.
+constexpr uint32_t kCoverageBlockSize = 8;
+
+struct GaussianCoverage
+{
+    double covariance[3][3] = {};
+    double worldToUnit[3][3] = {};
+    double threshold = 0;
+
+    double squaredDistance(const std::array<double, 3>& point) const
+    {
+        double result = 0;
+        for (size_t axis = 0; axis < 3; ++axis)
+        {
+            double component = 0;
+            for (size_t i = 0; i < 3; ++i) component += worldToUnit[axis][i] * point[i];
+            result += component * component;
+        }
+        return result;
+    }
+
+    // Interval bounds in principal coordinates: -1 = outside, 1 = wholly inside,
+    // 0 = uncertain. These bounds remain conservative for rotated, thin Gaussians.
+    int classifyBox(const std::array<double, 3>& lower, const std::array<double, 3>& upper) const
+    {
+        double minimum = 0, maximum = 0;
+        for (size_t axis = 0; axis < 3; ++axis)
+        {
+            double center = 0, extent = 0;
+            for (size_t i = 0; i < 3; ++i)
+            {
+                center += worldToUnit[axis][i] * (lower[i] + upper[i]) * 0.5;
+                extent += std::abs(worldToUnit[axis][i]) * (upper[i] - lower[i]) * 0.5;
+            }
+            const double error = 64 * std::numeric_limits<double>::epsilon() * (std::abs(center) + extent + 1);
+            const double nearest = std::max(0.0, std::abs(center) - extent - error);
+            const double farthest = std::abs(center) + extent + error;
+            minimum += nearest * nearest;
+            maximum += farthest * farthest;
+        }
+        const double tolerance = 1e-10 * std::max(1.0, threshold);
+        if (minimum > threshold + tolerance) return -1;
+        if (maximum <= threshold) return 1;
+        return 0;
+    }
+
+    // Minimize q^T Sigma^-1 q over a closed AABB. If the origin is outside,
+    // the minimum lies on a face, an edge, or a corner. Six face projections
+    // plus twelve clamped edge projections cover all of these cases without
+    // inverting an ill-conditioned covariance matrix.
+    bool intersectsBox(const std::array<double, 3>& lower, const std::array<double, 3>& upper) const
+    {
+        bool containsOrigin = true;
+        std::array<double, 3> nearest = {};
+        for (size_t axis = 0; axis < 3; ++axis)
+        {
+            containsOrigin = containsOrigin && lower[axis] <= 0 && upper[axis] >= 0;
+            nearest[axis] = std::clamp(0.0, lower[axis], upper[axis]);
+        }
+        const double tolerance = 1e-10 * std::max(1.0, threshold);
+        if (containsOrigin || squaredDistance(nearest) <= threshold + tolerance) return true;
+
+        for (size_t axis = 0; axis < 3; ++axis)
+            for (size_t side = 0; side < 2; ++side)
+            {
+                const double bound = side == 0 ? lower[axis] : upper[axis];
+                const double variance = covariance[axis][axis];
+                if (!(variance > 0)) continue;
+                if (bound * bound / variance > threshold + tolerance) continue;
+                bool onFace = true;
+                for (size_t i = 0; i < 3; ++i)
+                {
+                    if (i == axis) continue;
+                    const double coordinate = covariance[i][axis] * (bound / variance);
+                    const double error = 64 * std::numeric_limits<double>::epsilon() *
+                        std::max({1.0, std::abs(coordinate), std::abs(lower[i]), std::abs(upper[i])});
+                    onFace = onFace && coordinate >= lower[i] - error && coordinate <= upper[i] + error;
+                }
+                if (onFace) return true;
+            }
+
+        for (size_t freeAxis = 0; freeAxis < 3; ++freeAxis)
+        {
+            const size_t a = (freeAxis + 1) % 3;
+            const size_t b = (freeAxis + 2) % 3;
+            for (size_t sideA = 0; sideA < 2; ++sideA)
+                for (size_t sideB = 0; sideB < 2; ++sideB)
+                {
+                    std::array<double, 3> point = {};
+                    point[a] = sideA == 0 ? lower[a] : upper[a];
+                    point[b] = sideB == 0 ? lower[b] : upper[b];
+                    double numerator = 0, denominator = 0;
+                    for (size_t i = 0; i < 3; ++i)
+                    {
+                        const double component = worldToUnit[i][a] * point[a] + worldToUnit[i][b] * point[b];
+                        numerator += component * worldToUnit[i][freeAxis];
+                        denominator += worldToUnit[i][freeAxis] * worldToUnit[i][freeAxis];
+                    }
+                    if (!(denominator > 0)) continue;
+                    point[freeAxis] = std::clamp(-numerator / denominator, lower[freeAxis], upper[freeAxis]);
+                    if (squaredDistance(point) <= threshold + tolerance) return true;
+                }
+        }
+        return false;
+    }
+};
 
 bool anyMissing(const size_t* indices, size_t count)
 {
@@ -361,8 +464,8 @@ Result load(
 )
 {
     // Occupancy of a 3DGS point cloud: a Gaussian contributes alpha * exp(-r^2 / 2) at a point,
-    // with r^2 = q^T Sigma^-1 q measured from its center, so a cell is occupied while that value
-    // stays above the threshold, i.e. while r^2 <= 2 ln(alpha / opacityThreshold).
+    // with r^2 = q^T Sigma^-1 q. Occupy every cell whose AABB intersects the region
+    // r^2 <= 2 ln(alpha / opacityThreshold), including thin regions between cell centers.
     if (!(opacityThreshold > 0.0 && opacityThreshold < 1.0))
         fail("opacity threshold must be in (0, 1).");
 
@@ -390,7 +493,6 @@ Result load(
 
     // Occupancy bitmask: Gaussian coverage overlaps heavily, and 128^3 cells is only 256 KiB.
     std::vector<uint64_t> occupancy(static_cast<size_t>((totalVoxelCount + 63) / 64), 0);
-    const auto mark = [&occupancy](uint64_t index) { occupancy[static_cast<size_t>(index >> 6)] |= uint64_t(1) << (index & 63); };
     const auto cellOfWorld = [&](const std::array<double, 3>& world, std::array<uint32_t, 3>& cell)
     {
         for (size_t axis = 0; axis < 3; ++axis)
@@ -405,6 +507,31 @@ Result load(
     {
         return static_cast<uint32_t>(uint64_t(cell[0]) + uint64_t(cell[1]) * voxelCount[0] +
             uint64_t(cell[2]) * voxelCount[0] * voxelCount[1]);
+    };
+    const std::array<uint32_t, 3> blockCount = {
+        (voxelCount[0] - 1) / kCoverageBlockSize + 1,
+        (voxelCount[1] - 1) / kCoverageBlockSize + 1,
+        (voxelCount[2] - 1) / kCoverageBlockSize + 1};
+    const auto blockIndexOf = [&](uint32_t x, uint32_t y, uint32_t z)
+    {
+        return size_t(x) + size_t(y) * blockCount[0] + size_t(z) * blockCount[0] * blockCount[1];
+    };
+    std::vector<uint16_t> occupiedPerBlock(size_t(blockCount[0]) * blockCount[1] * blockCount[2], 0);
+    const auto isOccupied = [&](const std::array<uint32_t, 3>& cell)
+    {
+        const uint32_t index = cellIndexOf(cell);
+        return (occupancy[index >> 6] & (uint64_t(1) << (index & 63))) != 0;
+    };
+    const auto mark = [&](const std::array<uint32_t, 3>& cell)
+    {
+        const uint32_t index = cellIndexOf(cell);
+        const uint64_t mask = uint64_t(1) << (index & 63);
+        auto& word = occupancy[index >> 6];
+        if ((word & mask) != 0) return false;
+        word |= mask;
+        ++occupiedPerBlock[blockIndexOf(cell[0] / kCoverageBlockSize,
+            cell[1] / kCoverageBlockSize, cell[2] / kCoverageBlockSize)];
+        return true;
     };
 
     for (size_t elementIndex = 0; elementIndex < header.elements.size(); ++elementIndex)
@@ -479,7 +606,7 @@ Result load(
                     ++result.statistics.outsidePoints;
                     continue;
                 }
-                mark(cellIndexOf(cell));
+                mark(cell);
                 continue;
             }
 
@@ -517,7 +644,6 @@ Result load(
             // Sigma = R diag(sigma^2) R^T, so its diagonal gives the squared extent along each NeRF
             // axis, and the covered region is the ellipsoid r <= radius with r^2 <= threshold.
             const double radius = std::sqrt(2.0 * std::log(alpha / opacityThreshold));
-            const double threshold = radius * radius;
             std::array<double, 3> half = {};
             for (size_t axis = 0; axis < 3; ++axis)
             {
@@ -531,17 +657,25 @@ Result load(
             }
             // (x, y, z) -> (x, z, -y) is a 90 degree rotation, so the extents are simply permuted.
             half = {half[0], half[2], half[1]};
-            bool capped = false;
-            for (size_t axis = 0; axis < 3; ++axis)
+
+            GaussianCoverage coverage;
+            coverage.threshold = radius * radius;
+            // Transform the orientation together with the center into the renderer frame.
+            double worldRotation[3][3];
+            for (size_t i = 0; i < 3; ++i)
             {
-                const double limit = kMaxCoverageVoxels * double(voxelSize[axis]);
-                if (half[axis] > limit)
-                {
-                    half[axis] = limit;
-                    capped = true;
-                }
+                worldRotation[0][i] = rotationMatrix[0][i];
+                worldRotation[1][i] = rotationMatrix[2][i];
+                worldRotation[2][i] = -rotationMatrix[1][i];
             }
-            if (capped) ++result.statistics.cappedCoverage;
+            for (size_t row = 0; row < 3; ++row)
+                for (size_t column = 0; column < 3; ++column)
+                {
+                    coverage.worldToUnit[row][column] = worldRotation[column][row] / sigma[row];
+                    for (size_t axis = 0; axis < 3; ++axis)
+                        coverage.covariance[row][column] += worldRotation[row][axis] * sigma[axis] *
+                            worldRotation[column][axis] * sigma[axis];
+                }
 
             // Candidate cells: the axis-aligned box of the ellipsoid, clipped to the grid.
             std::array<uint32_t, 3> lo = {}, hi = {};
@@ -551,12 +685,15 @@ Result load(
                 const double scale = double(voxelSize[axis]);
                 const double low = (world[axis] - half[axis] - double(gridMin[axis])) / scale;
                 const double high = (world[axis] + half[axis] - double(gridMin[axis])) / scale;
-                if (high < 0 || low >= double(voxelCount[axis]))
+                if (high < 0 || low > double(voxelCount[axis]))
                 {
                     overlaps = false;
                     break;
                 }
-                lo[axis] = static_cast<uint32_t>(std::max(0.0, std::floor(low)));
+                // Closed-box intersection also includes the cell below an exact grid boundary.
+                lo[axis] = static_cast<uint32_t>(std::clamp(
+                    std::floor(std::nextafter(low, -std::numeric_limits<double>::infinity())),
+                    0.0, double(voxelCount[axis]) - 1.0));
                 hi[axis] = static_cast<uint32_t>(std::min(double(voxelCount[axis]) - 1.0, std::floor(high)));
             }
             if (!overlaps)
@@ -565,38 +702,70 @@ Result load(
                 continue;
             }
 
-            // A Gaussian thinner than a cell can miss every cell center, so it always claims the
-            // voxel containing its own center.
-            std::array<uint32_t, 3> centerCell = {};
-            if (cellOfWorld(world, centerCell)) mark(cellIndexOf(centerCell));
-
             uint64_t covered = 0;
-            for (uint32_t z = lo[2]; z <= hi[2]; ++z)
-                for (uint32_t y = lo[1]; y <= hi[1]; ++y)
-                    for (uint32_t x = lo[0]; x <= hi[0]; ++x)
-                    {
-                        // Cell center in the renderer frame, mapped back into the NeRF frame of the
-                        // PLY: (x, y, z) = (forward.x, -forward.z, forward.y).
-                        const double forwardX = double(gridMin[0]) + (double(x) + 0.5) * double(voxelSize[0]);
-                        const double forwardY = double(gridMin[1]) + (double(y) + 0.5) * double(voxelSize[1]);
-                        const double forwardZ = double(gridMin[2]) + (double(z) + 0.5) * double(voxelSize[2]);
-                        const double q[3] = {
-                            forwardX - position[0], -forwardZ - position[1], forwardY - position[2]};
+            const auto visit = [&](auto&& self, const std::array<uint32_t, 3>& first,
+                const std::array<uint32_t, 3>& last) -> void
+            {
+                if (first == last && isOccupied(first)) return;
+                std::array<double, 3> lower = {}, upper = {};
+                for (size_t axis = 0; axis < 3; ++axis)
+                {
+                    lower[axis] = double(gridMin[axis]) + double(first[axis]) * double(voxelSize[axis]) - world[axis];
+                    upper[axis] = double(gridMin[axis]) + (double(last[axis]) + 1) * double(voxelSize[axis]) - world[axis];
+                }
+                const int classification = coverage.classifyBox(lower, upper);
+                if (classification < 0) return;
+                if (classification > 0)
+                {
+                    for (uint32_t z = first[2]; z <= last[2]; ++z)
+                        for (uint32_t y = first[1]; y <= last[1]; ++y)
+                            for (uint32_t x = first[0]; x <= last[0]; ++x)
+                                covered += mark({x, y, z}) ? 1 : 0;
+                    return;
+                }
+                if (first == last)
+                {
+                    ++result.statistics.testedCells;
+                    if (coverage.intersectsBox(lower, upper)) covered += mark(first) ? 1 : 0;
+                    return;
+                }
 
-                        double r2 = 0;
+                const std::array<uint32_t, 3> middle = {
+                    first[0] + (last[0] - first[0]) / 2,
+                    first[1] + (last[1] - first[1]) / 2,
+                    first[2] + (last[2] - first[2]) / 2};
+                for (uint32_t z = 0; z < (first[2] == last[2] ? 1u : 2u); ++z)
+                    for (uint32_t y = 0; y < (first[1] == last[1] ? 1u : 2u); ++y)
+                        for (uint32_t x = 0; x < (first[0] == last[0] ? 1u : 2u); ++x)
+                            self(self,
+                                {x == 0 ? first[0] : middle[0] + 1,
+                                 y == 0 ? first[1] : middle[1] + 1,
+                                 z == 0 ? first[2] : middle[2] + 1},
+                                {x == 0 ? middle[0] : last[0],
+                                 y == 0 ? middle[1] : last[1],
+                                 z == 0 ? middle[2] : last[2]});
+            };
+            for (uint32_t z = lo[2] / kCoverageBlockSize; z <= hi[2] / kCoverageBlockSize; ++z)
+                for (uint32_t y = lo[1] / kCoverageBlockSize; y <= hi[1] / kCoverageBlockSize; ++y)
+                    for (uint32_t x = lo[0] / kCoverageBlockSize; x <= hi[0] / kCoverageBlockSize; ++x)
+                    {
+                        const std::array<uint32_t, 3> first = {
+                            x * kCoverageBlockSize, y * kCoverageBlockSize, z * kCoverageBlockSize};
+                        std::array<uint32_t, 3> last = {};
+                        uint32_t capacity = 1;
                         for (size_t axis = 0; axis < 3; ++axis)
                         {
-                            // principle = R^T q, so this is the component along principal axis `axis`.
-                            const double principal = rotationMatrix[0][axis] * q[0] +
-                                rotationMatrix[1][axis] * q[1] + rotationMatrix[2][axis] * q[2];
-                            const double normalized = principal / sigma[axis];
-                            r2 += normalized * normalized;
+                            const uint32_t size = std::min(kCoverageBlockSize, voxelCount[axis] - first[axis]);
+                            last[axis] = first[axis] + size - 1;
+                            capacity *= size;
                         }
-                        if (r2 <= threshold)
+                        if (occupiedPerBlock[blockIndexOf(x, y, z)] == capacity)
                         {
-                            mark(cellIndexOf({x, y, z}));
-                            ++covered;
+                            ++result.statistics.skippedFullBlocks;
+                            continue;
                         }
+                        ++result.statistics.testedBlocks;
+                        visit(visit, first, last);
                     }
             result.statistics.coveredCells += covered;
             result.statistics.maxCoveredCells = std::max(result.statistics.maxCoveredCells, covered);
