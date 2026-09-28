@@ -27,12 +27,17 @@
  **************************************************************************/
 #include "VoxelReconstructionNoLightTransport.h"
 
+float VoxelReconstructionNoLightTransport::getGeometryTauWorld() const
+{
+    const float3 voxelSize = mGridResources.gridData.voxelSize;
+    const float voxelScale = std::max(voxelSize.x, std::max(voxelSize.y, voxelSize.z));
+    // Derive this from the current grid every time, including grids loaded from bin.
+    return std::max(mGradientPass.geometryTauVoxelFraction * voxelScale, 1e-8f);
+}
+
 void VoxelReconstructionNoLightTransport::createGradientPassResource(RenderContext* pRenderContext)
 {
     mGradientPass.init();
-    const float3 voxelSize = mGridResources.gridData.voxelSize;
-    const float voxelScale = std::max(voxelSize.x, std::max(voxelSize.y, voxelSize.z));
-    mGradientPass.geometryTauWorld = std::max(0.25f * voxelScale, 1e-8f);
 
     {
         ProgramDesc desc;
@@ -83,7 +88,7 @@ void VoxelReconstructionNoLightTransport::runGradientPass(RenderContext* pRender
     auto cb = var["CB"];
     cb["gResolution"] = mRayMarchingPass.mOutputResolution;
     cb["gVoxelCount"] = mGridResources.gridData.voxelCount;
-    cb["gGeometryTauWorld"] = mGradientPass.geometryTauWorld;
+    cb["gGeometryTauWorld"] = getGeometryTauWorld();
     cb["gGeometryGradClamp"] = mGradientPass.geometryGradClamp;
     cb["gBackgroundCarveWeight"] = 0.01f;
     cb["gBinaryOpacityWeight"] = 0.003f;

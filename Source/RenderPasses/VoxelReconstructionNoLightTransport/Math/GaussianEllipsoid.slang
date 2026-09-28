@@ -84,7 +84,7 @@ float3 gaussianEllipsoidImplicitGradientWorld(
     return 2.0f * mul(rotation, principal * invScaleSquared);
 }
 
-// First-order signed distance at the implicit minimum on a ray segment.
+// First-order signed distance proxy at the implicit minimum on a voxel-clipped ray segment.
 // Normalize with the gradient at the radially projected surface point, where
 // it cannot vanish. This is accurate near the hit boundary, not an exact SDF.
 // Backward treats distanceScale as constant: d(distance)/d(theta) ~= scale * dg/d(theta).

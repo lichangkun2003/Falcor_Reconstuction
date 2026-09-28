@@ -45,12 +45,6 @@ void VoxelReconstructionNoLightTransport::runUpdatePass(RenderContext* pRenderCo
     //mUpdatePass.mpComputePass->addDefine("CHECK_VISIBILITY", mRayMarchingPass.mCheckVisibility ? "1" : "0");
     //mUpdatePass.mpComputePass->addDefine("CHECK_COVERAGE", mRayMarchingPass.mCheckCoverage ? "1" : "0");
 
-    // 几何学习率由 scale 派生，放在这里而不是 renderUIUpdatePass 里.
-    // Keep derived learning rates independent of whether the UI panel is open.
-    // 于是"几何学不学"隐式地取决于 UI 面板有没有展开.
-    mUpdatePass.mLrCenter = mLrCenterScale * 1e-3f;
-    mUpdatePass.mLrShape = mLrShapeScale * 1e-3f;
-
     // prune 默认关闭. pruneEllipsoid 直接写 occupied = 0.
     // 而全工程只有初始化阶段会写回 1，被删的体素本次运行里永远回不来.
     if ((mOptimizerParams.currentIteration) % 10 == 0)
@@ -106,13 +100,10 @@ void VoxelReconstructionNoLightTransport::renderUIUpdatePass(Gui::Widgets& widge
     group.text("Geometry learning rates");
 
 
-    // 实际取值在 runUpdatePass 里由 scale 派生，这里只改 scale，并显示派生结果.
-    group.var("LR center scale(1000x)", mLrCenterScale, 0.0f, 1.0f, 1e-6f);
-
-    group.var("LR shape scale(1000x)", mLrShapeScale, 0.0f, 1.0f, 1e-6f);
-
-    group.text("  -> LR center = " + std::to_string(mUpdatePass.mLrCenter) +
-        ",  LR shape = " + std::to_string(mUpdatePass.mLrShape));
+    // Edit actual rates: the former scale controls capped shape SGD at 0.001.
+    group.var("LR center (voxel local)", mUpdatePass.mLrCenter, 0.0f, 0.1f, 1e-5f, false, "%.6f");
+    group.var("LR shape (log scale / rotation)", mUpdatePass.mLrShape, 0.0f, 1.0f, 0.001f, false, "%.6f");
+    group.text("Step limits: center 0.02 voxel/axis; log scale 0.02/axis; rotation 0.02 rad.");
 
     group.var("Ellipsoid Prune Threshold", mUpdatePass.mEllipsoidPruneThreshold, 0.0f, 1.0f, 1e-7f);
 

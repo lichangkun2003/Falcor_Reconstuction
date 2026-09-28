@@ -125,6 +125,7 @@ public:
 
     void createGradientPassResource(RenderContext* pRenderContext);
     void runGradientPass(RenderContext* pRenderContext, const RenderData& renderData);
+    float getGeometryTauWorld() const;
 
     void createUpdatePassResource(RenderContext* pRenderContext);
     void runUpdatePass(RenderContext* pRenderContext, const RenderData& renderData);
@@ -215,13 +216,13 @@ public:
         ref<ComputePass> mpComputePass;
         ref<Buffer> gradBuffer;
         float geometryGradClamp;
-        float geometryTauWorld;
+        float geometryTauVoxelFraction = 0.12f;
 
         void init()
         {
             gradBuffer = nullptr;
             mpComputePass = nullptr;
-            geometryTauWorld = 0.f; // Derived from the initial grid in createGradientPassResource().
+            geometryTauVoxelFraction = 0.15f; // Width relative to the current voxel, not a pixel footprint.
             geometryGradClamp = 5.0f;
         }
     };
@@ -255,8 +256,9 @@ public:
             mLrRadiance = 0.1f;
             mLrOpacity = 10.0f;
 
-            mLrCenter = 0.f;
-            mLrShape = 0.f;
+            // Actual SGD rates, also used by initialization before the first update.
+            mLrCenter = 5e-3f; // Voxel-local center; 10x the former geometry default.
+            mLrShape = 0.1f;   // Log semi-axes and local rotation angle.
 
             mEllipsoidPruneThreshold = 0.03f;
             mEnableEllipsoidPruning = false;
@@ -325,7 +327,7 @@ private:
         // 高斯占位的透明度阈值: 峰值 alpha = sigmoid(opacity) 低于它就连中心格都不占,
         // 高于它的高斯按 sqrt(2 ln(alpha / threshold)) * sigma 的半径扩张.
         // 只在点 Init / Reset from PLY 时读取一次.
-        float opacityThreshold = 0.1f;
+        float opacityThreshold = 0.05f;
     };
     PointCloudState mPointCloud;
     ref<ComputePass> mpInitializePointCloudPass;
@@ -384,10 +386,6 @@ private:
     bool mLoadedReconstructionForViewing = false;
     std::string mReconstructionIOStatus;
     std::string mReferenceDataError;
-    // 几何学习率的总开关. 实际值在 runUpdatePass 里由 scale 派生，和 UI 面板是否展开无关:
-    // lrCenter = scale * 1e-3, lrShape = scale * 1e-3.
-    float mLrCenterScale = 0.5f;
-    float mLrShapeScale = 1.0f;
     std::vector<std::filesystem::path> mReconstructionFilePaths;
     uint32_t mSelectedReconstructionFile = 0;
     std::string mReconstructionNameTag = "";

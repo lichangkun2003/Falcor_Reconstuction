@@ -21,7 +21,7 @@ RWTexture2D<float4> dummy;
 cbuffer CB {
     uint2 gResolution;
     uint3 gVoxelCount;
-    float gGeometryTauWorld;        // Soft-hit transition width in world units.
+    float gGeometryTauWorld;        // Current voxel width * Geometry Tau (voxels); shared by hit/miss.
     float gGeometryGradClamp;       // Clamp dL/dg after converting the world-distance gradient.
     float gBackgroundCarveWeight;   // 背景几何清除项的权重
     float gBinaryOpacityWeight;

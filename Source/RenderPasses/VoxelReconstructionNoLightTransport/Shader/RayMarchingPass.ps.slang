@@ -116,7 +116,8 @@ void calcVoxelLocalSegment(float3 cell,float3 direction,int3 cellInt,out float3 
 
 
 
-// Compute the minimum implicit value on the ray segment.
+// Compute the minimum implicit value only on this voxel's clipped ray segment.
+// xStar stays on that segment, including endpoint minima. No pixel footprint is used.
 void calcEllipsoidGMinOnSegment(
     GaussianEllipsoid ellipsoid,
     float3 localFrom,
