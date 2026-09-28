@@ -224,6 +224,7 @@ public:
             gradBuffer = nullptr;
             mpComputePass = nullptr;
             // Keep the configured tau and alpha multiplier when recreating GPU resources.
+            geometryTauVoxelFraction = 0.12f;
             geometryGradClamp = 5.0f;
         }
     };
