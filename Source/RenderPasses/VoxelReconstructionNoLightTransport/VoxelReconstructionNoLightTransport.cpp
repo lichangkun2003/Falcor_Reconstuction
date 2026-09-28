@@ -338,7 +338,9 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
         widget.text(fmt::format("Loading reference images: {} / {}", mReferenceImages.size(), mReferenceCameras.size()));
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
     widget.text("Mode 1: point-cloud initialization");
-    widget.text("PLY: " + (resolveReconstructionPath(ReferenceImageDir) / "init_points.ply").string());
+    widget.text("PLY: " + (resolveReconstructionPath(ReferenceImageDir) / "point_cloud.ply").string());
+    // 高斯占位阈值，改动在下次 Init / Reset from PLY 时生效.
+    widget.var("Gaussian Opacity Threshold", mPointCloud.opacityThreshold, 0.001f, 1.0f, 0.005f);
     widget.text(mPointCloud.status);
     if (widget.button("Init / Reset from PLY")) mInitVoxelData = true;
 #else

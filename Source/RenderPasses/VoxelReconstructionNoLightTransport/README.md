@@ -31,18 +31,19 @@ inline std::string ReferenceCameraFile = "Reconstruction_Input/hotdog/transforms
 
 ## Mode1：点云初始化
 
-读取 `ReferenceImageDir/init_points.ply`。例如 `ReferenceImageDir` 为 `Reconstruction_Input/hotdog` 时，读取项目根目录下该场景的 `init_points.ply`。更换数据集时，头文件中的 `ReferenceImageDir` 和 `ReferenceCameraFile` 应指向同一场景。
+读取 `ReferenceImageDir/point_cloud.ply`，即该场景 3DGS 优化输出的稠密点云。例如 `ReferenceImageDir` 为 `Reconstruction_Input/ship` 时，读取项目根目录下该场景的 `point_cloud.ply`。更换数据集时，头文件中的 `ReferenceImageDir` 和 `ReferenceCameraFile` 应指向同一场景，并把该场景的 3DGS 结果放到同目录下。
 
-- 支持 ASCII 和 binary little-endian PLY，按属性名读取 XYZ，忽略 RGB、法线等额外属性。点云仅决定占据状态，不使用点颜色。点云应使用原始 NeRF 世界坐标，加载时与相机一致转换为 `(x, z, -y)`，不重新缩放或拟合点云 AABB。
-- 沿用当前固定世界 AABB 和 `GRID_RESOLUTION` 的密集网格。通过 `floor((position-gridMin)/voxelSize)` 确定体素；越界和非有限坐标分别统计并跳过，同格点合并，只有包含点的格子被占据。缺文件、无有效点或格式错误时明确报错并停止训练，保留已有体素。
-- 占据体素的局部椭球中心为 `(0.5, 0.5, 0.5)`，半径为 `0.6`，`B=I/0.36`。这些初值不依赖学习率；学习率为零表示不优化该参数。
+- 支持 ASCII 和 binary little-endian PLY，按属性名读取 XYZ 和 3DGS 的每高斯属性（`opacity`、`scale_0..2`、`rot_0..3`），忽略 RGB、法线、`f_dc_*`、`f_rest_*` 等额外属性。点云仅决定占据状态，不使用点颜色和 SH。点云应使用原始 NeRF 世界坐标，加载时与相机一致转换为 `(x, z, -y)`，不重新缩放或拟合点云 AABB。
+- 沿用当前固定世界 AABB 和 `GRID_RESOLUTION` 的密集网格，用 `floor((position-gridMin)/voxelSize)` 定位格心。高斯占据"不透明度仍然够高"的格子：取 `α = sigmoid(opacity)`、`σ = exp(scale_*)`、`Σ = R diag(σ²) Rᵀ`，格心满足 `α·exp(-r²/2) ≥ ε`（即 `r² = qᵀΣ⁻¹q ≤ 2·ln(α/ε)`）就占据，等价于覆盖半径 `√(2ln(α/ε))·σ`。`α < ε` 的高斯整个丢弃；通过测试的高斯另外无条件占据自己中心所在的格，避免比体素还薄的薄片高斯丢失。候选格取高斯 AABB（半宽 `√(2ln(α/ε))·√(Σ_jj)`）裁剪到网格，单轴最多扫 8 格作为成本护栏；越界、非有限、被丢弃和被截断的数量都写入统计。`ε` 就是 UI 上的 **Gaussian Opacity Threshold**（`PointCloudState::opacityThreshold`，默认 `0.1`），改动在下次 **Init / Reset from PLY** 时生效；`ε` 必须落在 `(0, 1)` 内，否则初始化直接报错。
+- PLY 里没有每高斯属性时（普通点云，例如 COLMAP 输出）退化为旧行为：只占据包含该点的格子。缺文件、无有效点或格式错误时明确报错并停止训练，保留已有体素。
+- 占据体素的局部椭球中心为 `(0.5, 0.5, 0.5)`，各轴 `σ = 0.6 × voxelSize`（`logScale = log(0.6 × voxelSize)`），rotation 为单位四元数。这些初值不依赖学习率；学习率为零表示不优化该参数。
 - 占据体素调用 `radiance.init()`，所有 radiance SH 系数（含 DC）为零，初始颜色全黑。opacity 直接调用与 mode3 相同的 `opacity.init()`，所有 opacity SH 系数为零，对应初始 alpha=`sigmoid(0)=0.5`。mode1 不额外写入 mode3 在 opacity 学习率为零时保留的 `16.29` DC 系数。
 
 等待参考图片加载完，点击 **Init / Reset from PLY** 可先查看初始化结果，再勾选 **Enable Reconstruction** 开始训练。也可以直接勾选 **Enable Reconstruction**，首次会自动初始化。重置按钮会重新读取 PLY、清除迭代和 loss 状态并停止训练。训练建议保持默认 Spp=8。整批 Spp 帧里，每一帧都用“不含自己”的前缀平均残差算出自己那一份无偏梯度，原子累加到梯度缓冲；整批结束后统一更新一次，按各体素的累积计数求平均，也就是整批的平均梯度。第 0 帧没有前缀可用，只作为后续采样的基线，所以 N ≥ 2 才有意义，Spp=1 退化成单样本的旧行为。
 
 结果及 loss 保存到 `Reconstruction_Output/mode1`。当前使用 v2 体素文件格式，形状参数为中心、世界空间对数半轴和单位四元数；**Load Selected Reconstruction** 成功后停止训练，重新开始时直接使用加载结果，不要求 PLY 存在。加载采用文件中的实际分辨率，并按当前版本的固定重建范围 `[-1.326, 1.326]³` 还原网格。旧的 v1 矩阵椭球 bin 不会按新布局误读，需要重新初始化或重新烘焙。
 
-当前严格采用“有点才占据”：空体素不会在训练中自动生长，点云的孔洞可能保留。此模式提供点云初始化先验，没有增加邻域膨胀或空间平滑正则项。pruning 和梯度更新沿用固定分辨率流程。
+占据状态只在初始化时确定，空体素不会在训练中自动生长。改用 3DGS 的覆盖式初始化后，只要高斯覆盖到位，原始点云的大孔洞就会被填上；代价是不再是严格的“有点才占据”，多占的体素目前只能靠背景射线剔除压掉（ellipsoid pruning 默认关闭）。pruning 和梯度更新沿用固定分辨率流程。
 
 ## 路径记录
 

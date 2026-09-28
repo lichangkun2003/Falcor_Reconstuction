@@ -9,7 +9,6 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <unordered_set>
 #include <utility>
 
 namespace PointCloudInitialization
@@ -33,13 +32,60 @@ struct Element
     std::vector<Property> properties;
 };
 
+constexpr size_t kMissingProperty = std::numeric_limits<size_t>::max();
+
 struct Header
 {
     bool binary = false;
     std::vector<Element> elements;
     size_t vertexElement = 0;
     std::array<size_t, 3> positions;
+    // Optional per-Gaussian properties of a 3DGS reconstruction. Only when all of them are
+    // present does the ellipsoid decide occupancy.
+    size_t opacity = kMissingProperty;
+    std::array<size_t, 3> scales = {kMissingProperty, kMissingProperty, kMissingProperty};
+    std::array<size_t, 4> rotations = {kMissingProperty, kMissingProperty, kMissingProperty, kMissingProperty};
+    bool hasGaussianProperties = false;
 };
+
+// Cost guard: one Gaussian never sweeps more than this many voxels along one axis. The number of
+// Gaussians whose coverage was clipped is reported, so a binding limit is visible.
+constexpr double kMaxCoverageVoxels = 8.0;
+
+bool anyMissing(const size_t* indices, size_t count)
+{
+    for (size_t i = 0; i < count; ++i)
+        if (indices[i] == kMissingProperty) return true;
+    return false;
+}
+
+// Rotation matrix of a (w, x, y, z) quaternion, the convention of gaussianRotationMatrix in the
+// shaders. A degenerate quaternion falls back to the identity.
+void makeRotation(const std::array<double, 4>& quaternion, double matrix[3][3])
+{
+    double norm = 0;
+    for (size_t i = 0; i < 4; ++i) norm += quaternion[i] * quaternion[i];
+    norm = std::sqrt(norm);
+    if (!std::isfinite(norm) || norm < 1e-12)
+    {
+        for (size_t row = 0; row < 3; ++row)
+            for (size_t column = 0; column < 3; ++column) matrix[row][column] = row == column ? 1.0 : 0.0;
+        return;
+    }
+    const double w = quaternion[0] / norm;
+    const double x = quaternion[1] / norm;
+    const double y = quaternion[2] / norm;
+    const double z = quaternion[3] / norm;
+    matrix[0][0] = 1.0 - 2.0 * (y * y + z * z);
+    matrix[0][1] = 2.0 * (x * y - z * w);
+    matrix[0][2] = 2.0 * (x * z + y * w);
+    matrix[1][0] = 2.0 * (x * y + z * w);
+    matrix[1][1] = 1.0 - 2.0 * (x * x + z * z);
+    matrix[1][2] = 2.0 * (y * z - x * w);
+    matrix[2][0] = 2.0 * (x * z - y * w);
+    matrix[2][1] = 2.0 * (y * z + x * w);
+    matrix[2][2] = 1.0 - 2.0 * (x * x + y * y);
+}
 
 [[noreturn]] void fail(const std::string& message)
 {
@@ -169,10 +215,11 @@ Header readHeader(std::ifstream& input, uint64_t fileBytes)
     }
     if (!hasFormat || !hasEnd) fail("missing format or end_header.");
 
-    const size_t missing = std::numeric_limits<size_t>::max();
-    header.positions.fill(missing);
+    header.positions.fill(kMissingProperty);
     bool hasVertex = false;
     const std::array<std::string, 3> positionNames = {"x", "y", "z"};
+    const std::array<std::string, 3> scaleNames = {"scale_0", "scale_1", "scale_2"};
+    const std::array<std::string, 4> rotationNames = {"rot_0", "rot_1", "rot_2", "rot_3"};
     for (size_t elementIndex = 0; elementIndex < header.elements.size(); ++elementIndex)
     {
         const auto& element = header.elements[elementIndex];
@@ -191,11 +238,21 @@ Header readHeader(std::ifstream& input, uint64_t fileBytes)
                     header.positions[axis] = propertyIndex;
                 }
             }
+            if (property.isList) continue;
+            if (property.name == "opacity") header.opacity = propertyIndex;
+            for (size_t axis = 0; axis < 3; ++axis)
+                if (property.name == scaleNames[axis]) header.scales[axis] = propertyIndex;
+            for (size_t i = 0; i < 4; ++i)
+                if (property.name == rotationNames[i]) header.rotations[i] = propertyIndex;
         }
     }
     if (!hasVertex) fail("no vertex element.");
     for (const auto index : header.positions)
-        if (index == missing) fail("vertex element must contain x, y and z.");
+        if (index == kMissingProperty) fail("vertex element must contain x, y and z.");
+    // Per-Gaussian properties are optional: a plain point cloud only marks its containing voxel.
+    header.hasGaussianProperties = header.opacity != kMissingProperty &&
+        !anyMissing(header.scales.data(), header.scales.size()) &&
+        !anyMissing(header.rotations.data(), header.rotations.size());
     return header;
 }
 
@@ -299,9 +356,16 @@ Result load(
     const std::filesystem::path& path,
     const std::array<uint32_t, 3>& voxelCount,
     const std::array<float, 3>& gridMin,
-    const std::array<float, 3>& voxelSize
+    const std::array<float, 3>& voxelSize,
+    double opacityThreshold
 )
 {
+    // Occupancy of a 3DGS point cloud: a Gaussian contributes alpha * exp(-r^2 / 2) at a point,
+    // with r^2 = q^T Sigma^-1 q measured from its center, so a cell is occupied while that value
+    // stays above the threshold, i.e. while r^2 <= 2 ln(alpha / opacityThreshold).
+    if (!(opacityThreshold > 0.0 && opacityThreshold < 1.0))
+        fail("opacity threshold must be in (0, 1).");
+
     uint64_t totalVoxelCount = 1;
     for (size_t axis = 0; axis < 3; ++axis)
     {
@@ -323,8 +387,25 @@ Result load(
 
     Result result;
     result.statistics.inputPoints = header.elements[header.vertexElement].count;
-    std::unordered_set<uint32_t> voxels;
-    voxels.reserve(static_cast<size_t>(std::min({result.statistics.inputPoints, totalVoxelCount, uint64_t(1024 * 1024)})));
+
+    // Occupancy bitmask: Gaussian coverage overlaps heavily, and 128^3 cells is only 256 KiB.
+    std::vector<uint64_t> occupancy(static_cast<size_t>((totalVoxelCount + 63) / 64), 0);
+    const auto mark = [&occupancy](uint64_t index) { occupancy[static_cast<size_t>(index >> 6)] |= uint64_t(1) << (index & 63); };
+    const auto cellOfWorld = [&](const std::array<double, 3>& world, std::array<uint32_t, 3>& cell)
+    {
+        for (size_t axis = 0; axis < 3; ++axis)
+        {
+            const double coordinate = (world[axis] - double(gridMin[axis])) / double(voxelSize[axis]);
+            if (!(coordinate >= 0 && coordinate < double(voxelCount[axis]))) return false;
+            cell[axis] = static_cast<uint32_t>(std::floor(coordinate));
+        }
+        return true;
+    };
+    const auto cellIndexOf = [&](const std::array<uint32_t, 3>& cell)
+    {
+        return static_cast<uint32_t>(uint64_t(cell[0]) + uint64_t(cell[1]) * voxelCount[0] +
+            uint64_t(cell[2]) * voxelCount[0] * voxelCount[1]);
+    };
 
     for (size_t elementIndex = 0; elementIndex < header.elements.size(); ++elementIndex)
     {
@@ -333,11 +414,15 @@ Result load(
         for (uint64_t item = 0; item < element.count; ++item)
         {
             std::array<double, 3> position = {};
+            double opacity = 0.0;
+            std::array<double, 3> logScale = {};
+            std::array<double, 4> rotation = {};
             for (size_t propertyIndex = 0; propertyIndex < element.properties.size(); ++propertyIndex)
             {
                 const auto& property = element.properties[propertyIndex];
                 bool consumed = false;
                 if (vertex)
+                {
                     for (size_t axis = 0; axis < 3; ++axis)
                     {
                         if (header.positions[axis] == propertyIndex)
@@ -347,6 +432,30 @@ Result load(
                             break;
                         }
                     }
+                    if (!consumed && header.opacity == propertyIndex)
+                    {
+                        opacity = reader.scalar(property.valueType);
+                        consumed = true;
+                    }
+                    if (!consumed)
+                        for (size_t axis = 0; axis < 3 && !consumed; ++axis)
+                        {
+                            if (header.scales[axis] == propertyIndex)
+                            {
+                                logScale[axis] = reader.scalar(property.valueType);
+                                consumed = true;
+                            }
+                        }
+                    if (!consumed)
+                        for (size_t i = 0; i < 4 && !consumed; ++i)
+                        {
+                            if (header.rotations[i] == propertyIndex)
+                            {
+                                rotation[i] = reader.scalar(property.valueType);
+                                consumed = true;
+                            }
+                        }
+                }
                 if (!consumed) reader.skip(property);
             }
             if (!vertex) continue;
@@ -360,37 +469,152 @@ Result load(
                 continue;
             }
             const std::array<double, 3> world = {position[0], position[2], -position[1]};
-            std::array<uint32_t, 3> cell = {};
-            bool inside = true;
+
+            if (!header.hasGaussianProperties)
+            {
+                // Plain point cloud: mark the containing voxel only.
+                std::array<uint32_t, 3> cell = {};
+                if (!cellOfWorld(world, cell))
+                {
+                    ++result.statistics.outsidePoints;
+                    continue;
+                }
+                mark(cellIndexOf(cell));
+                continue;
+            }
+
+            // 3DGS Gaussian: opacity is a logit, scales are log of the world-unit sigma, the
+            // quaternion is (w, x, y, z).
+            for (size_t axis = 0; axis < 3; ++axis)
+                valid = valid && std::isfinite(logScale[axis]);
+            for (size_t i = 0; i < 4; ++i)
+                valid = valid && std::isfinite(rotation[i]);
+            // Drop NaN rows and the very transparent tail: an invisible Gaussian claims no voxels.
+            const double alpha = 1.0 / (1.0 + std::exp(-opacity));
+            if (!valid || !std::isfinite(alpha))
+            {
+                ++result.statistics.invalidPoints;
+                continue;
+            }
+            if (alpha < opacityThreshold)
+            {
+                ++result.statistics.droppedByOpacity;
+                continue;
+            }
+
+            std::array<double, 3> sigma = {};
+            for (size_t axis = 0; axis < 3; ++axis) sigma[axis] = std::exp(logScale[axis]);
+            if (!(std::isfinite(sigma[0]) && sigma[0] > 0 && std::isfinite(sigma[1]) && sigma[1] > 0 &&
+                    std::isfinite(sigma[2]) && sigma[2] > 0))
+            {
+                ++result.statistics.invalidPoints;
+                continue;
+            }
+
+            double rotationMatrix[3][3];
+            makeRotation(rotation, rotationMatrix);
+
+            // Sigma = R diag(sigma^2) R^T, so its diagonal gives the squared extent along each NeRF
+            // axis, and the covered region is the ellipsoid r <= radius with r^2 <= threshold.
+            const double radius = std::sqrt(2.0 * std::log(alpha / opacityThreshold));
+            const double threshold = radius * radius;
+            std::array<double, 3> half = {};
             for (size_t axis = 0; axis < 3; ++axis)
             {
-                const double coordinate = (world[axis] - double(gridMin[axis])) / double(voxelSize[axis]);
-                if (!(coordinate >= 0 && coordinate < double(voxelCount[axis])))
+                double variance = 0;
+                for (size_t i = 0; i < 3; ++i)
                 {
-                    inside = false;
+                    const double component = rotationMatrix[axis][i] * sigma[i];
+                    variance += component * component;
+                }
+                half[axis] = radius * std::sqrt(variance);
+            }
+            // (x, y, z) -> (x, z, -y) is a 90 degree rotation, so the extents are simply permuted.
+            half = {half[0], half[2], half[1]};
+            bool capped = false;
+            for (size_t axis = 0; axis < 3; ++axis)
+            {
+                const double limit = kMaxCoverageVoxels * double(voxelSize[axis]);
+                if (half[axis] > limit)
+                {
+                    half[axis] = limit;
+                    capped = true;
+                }
+            }
+            if (capped) ++result.statistics.cappedCoverage;
+
+            // Candidate cells: the axis-aligned box of the ellipsoid, clipped to the grid.
+            std::array<uint32_t, 3> lo = {}, hi = {};
+            bool overlaps = true;
+            for (size_t axis = 0; axis < 3; ++axis)
+            {
+                const double scale = double(voxelSize[axis]);
+                const double low = (world[axis] - half[axis] - double(gridMin[axis])) / scale;
+                const double high = (world[axis] + half[axis] - double(gridMin[axis])) / scale;
+                if (high < 0 || low >= double(voxelCount[axis]))
+                {
+                    overlaps = false;
                     break;
                 }
-                cell[axis] = static_cast<uint32_t>(std::floor(coordinate));
+                lo[axis] = static_cast<uint32_t>(std::max(0.0, std::floor(low)));
+                hi[axis] = static_cast<uint32_t>(std::min(double(voxelCount[axis]) - 1.0, std::floor(high)));
             }
-            if (!inside)
+            if (!overlaps)
             {
                 ++result.statistics.outsidePoints;
                 continue;
             }
 
-            const uint32_t index = static_cast<uint32_t>(uint64_t(cell[0]) + uint64_t(cell[1]) * voxelCount[0] +
-                uint64_t(cell[2]) * voxelCount[0] * voxelCount[1]);
-            voxels.insert(index);
+            // A Gaussian thinner than a cell can miss every cell center, so it always claims the
+            // voxel containing its own center.
+            std::array<uint32_t, 3> centerCell = {};
+            if (cellOfWorld(world, centerCell)) mark(cellIndexOf(centerCell));
+
+            uint64_t covered = 0;
+            for (uint32_t z = lo[2]; z <= hi[2]; ++z)
+                for (uint32_t y = lo[1]; y <= hi[1]; ++y)
+                    for (uint32_t x = lo[0]; x <= hi[0]; ++x)
+                    {
+                        // Cell center in the renderer frame, mapped back into the NeRF frame of the
+                        // PLY: (x, y, z) = (forward.x, -forward.z, forward.y).
+                        const double forwardX = double(gridMin[0]) + (double(x) + 0.5) * double(voxelSize[0]);
+                        const double forwardY = double(gridMin[1]) + (double(y) + 0.5) * double(voxelSize[1]);
+                        const double forwardZ = double(gridMin[2]) + (double(z) + 0.5) * double(voxelSize[2]);
+                        const double q[3] = {
+                            forwardX - position[0], -forwardZ - position[1], forwardY - position[2]};
+
+                        double r2 = 0;
+                        for (size_t axis = 0; axis < 3; ++axis)
+                        {
+                            // principle = R^T q, so this is the component along principal axis `axis`.
+                            const double principal = rotationMatrix[0][axis] * q[0] +
+                                rotationMatrix[1][axis] * q[1] + rotationMatrix[2][axis] * q[2];
+                            const double normalized = principal / sigma[axis];
+                            r2 += normalized * normalized;
+                        }
+                        if (r2 <= threshold)
+                        {
+                            mark(cellIndexOf({x, y, z}));
+                            ++covered;
+                        }
+                    }
+            result.statistics.coveredCells += covered;
+            result.statistics.maxCoveredCells = std::max(result.statistics.maxCoveredCells, covered);
         }
     }
-    if (voxels.empty())
-        fail("no valid points inside the voxel grid (input=" + std::to_string(result.statistics.inputPoints) +
+
+    // Scan order is ascending, so the seeds come out sorted and each occupied index appears once.
+    for (size_t word = 0; word < occupancy.size(); ++word)
+        for (uint32_t bit = 0; bit < 64; ++bit)
+            if ((occupancy[word] >> bit) & 1ull)
+            {
+                const uint64_t index = uint64_t(word) * 64 + bit;
+                if (index < totalVoxelCount) result.seeds.push_back({static_cast<uint32_t>(index)});
+            }
+    if (result.seeds.empty())
+        fail("no occupied voxels inside the voxel grid (input=" + std::to_string(result.statistics.inputPoints) +
             ", invalid=" + std::to_string(result.statistics.invalidPoints) + ", outside=" +
             std::to_string(result.statistics.outsidePoints) + "). Check the point-cloud coordinates and grid bounds.");
-
-    result.seeds.reserve(voxels.size());
-    for (uint32_t index : voxels) result.seeds.push_back({index});
-    std::sort(result.seeds.begin(), result.seeds.end(), [](const Seed& a, const Seed& b) { return a.voxelIndex < b.voxelIndex; });
     return result;
 }
 } // namespace PointCloudInitialization

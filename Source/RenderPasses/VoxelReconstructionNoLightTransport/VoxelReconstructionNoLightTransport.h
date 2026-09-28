@@ -74,8 +74,8 @@ inline std::string kAccumulateOutputColor = "AccuColor";
 
 // Relative paths are rooted at the Falcor source project, independently of the process working directory.
 inline std::string ReconstructionDataDir = "Reconstruction_Output";
-inline std::string ReferenceImageDir = "Reconstruction_Input/hotdog";
-inline std::string ReferenceCameraFile = "Reconstruction_Input/hotdog/transforms_train.json";
+inline std::string ReferenceImageDir = "Reconstruction_Input/ship";
+inline std::string ReferenceCameraFile = "Reconstruction_Input/ship/transforms_train.json";
 
 // 烘焙产物目录，由 Voxelization 的 RayMarchingPass 写出，文件名形如
 // <scene>_bake_<x>x<y>x<z>.bin，内容就是本工程 v2 的 GaussianEllipsoid 格式。
@@ -321,6 +321,11 @@ private:
         bool startRequested = false;
         bool clearAccumulation = true;
         std::string status = "Not initialized";
+
+        // 高斯占位的透明度阈值: 峰值 alpha = sigmoid(opacity) 低于它就连中心格都不占,
+        // 高于它的高斯按 sqrt(2 ln(alpha / threshold)) * sigma 的半径扩张.
+        // 只在点 Init / Reset from PLY 时读取一次.
+        float opacityThreshold = 0.1f;
     };
     PointCloudState mPointCloud;
     ref<ComputePass> mpInitializePointCloudPass;

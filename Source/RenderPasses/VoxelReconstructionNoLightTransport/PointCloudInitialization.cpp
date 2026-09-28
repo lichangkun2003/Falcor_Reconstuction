@@ -23,7 +23,7 @@ void VoxelReconstructionNoLightTransport::resetPointCloudOptimization(RenderCont
 
 bool VoxelReconstructionNoLightTransport::initializePointCloudVoxelData(RenderContext* pRenderContext)
 {
-    const auto path = resolveReconstructionPath(ReferenceImageDir) / "init_points.ply";
+    const auto path = resolveReconstructionPath(ReferenceImageDir) / "point_cloud.ply";
     try
     {
         // Read and validate before touching the active reconstruction.
@@ -31,7 +31,8 @@ bool VoxelReconstructionNoLightTransport::initializePointCloudVoxelData(RenderCo
         auto points = PointCloudInitialization::load(path,
             {grid.voxelCount.x, grid.voxelCount.y, grid.voxelCount.z},
             {grid.gridMin.x, grid.gridMin.y, grid.gridMin.z},
-            {grid.voxelSize.x, grid.voxelSize.y, grid.voxelSize.z});
+            {grid.voxelSize.x, grid.voxelSize.y, grid.voxelSize.z},
+            double(mPointCloud.opacityThreshold));
         grid.solidVoxelCount = static_cast<uint32_t>(points.seeds.size());
         static_assert(sizeof(PointCloudInitialization::Seed) == sizeof(uint32_t));
         if (!mpInitializePointCloudPass)
@@ -88,8 +89,11 @@ bool VoxelReconstructionNoLightTransport::initializePointCloudVoxelData(RenderCo
         mPointCloud.initialized = true;
         mLoadedReconstructionForViewing = false;
         const auto& stats = points.statistics;
-        mPointCloud.status = fmt::format("PLY: {} points, {} occupied voxels; {} outside, {} invalid",
-            stats.inputPoints, grid.solidVoxelCount, stats.outsidePoints, stats.invalidPoints);
+        mPointCloud.status = fmt::format(
+            "PLY: {} points, {} occupied voxels; {} outside, {} invalid, {} below alpha, {} coverage-capped; "
+            "{} cells covered (max {})",
+            stats.inputPoints, grid.solidVoxelCount, stats.outsidePoints, stats.invalidPoints,
+            stats.droppedByOpacity, stats.cappedCoverage, stats.coveredCells, stats.maxCoveredCells);
         logInfo("Point-cloud initialization: {}. {}. Coordinates: NeRF (x,y,z) -> Falcor (x,z,-y).", path.string(), mPointCloud.status);
         return true;
     }
