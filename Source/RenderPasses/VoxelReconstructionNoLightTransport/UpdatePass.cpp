@@ -46,10 +46,10 @@ void VoxelReconstructionNoLightTransport::runUpdatePass(RenderContext* pRenderCo
     //mUpdatePass.mpComputePass->addDefine("CHECK_COVERAGE", mRayMarchingPass.mCheckCoverage ? "1" : "0");
 
     // 几何学习率由 scale 派生，放在这里而不是 renderUIUpdatePass 里.
-    // 因为面板收起时那个函数会提前 return，mLrCenter/mLrB 就会停在 init() 的 0.
+    // Keep derived learning rates independent of whether the UI panel is open.
     // 于是"几何学不学"隐式地取决于 UI 面板有没有展开.
     mUpdatePass.mLrCenter = mLrCenterScale * 1e-3f;
-    mUpdatePass.mLrB = mLrBScale * 1e-1f;
+    mUpdatePass.mLrShape = mLrShapeScale * 1e-3f;
 
     // prune 默认关闭. pruneEllipsoid 直接写 occupied = 0.
     // 而全工程只有初始化阶段会写回 1，被删的体素本次运行里永远回不来.
@@ -72,7 +72,7 @@ void VoxelReconstructionNoLightTransport::runUpdatePass(RenderContext* pRenderCo
     cb["gGradScale"] = mUpdatePass.mGradScale;
     cb["gLrRadiance"] = mUpdatePass.mLrRadiance;
     cb["gLrCenter"] = mUpdatePass.mLrCenter;
-    cb["gLrB"] = mUpdatePass.mLrB;
+    cb["gLrShape"] = mUpdatePass.mLrShape;
     cb["gLrOpacity"] = mUpdatePass.mLrOpacity;
     //cb["gVoxelSHGradDim"] = mVoxelSHGradDim;
     cb["gEllipsoidPruneThreshold"] = mUpdatePass.mEllipsoidPruneThreshold;
@@ -109,10 +109,10 @@ void VoxelReconstructionNoLightTransport::renderUIUpdatePass(Gui::Widgets& widge
     // 实际取值在 runUpdatePass 里由 scale 派生，这里只改 scale，并显示派生结果.
     group.var("LR center scale(1000x)", mLrCenterScale, 0.0f, 1.0f, 1e-6f);
 
-    group.var("LR B scale(10x)", mLrBScale, 0.0f, 1.0f, 1e-7f);
+    group.var("LR shape scale(1000x)", mLrShapeScale, 0.0f, 1.0f, 1e-6f);
 
-    // 显示的是 runUpdatePass 实际用的值：lrCenter = scale * 1e-3, lrB = scale * 1e-1.
-    group.text("  -> LR center = " + std::to_string(mUpdatePass.mLrCenter) + ",  LR B = " + std::to_string(mUpdatePass.mLrB));
+    group.text("  -> LR center = " + std::to_string(mUpdatePass.mLrCenter) +
+        ",  LR shape = " + std::to_string(mUpdatePass.mLrShape));
 
     group.var("Ellipsoid Prune Threshold", mUpdatePass.mEllipsoidPruneThreshold, 0.0f, 1.0f, 1e-7f);
 

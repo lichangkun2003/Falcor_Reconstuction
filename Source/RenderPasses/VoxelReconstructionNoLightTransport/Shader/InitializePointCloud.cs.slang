@@ -25,8 +25,9 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     VoxelData data = (VoxelData)0;
     data.occupied = 1;
     data.ellipsoid.center = float3(0.5f);
-    float invR2 = 1.f / (0.6f * 0.6f);
-    data.ellipsoid.B = float3x3(invR2, 0.f, 0.f, 0.f, invR2, 0.f, 0.f, 0.f, invR2);
+    float3 initialScale = max(0.6f * gGridDataParamBlock.voxelSize, float3(1e-8f));
+    data.ellipsoid.logScale = log(initialScale);
+    data.ellipsoid.rotation = float4(1.0f, 0.0f, 0.0f, 0.0f);
     // Point clouds determine occupancy only. All radiance SH coefficients start at zero (black).
     data.radiance.init();
     // Same opacity.init() as mode 3: zero logit SH, sigmoid(0) = 0.5.

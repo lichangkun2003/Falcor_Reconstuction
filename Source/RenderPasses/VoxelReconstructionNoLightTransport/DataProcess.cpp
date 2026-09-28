@@ -36,7 +36,7 @@
 
 namespace
 {
-constexpr uint32_t kReconstructionMagic = 0x56525831;
+constexpr uint32_t kReconstructionMagic = 0x56525832; // "VRX2"
 
 bool samePathComponent(const std::filesystem::path& a, const std::filesystem::path& b)
 {
@@ -85,10 +85,10 @@ uint64_t checkedVoxelCount(uint3 count, uint32_t dimensionLimit)
     return elements * count.z;
 }
 
-// v1 文件头 = magic + version + voxelCount + voxelDataSize, 之后紧跟稠密的 payload.
+// v2 header = magic + version + voxelCount + voxelDataSize, followed by the dense payload.
 // 调用方自己读 payload, 返回时 in 停在第一个数据字节.
 // mode1/3 的 loadReconstruction 和 loadBakedReconstruction 共用它, 两边校验不会跑偏.
-void readV1ReconstructionHeader(std::ifstream& in, const std::filesystem::path& path, uint32_t dimensionLimit,
+void readCurrentReconstructionHeader(std::ifstream& in, const std::filesystem::path& path, uint32_t dimensionLimit,
     GridData& grid, uint32_t& resolution, uint64_t& byteSize)
 {
     uint32_t magic = 0, version = 0, voxelDataSize = 0;
@@ -96,8 +96,8 @@ void readV1ReconstructionHeader(std::ifstream& in, const std::filesystem::path& 
     in.read(reinterpret_cast<char*>(&version), sizeof(version));
     in.read(reinterpret_cast<char*>(&grid.voxelCount), sizeof(grid.voxelCount));
     in.read(reinterpret_cast<char*>(&voxelDataSize), sizeof(voxelDataSize));
-    if (!in || magic != kReconstructionMagic || version != 1)
-        throw std::runtime_error("This mode loads its current version 1 reconstruction files.");
+    if (!in || magic != kReconstructionMagic || version != 2)
+        throw std::runtime_error("This build loads version 2 Gaussian-ellipsoid reconstruction files.");
     if (voxelDataSize != sizeof(VoxelData))
         throw std::runtime_error("Reconstruction VoxelData layout differs from the current build.");
     const uint64_t elementCount = checkedVoxelCount(grid.voxelCount, dimensionLimit);
@@ -108,7 +108,7 @@ void readV1ReconstructionHeader(std::ifstream& in, const std::filesystem::path& 
     const uint64_t headerSize = sizeof(magic) + sizeof(version) + sizeof(grid.voxelCount) + sizeof(voxelDataSize);
     if (std::filesystem::file_size(path) != headerSize + byteSize)
         throw std::runtime_error("Reconstruction file size does not match its voxel dimensions and layout.");
-    // v1 不存 AABB, 靠这个固定的 NeRF 重建域反推: extent = 2.6f * 1.02f.
+    // v2 does not store the AABB; recover the fixed NeRF reconstruction extent here.
     // Voxelization 那边必须按同一个 AABB 建格, 即勾选 "Match Reconstruction Grid";
     // 否则椭球会被放到错的位置.
     constexpr float extent = 2.6f * 1.02f;
@@ -136,8 +136,8 @@ std::string VoxelReconstructionNoLightTransport::getOptimizedParamTag() const
     if (mUpdatePass.mLrCenter > 0.0f)
         tags.push_back("center");
 
-    if (mUpdatePass.mLrB > 0.0f)
-        tags.push_back("B");
+    if (mUpdatePass.mLrShape > 0.0f)
+        tags.push_back("shape");
 
 
     if (tags.empty())
@@ -243,8 +243,8 @@ void VoxelReconstructionNoLightTransport::saveReconstruction(RenderContext* pRen
         return;
     }
 
-    uint32_t magic = 0x56525831; // "VRX1"
-    uint32_t version = 1;
+    uint32_t magic = kReconstructionMagic;
+    uint32_t version = 2;
     uint3 voxelCount = mGridResources.gridData.voxelCount;
     uint32_t voxelDataSize = sizeof(VoxelData);
 
@@ -283,7 +283,7 @@ void VoxelReconstructionNoLightTransport::loadReconstruction(RenderContext* pRen
         GridData grid{};
         uint32_t resolution = 0;
         uint64_t elementCount = 0, byteSize = 0;
-        readV1ReconstructionHeader(in, path, dimensionLimit, grid, resolution, byteSize);
+        readCurrentReconstructionHeader(in, path, dimensionLimit, grid, resolution, byteSize);
         elementCount = byteSize / sizeof(VoxelData);
         std::vector<uint8_t> data(static_cast<size_t>(byteSize));
         in.read(reinterpret_cast<char*>(data.data()), std::streamsize(byteSize));
@@ -362,7 +362,7 @@ void VoxelReconstructionNoLightTransport::loadBakedReconstruction(
         GridData grid{};
         uint32_t resolution = 0;
         uint64_t byteSize = 0;
-        readV1ReconstructionHeader(in, path, dimensionLimit, grid, resolution, byteSize);
+        readCurrentReconstructionHeader(in, path, dimensionLimit, grid, resolution, byteSize);
 
         std::vector<uint8_t> data(static_cast<size_t>(byteSize));
         in.read(reinterpret_cast<char*>(data.data()), std::streamsize(byteSize));

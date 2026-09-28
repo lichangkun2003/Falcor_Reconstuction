@@ -116,52 +116,30 @@ void calcVoxelLocalSegment(float3 cell,float3 direction,int3 cellInt,out float3 
 
 
 
-float evalEllipsoidImplicit(Ellipsoid ellipsoid, float3 xLocal)
-{
-    float3 q = xLocal - ellipsoid.center;
-    float3 Bq = mul(ellipsoid.B, q);
-    return dot(q, Bq) - 1.0f;
-}
-
-// 计算 ray segment 上的最小值
+// Compute the minimum implicit value on the ray segment.
 void calcEllipsoidGMinOnSegment(
-    Ellipsoid ellipsoid,
+    GaussianEllipsoid ellipsoid,
     float3 localFrom,
     float3 localTo,
     int3 cellInt,
     out float gmin,
     out float3 xStarGlobal)
 {
-    float3 seg = localTo - localFrom;
-
-    float3 o = localFrom;
-    float3 d = seg;
-
-    float3 m = o - ellipsoid.center;
-
-    float3 Bd = mul(ellipsoid.B, d);
-    float3 Bm = mul(ellipsoid.B, m);
-
-    float a = dot(d, Bd);
-    float b = 2.0f * dot(d, Bm);
-    float c = dot(m, Bm) - 1.0f;
-
-    float tStar = 0.0f;
-
-    if (abs(a) > 1e-8f)
-        tStar = clamp(-b / (2.0f * a), 0.0f, 1.0f);
-    else
-        tStar = 0.0f;
-
-    float3 xStarLocal = localFrom + tStar * seg;
-
-    gmin = evalEllipsoidImplicit(ellipsoid, xStarLocal);
+    float3 xStarLocal;
+    calcGaussianEllipsoidMinimumOnSegment(
+        ellipsoid,
+        localFrom,
+        localTo,
+        voxelSize,
+        gmin,
+        xStarLocal
+    );
 
     xStarGlobal = float3(cellInt) + xStarLocal;
 }
 
 float calcCandidateSortScore(
-    Ellipsoid ellipsoid,
+    GaussianEllipsoid ellipsoid,
     int3 cellInt,
     float gmin,
     float3 xStarCell,
@@ -175,15 +153,11 @@ float calcCandidateSortScore(
     float3 xLocal =
         xStarCell - float3(cellInt);
 
-    float3 q =
-        xLocal - ellipsoid.center;
-
-    float3 Bq =
-        mul(ellipsoid.B, q);
-
-    float3 gradPhiWorld =
-        (2.0f * Bq) /
-        max(voxelSize, float3(1e-6f));
+    float3 gradPhiWorld = gaussianEllipsoidImplicitGradientWorld(
+        ellipsoid,
+        xLocal,
+        voxelSize
+    );
 
     float gradNormWorld =
         max(length(gradPhiWorld), 1e-6f);
@@ -232,7 +206,7 @@ float calcCandidateSortScore(
 
 
 // 先后用体素和椭球裁剪线段
-HitResult checkPrimitive(Ellipsoid ellipsoid, float3 cell, float3 direction, int3 cellInt)
+HitResult checkPrimitive(GaussianEllipsoid ellipsoid, float3 cell, float3 direction, int3 cellInt)
 {
     float3 localFrom;
     float3 localTo;
@@ -252,7 +226,7 @@ HitResult checkPrimitive(Ellipsoid ellipsoid, float3 cell, float3 direction, int
         xStarGlobal
     );
 
-    float2 inOut = ellipsoid.clip(localFrom, localTo);
+    float2 inOut = clipGaussianEllipsoid(ellipsoid, localFrom, localTo, voxelSize);
 
     bool hardHit =
         inOut.x >= 0.0f;
@@ -316,7 +290,7 @@ HitResult rayMarchingDDA(
             return hit;
 #else
             uint offset = CellToIndex(cellInt, gGridDataParamBlock.voxelCount);
-            Ellipsoid ellipsoid = gGridDataParamBlock.gridDataBuffer[offset].ellipsoid;
+            GaussianEllipsoid ellipsoid = gGridDataParamBlock.gridDataBuffer[offset].ellipsoid;
             HitResult hit = checkPrimitive(ellipsoid, cell, direction, cellInt);
 
             // hard-hit不放入candidate数组，直接返回。

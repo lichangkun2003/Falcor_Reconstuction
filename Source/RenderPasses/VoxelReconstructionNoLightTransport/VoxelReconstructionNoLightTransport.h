@@ -51,6 +51,10 @@
 
 using namespace Falcor;
 
+static_assert(sizeof(GaussianEllipsoid) == 40, "GaussianEllipsoid host/device layout changed.");
+static_assert(sizeof(VoxelData) == 188, "VoxelData host/device layout changed.");
+static_assert(sizeof(GradRecord) == 188, "GradRecord host/device layout changed.");
+
 namespace
 {
 const std::string ReflectTypesShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/ReflectTypes.cs.slang";
@@ -70,11 +74,11 @@ inline std::string kAccumulateOutputColor = "AccuColor";
 
 // Relative paths are rooted at the Falcor source project, independently of the process working directory.
 inline std::string ReconstructionDataDir = "Reconstruction_Output";
-inline std::string ReferenceImageDir = "Reconstruction_Input/ship";
-inline std::string ReferenceCameraFile = "Reconstruction_Input/ship/transforms_train.json";
+inline std::string ReferenceImageDir = "Reconstruction_Input/hotdog";
+inline std::string ReferenceCameraFile = "Reconstruction_Input/hotdog/transforms_train.json";
 
 // 烘焙产物目录，由 Voxelization 的 RayMarchingPass 写出，文件名形如
-// <scene>_bake_<x>x<y>x<z>.bin，内容就是本工程 v1 的点云格式。
+// <scene>_bake_<x>x<y>x<z>.bin，内容就是本工程 v2 的 GaussianEllipsoid 格式。
 // 注意它和 ReconstructionDataDir 是两个来源：这边的文件有意不经过 mode 目录校验
 // （见 DataProcess.cpp 的 requireModeFile），所以走独立的加载入口。
 inline std::string BakeOutputDir = "resource/new";
@@ -234,7 +238,7 @@ public:
 
         float mLrRadiance;
         float mLrCenter;
-        float mLrB;
+        float mLrShape;
         float mLrOpacity;
 
         // Prune Ellipsoid
@@ -249,10 +253,10 @@ public:
             mGradScale = 1.0f;
 
             mLrRadiance = 0.1f;
-            mLrOpacity = 0.1f;
+            mLrOpacity = 10.0f;
 
             mLrCenter = 0.f;
-            mLrB = 0.f;
+            mLrShape = 0.f;
 
             mEllipsoidPruneThreshold = 0.03f;
             mEnableEllipsoidPruning = false;
@@ -306,7 +310,7 @@ private:
         const void* voxelData = nullptr, size_t byteSize = 0);
     void resetLoadedReconstruction(RenderContext* pRenderContext);
 
-    // 读取 Voxelization 烘焙出的结果（BakeOutputDir，v1 点云格式），不走 mode 目录校验。
+    // Load Voxelization bake results in the v2 GaussianEllipsoid format.
     void refreshBakedFileList();
     void loadBakedReconstruction(RenderContext* pRenderContext, const std::filesystem::path& path);
 
@@ -376,9 +380,9 @@ private:
     std::string mReconstructionIOStatus;
     std::string mReferenceDataError;
     // 几何学习率的总开关. 实际值在 runUpdatePass 里由 scale 派生，和 UI 面板是否展开无关:
-    // lrCenter = scale * 1e-3, lrB = scale * 1e-1.
+    // lrCenter = scale * 1e-3, lrShape = scale * 1e-3.
     float mLrCenterScale = 0.5f;
-    float mLrBScale = 1.0f;
+    float mLrShapeScale = 1.0f;
     std::vector<std::filesystem::path> mReconstructionFilePaths;
     uint32_t mSelectedReconstructionFile = 0;
     std::string mReconstructionNameTag = "";

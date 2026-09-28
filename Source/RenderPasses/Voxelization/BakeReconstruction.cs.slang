@@ -25,17 +25,19 @@
 // 偏移（StructuredBuffer 的紧凑排布，float3 按 4 字节对齐）：
 //     0  uint       occupied
 //     4  float3     ellipsoid.center
-//    16  float3x3   ellipsoid.B
-//    52  float3[9]  radiance.coefficients
-//   160  float[9]   opacity.coefficients
-//   196  总大小
+//    16  float3     ellipsoid.logScale
+//    28  float4     ellipsoid.rotation (w, x, y, z)
+//    44  float3[9]  radiance.coefficients
+//   152  float[9]   opacity.coefficients
+//   188  total bytes
 // 任一字段改动都必须同步改那边的 VoxelData.slang / SphericalHarmonics.slang，
-// 并且两边 sizeof 都必须是 196（重建端加载时会校验 voxelDataSize，对不上会直接报错）。
+// Both sides must report sizeof == 188; the loader rejects a different layout.
 // ---------------------------------------------------------------------------
 struct ReconEllipsoid
 {
     float3 center;
-    float3x3 B;
+    float3 logScale;
+    float4 rotation;
 };
 
 struct ReconVoxelData
@@ -47,6 +49,53 @@ struct ReconVoxelData
 };
 
 RWStructuredBuffer<ReconVoxelData> bakeOutput;
+
+float4 bakeRotationMatrixToQuaternion(float3x3 rotation)
+{
+    float4 q;
+    float trace = rotation[0][0] + rotation[1][1] + rotation[2][2];
+    if (trace > 0.0f)
+    {
+        float s = 2.0f * sqrt(max(trace + 1.0f, 1e-12f));
+        q = float4(
+            0.25f * s,
+            (rotation[2][1] - rotation[1][2]) / s,
+            (rotation[0][2] - rotation[2][0]) / s,
+            (rotation[1][0] - rotation[0][1]) / s
+        );
+    }
+    else if (rotation[0][0] > rotation[1][1] && rotation[0][0] > rotation[2][2])
+    {
+        float s = 2.0f * sqrt(max(1.0f + rotation[0][0] - rotation[1][1] - rotation[2][2], 1e-12f));
+        q = float4(
+            (rotation[2][1] - rotation[1][2]) / s,
+            0.25f * s,
+            (rotation[0][1] + rotation[1][0]) / s,
+            (rotation[0][2] + rotation[2][0]) / s
+        );
+    }
+    else if (rotation[1][1] > rotation[2][2])
+    {
+        float s = 2.0f * sqrt(max(1.0f + rotation[1][1] - rotation[0][0] - rotation[2][2], 1e-12f));
+        q = float4(
+            (rotation[0][2] - rotation[2][0]) / s,
+            (rotation[0][1] + rotation[1][0]) / s,
+            0.25f * s,
+            (rotation[1][2] + rotation[2][1]) / s
+        );
+    }
+    else
+    {
+        float s = 2.0f * sqrt(max(1.0f + rotation[2][2] - rotation[0][0] - rotation[1][1], 1e-12f));
+        q = float4(
+            (rotation[1][0] - rotation[0][1]) / s,
+            (rotation[0][2] + rotation[2][0]) / s,
+            (rotation[1][2] + rotation[2][1]) / s,
+            0.25f * s
+        );
+    }
+    return q * rsqrt(max(dot(q, q), 1e-20f));
+}
 
 cbuffer BakeCB
 {
@@ -84,7 +133,8 @@ void main(uint3 tid : SV_DispatchThreadID)
     ReconVoxelData outData;
     outData.occupied = 0;
     outData.ellipsoid.center = float3(0);
-    outData.ellipsoid.B = float3x3(0, 0, 0, 0, 0, 0, 0, 0, 0);
+    outData.ellipsoid.logScale = float3(0);
+    outData.ellipsoid.rotation = float4(1, 0, 0, 0);
     for (int i = 0; i < BAKE_SH_COUNT; i++)
     {
         outData.radiance[i] = float3(0);
@@ -172,7 +222,19 @@ void main(uint3 tid : SV_DispatchThreadID)
 
     outData.occupied = 1;
     outData.ellipsoid.center = e.center;
-    outData.ellipsoid.B = e.B;
+    float3x3 principalToLocal;
+    float3 inverseAxisSquared;
+    eigenSym3_Jacobi(e.B, principalToLocal, inverseAxisSquared);
+    inverseAxisSquared = max(inverseAxisSquared, float3(1e-12f));
+    if (determinant(principalToLocal) < 0.0f)
+    {
+        principalToLocal[0][2] = -principalToLocal[0][2];
+        principalToLocal[1][2] = -principalToLocal[1][2];
+        principalToLocal[2][2] = -principalToLocal[2][2];
+    }
+    float3 worldScale = max(voxelSize * rsqrt(inverseAxisSquared), float3(1e-8f));
+    outData.ellipsoid.logScale = log(worldScale);
+    outData.ellipsoid.rotation = bakeRotationMatrixToQuaternion(principalToLocal);
     for (int i = 0; i < BAKE_SH_COUNT; i++)
     {
         outData.radiance[i] = radianceCoeff[i];

@@ -48,108 +48,29 @@ cbuffer CB {
         }                                                                                                              \
     }
 
-//void calcGeometryGradFromCandidate(
-//    GeometryCandidateRecord cand,
-//    float3 dL_dC,
-//    bool isReferenceBackground,
-//    out GradRecord geometryGradRecord)
-//{
-//    geometryGradRecord.init();
+void fillGaussianEllipsoidGradient(
+    GaussianEllipsoid ellipsoid,
+    float3 xLocal,
+    float dL_dG,
+    out GradRecord geometryGradRecord)
+{
+    float3 voxelSize = max(gGridDataParamBlock.voxelSize, float3(1e-8f));
+    float3x3 rotation = gaussianRotationMatrix(ellipsoid.rotation);
+    float3 qWorld = (xLocal - ellipsoid.center) * voxelSize;
+    float3 principal = mul(transpose(rotation), qWorld);
+    float3 invScaleSquared = exp(clamp(-2.0f * ellipsoid.logScale, float3(-60.0f), float3(60.0f)));
+    float3 weightedPrincipal = principal * invScaleSquared;
 
-//    if (cand.valid == 0)
-//        return;
+    geometryGradRecord.geometryValid = 1;
+    geometryGradRecord.center = dL_dG * (-2.0f * mul(rotation, weightedPrincipal) * voxelSize);
+    geometryGradRecord.logScale = dL_dG * (-2.0f * weightedPrincipal * principal);
+    // The quaternion update applies a local/right-multiplied axis-angle step.
+    geometryGradRecord.rotation = dL_dG * (2.0f * cross(weightedPrincipal, principal));
 
-//    if (any(cand.cellInt < int3(0)) || any(cand.cellInt >= int3(gVoxelCount)))
-//        return;
-
-//    if (!isSolidVoxel(cand.cellInt))
-//        return;
-
-//    uint voxelIndex = CellToIndex(uint3(cand.cellInt), gVoxelCount);
-
-//    VoxelData voxel = gGridDataParamBlock.gridDataBuffer[voxelIndex];
-
-//    if (voxel.occupied == 0)
-//        return;
-
-//    float tau = max(gGeometryTau, 1e-5f);
-
-//    float gmin = cand.gmin;
-
-//    if (isBadFloat(gmin))
-//        return;
-
-//    float w = sigmoid(-gmin / tau);
-
-//    float3 LCandidate = cand.radiance.xyz;
-//    float3 CBehind = cand.behindColor.xyz;
-
-//    LCandidate = sanitizeFloat3(LCandidate);
-//    CBehind = sanitizeFloat3(CBehind);
-
-//    //// dLoss / dw
-//    // float dL_dW = dot(dL_dC, LCandidate - CBehind);
-//    //// dw / dgmin
-//    // float dW_dG = -w * (1.0f - w) / tau;
-//    // float dL_dG = dL_dW * dW_dG;
-//    float dL_dG = 0.0f;
-//    if (isReferenceBackground)
-//    {
-//        dL_dG = -0.01 * w / tau;
-//    }
-//    else
-//    {
-//        float dL_dW =
-//        dot(dL_dC, LCandidate - CBehind);
-
-//        float dW_dG =
-//        -w * (1.0f - w) / tau;
-
-//        dL_dG = dL_dW * dW_dG;
-//    }
-
-
-//    dL_dG = sanitizeFloat(dL_dG);
-
-//    // 防止几何梯度爆炸
-//    dL_dG = clamp(dL_dG, -gGeometryGradClamp, gGeometryGradClamp);
-
-//    Ellipsoid e = voxel.ellipsoid;
-
-//    // xStar 是 global cell-space，转 voxel local
-//    float3 xLocal = cand.xStar.xyz - float3(cand.cellInt);
-
-//    float3 q = xLocal - e.center;
-
-//    q = sanitizeFloat3(q);
-
-//    float3 Bq = mul(e.B, q);
-
-//    Bq = sanitizeFloat3(Bq);
-
-//    geometryGradRecord.geometryValid = 1;
-
-//    // dF / dCenter = -2 B q
-//    geometryGradRecord.center = dL_dG * (-2.0f * Bq);
-
-//    // dF / dB
-//    geometryGradRecord.B00 = dL_dG * q.x * q.x;
-//    geometryGradRecord.B11 = dL_dG * q.y * q.y;
-//    geometryGradRecord.B22 = dL_dG * q.z * q.z;
-
-//    // B is symmetric, off-diagonal appears twice
-//    geometryGradRecord.B01 = dL_dG * 2.0f * q.x * q.y;
-//    geometryGradRecord.B02 = dL_dG * 2.0f * q.x * q.z;
-//    geometryGradRecord.B12 = dL_dG * 2.0f * q.y * q.z;
-
-//    geometryGradRecord.center = sanitizeFloat3(geometryGradRecord.center);
-//    geometryGradRecord.B00 = sanitizeFloat(geometryGradRecord.B00);
-//    geometryGradRecord.B11 = sanitizeFloat(geometryGradRecord.B11);
-//    geometryGradRecord.B22 = sanitizeFloat(geometryGradRecord.B22);
-//    geometryGradRecord.B01 = sanitizeFloat(geometryGradRecord.B01);
-//    geometryGradRecord.B02 = sanitizeFloat(geometryGradRecord.B02);
-//    geometryGradRecord.B12 = sanitizeFloat(geometryGradRecord.B12);
-//}
+    geometryGradRecord.center = sanitizeFloat3(geometryGradRecord.center);
+    geometryGradRecord.logScale = sanitizeFloat3(geometryGradRecord.logScale);
+    geometryGradRecord.rotation = sanitizeFloat3(geometryGradRecord.rotation);
+}
 
 void calcHardHitGeometryGrad(
     VoxelRecord voxelRec,
@@ -224,7 +145,7 @@ void calcHardHitGeometryGrad(
             gGeometryGradClamp
         );
 
-    Ellipsoid ellipsoid =
+    GaussianEllipsoid ellipsoid =
         voxel.ellipsoid;
 
     // xStar保存在global cell-space，
@@ -233,33 +154,7 @@ void calcHardHitGeometryGrad(
         voxelRec.xStar.xyz -
         float3(cellInt);
 
-    float3 q =sanitizeFloat3(xLocal -ellipsoid.center);
-
-    float3 Bq =sanitizeFloat3(mul(ellipsoid.B, q));
-
-    geometryGradRecord.geometryValid = 1;
-
-    // dg/dcenter = -2Bq
-    geometryGradRecord.center =dL_dG *(-2.0f * Bq);
-
-    // dg/dB
-    geometryGradRecord.B00 =dL_dG * q.x * q.x;
-    geometryGradRecord.B11 =dL_dG * q.y * q.y;
-    geometryGradRecord.B22 =dL_dG * q.z * q.z;
-
-    // B是对称矩阵，非对角参数出现两次
-    geometryGradRecord.B01 = dL_dG * 2.0f * q.x * q.y;
-    geometryGradRecord.B02 = dL_dG * 2.0f * q.x * q.z;
-    geometryGradRecord.B12 = dL_dG * 2.0f * q.y * q.z;
-
-    geometryGradRecord.center = sanitizeFloat3( geometryGradRecord.center);
-
-    geometryGradRecord.B00 = sanitizeFloat( geometryGradRecord.B00);
-    geometryGradRecord.B11 = sanitizeFloat( geometryGradRecord.B11);
-    geometryGradRecord.B22 = sanitizeFloat( geometryGradRecord.B22);
-    geometryGradRecord.B01 = sanitizeFloat( geometryGradRecord.B01);
-    geometryGradRecord.B02 = sanitizeFloat( geometryGradRecord.B02);
-    geometryGradRecord.B12 = sanitizeFloat( geometryGradRecord.B12);
+    fillGaussianEllipsoidGradient(ellipsoid, xLocal, dL_dG, geometryGradRecord);
 }
 
 void calcMissCandidateGeometryGrad(
@@ -316,35 +211,12 @@ void calcMissCandidateGeometryGrad(
 
     dL_dG =clamp( sanitizeFloat(dL_dG),- gGeometryGradClamp, gGeometryGradClamp);
 
-    Ellipsoid ellipsoid = voxel.ellipsoid;
+    GaussianEllipsoid ellipsoid = voxel.ellipsoid;
 
     // cand.xStar 是 global cell-space。
     float3 xLocal = cand.xStar.xyz - float3(cellInt);
 
-    float3 q =sanitizeFloat3(xLocal - ellipsoid.center);
-    float3 Bq =sanitizeFloat3(mul(ellipsoid.B, q));
-
-    geometryGradRecord.geometryValid = 1;
-
-    // dg / dcenter = -2Bq
-    geometryGradRecord.center = dL_dG * (-2.0f * Bq);
-
-    // dg / dB
-    geometryGradRecord.B00 = dL_dG * q.x * q.x;
-    geometryGradRecord.B11 = dL_dG * q.y * q.y;
-    geometryGradRecord.B22 = dL_dG * q.z * q.z;
-    geometryGradRecord.B01 = dL_dG * 2.0f * q.x * q.y;
-    geometryGradRecord.B02 = dL_dG * 2.0f * q.x * q.z;
-    geometryGradRecord.B12 = dL_dG * 2.0f * q.y * q.z;
-
-    geometryGradRecord.center =sanitizeFloat3(geometryGradRecord.center);
-
-    geometryGradRecord.B00 = sanitizeFloat(geometryGradRecord.B00);
-    geometryGradRecord.B11 = sanitizeFloat(geometryGradRecord.B11);
-    geometryGradRecord.B22 = sanitizeFloat(geometryGradRecord.B22);
-    geometryGradRecord.B01 = sanitizeFloat(geometryGradRecord.B01);
-    geometryGradRecord.B02 = sanitizeFloat(geometryGradRecord.B02);
-    geometryGradRecord.B12 = sanitizeFloat(geometryGradRecord.B12);
+    fillGaussianEllipsoidGradient(ellipsoid, xLocal, dL_dG, geometryGradRecord);
 }
 
 
@@ -365,30 +237,12 @@ void accumulateGeometryGradRecord(uint indexGradBuffer, GradRecord gradRecord)
         gradRecord.center.z
     );
 
-    INTERLOCKED_ADD_FLOAT(
-        gGradBuffer[indexGradBuffer].B00,
-        gradRecord.B00
-    );
-    INTERLOCKED_ADD_FLOAT(
-        gGradBuffer[indexGradBuffer].B11,
-        gradRecord.B11
-    );
-    INTERLOCKED_ADD_FLOAT(
-        gGradBuffer[indexGradBuffer].B22,
-        gradRecord.B22
-    );
-    INTERLOCKED_ADD_FLOAT(
-        gGradBuffer[indexGradBuffer].B01,
-        gradRecord.B01
-    );
-    INTERLOCKED_ADD_FLOAT(
-        gGradBuffer[indexGradBuffer].B02,
-        gradRecord.B02
-    );
-    INTERLOCKED_ADD_FLOAT(
-        gGradBuffer[indexGradBuffer].B12,
-        gradRecord.B12
-    );
+    INTERLOCKED_ADD_FLOAT(gGradBuffer[indexGradBuffer].logScale.x, gradRecord.logScale.x);
+    INTERLOCKED_ADD_FLOAT(gGradBuffer[indexGradBuffer].logScale.y, gradRecord.logScale.y);
+    INTERLOCKED_ADD_FLOAT(gGradBuffer[indexGradBuffer].logScale.z, gradRecord.logScale.z);
+    INTERLOCKED_ADD_FLOAT(gGradBuffer[indexGradBuffer].rotation.x, gradRecord.rotation.x);
+    INTERLOCKED_ADD_FLOAT(gGradBuffer[indexGradBuffer].rotation.y, gradRecord.rotation.y);
+    INTERLOCKED_ADD_FLOAT(gGradBuffer[indexGradBuffer].rotation.z, gradRecord.rotation.z);
 }
 
 void calcAppearanceGrad(

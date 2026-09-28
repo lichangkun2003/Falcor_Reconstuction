@@ -10,7 +10,7 @@ cbuffer GridData {
     uint solidVoxelCount;
 
     float gLrCenter;
-    float gLrB;
+    float gLrShape;
     float gLrRadiance;
     float gLrOpacity;
 }
@@ -90,17 +90,11 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
             data.ellipsoid.center = float3(0.5f, 0.5f, 0.5f);
         }
 
-        // phi = (x-c)^T B (x-c) - 1
-        if (gLrB > 0.0f)
+        if (gLrShape > 0.0f)
         {
-            float r = 0.6f;
-            float invR2 = 1.0f / max(r * r, 1e-6f);
-
-            data.ellipsoid.B = float3x3(
-                invR2, 0.0f, 0.0f,
-                0.0f, invR2, 0.0f,
-                0.0f, 0.0f, invR2
-            );
+            float3 initialScale = max(0.6f * gGridDataParamBlock.voxelSize, float3(1e-8f));
+            data.ellipsoid.logScale = log(initialScale);
+            data.ellipsoid.rotation = float4(1.0f, 0.0f, 0.0f, 0.0f);
         }
 
         gGridDataParamBlock.gridDataBuffer[index] = data;

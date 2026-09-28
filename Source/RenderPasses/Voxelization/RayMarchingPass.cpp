@@ -16,14 +16,19 @@ const std::string kOutputColor = "color";
 struct BakeVoxelData
 {
     uint32_t occupied;
-    Ellipsoid ellipsoid;
+    struct
+    {
+        float3 center;
+        float3 logScale;
+        float4 rotation;
+    } ellipsoid;
     float3 radiance[9];
     float opacity[9];
 };
-static_assert(sizeof(BakeVoxelData) == 196, "Bake layout must match VoxelReconstructionNoLightTransport::VoxelData");
+static_assert(sizeof(BakeVoxelData) == 188, "Bake layout must match VoxelReconstructionNoLightTransport::VoxelData");
 
 // 重建端 v1 文件头的魔数，必须与 DataProcess.cpp 里的 kReconstructionMagic 相同
-constexpr uint32_t kBakeMagic = 0x56525831; // "VRX1"
+constexpr uint32_t kBakeMagic = 0x56525832; // "VRX2"
 } // namespace
 
 RayMarchingPass::RayMarchingPass(ref<Device> pDevice, const Properties& props)
@@ -322,7 +327,7 @@ void RayMarchingPass::bakeReconstruction(RenderContext* pRenderContext, const Re
         std::ofstream out(path, std::ios::binary);
         if (!out)
             throw std::runtime_error("Cannot open for writing: " + path.string());
-        const uint32_t version = 1;
+        const uint32_t version = 2;
         const uint32_t voxelDataSize = (uint32_t)sizeof(BakeVoxelData);
         out.write(reinterpret_cast<const char*>(&kBakeMagic), sizeof(kBakeMagic));
         out.write(reinterpret_cast<const char*>(&version), sizeof(version));

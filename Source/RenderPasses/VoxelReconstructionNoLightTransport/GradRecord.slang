@@ -15,12 +15,10 @@ struct GradRecord
 
     // geometry gradient
     float3 center;
-    float B00;
-    float B11;
-    float B22;
-    float B01;
-    float B02;
-    float B12;
+    float3 logScale;
+    // Tangent-space rotation gradient. It is applied as a local axis-angle
+    // update to the persistent unit quaternion.
+    float3 rotation;
     uint geometryValid;
 
 
@@ -31,12 +29,8 @@ struct GradRecord
         opacityGrad.init();
 
         center = float3(0.0f);
-        B00 = 0.0f;
-        B11 = 0.0f;
-        B22 = 0.0f;
-        B01 = 0.0f;
-        B02 = 0.0f;
-        B12 = 0.0f;
+        logScale = float3(0.0f);
+        rotation = float3(0.0f);
         geometryValid = 0;
 
         

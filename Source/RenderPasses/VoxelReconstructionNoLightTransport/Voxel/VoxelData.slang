@@ -1,7 +1,7 @@
 #pragma once
 #include "../HostDeviceShared.slang"
 #include "ABSDF.slang"
-#include "../Math/Ellipsoid.slang"
+#include "../Math/GaussianEllipsoid.slang"
 #include "../Math/SphericalHarmonics.slang"
 #include "../Math/Triangle.slang"
 #include "Shading.slang"
@@ -13,7 +13,7 @@ BEGIN_NAMESPACE_FALCOR
 struct VoxelData
 {
     uint occupied = 0;
-    Ellipsoid ellipsoid;
+    GaussianEllipsoid ellipsoid;
     // SphericalHarmonics radianceR;
     // SphericalHarmonics radianceG;
     // SphericalHarmonics radianceB;

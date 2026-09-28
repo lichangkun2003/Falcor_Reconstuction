@@ -146,12 +146,17 @@ void VoxelReconstructionNoLightTransport::initializeOriginalVoxelData(RenderCont
 {
     // Preserve the original shader's learning-rate-dependent initialization.
     // In particular, do not clear gridDataBuffer: parameters may be retained when their learning rate is zero.
+    // Geometry rates are normally derived in runUpdatePass(). Derive them here as well so a reset
+    // performed before the first optimizer step still initializes a valid center and quaternion.
+    mUpdatePass.mLrCenter = mLrCenterScale * 1e-3f;
+    mUpdatePass.mLrShape = mLrShapeScale * 1e-3f;
+
     auto var = mpInitializeDataPass->getRootVar();
     var["gGridDataParamBlock"] = mpGridBlock;
 
     auto cb = var["GridData"];
     cb["gLrCenter"] = mUpdatePass.mLrCenter;
-    cb["gLrB"] = mUpdatePass.mLrB;
+    cb["gLrShape"] = mUpdatePass.mLrShape;
     cb["gLrRadiance"] = mUpdatePass.mLrRadiance;
     cb["gLrOpacity"] = mUpdatePass.mLrOpacity;
 

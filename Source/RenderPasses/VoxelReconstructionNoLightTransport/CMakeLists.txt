@@ -26,6 +26,7 @@ set(voxel_reconstruction_shared_headers
     Math/AABB.slang
     Math/Projection.slang
     Math/Ellipsoid.slang
+    Math/GaussianEllipsoid.slang
     Math/Polygon.slang
     Math/Triangle.slang
     Math/Sampling.slang
