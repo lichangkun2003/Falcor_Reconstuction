@@ -215,13 +215,13 @@ public:
         ref<ComputePass> mpComputePass;
         ref<Buffer> gradBuffer;
         float geometryGradClamp;
-        float geometryTau;
+        float geometryTauWorld;
 
         void init()
         {
             gradBuffer = nullptr;
             mpComputePass = nullptr;
-            geometryTau = GRID_RESOLUTION ==128 ? 0.15f :0.32f;
+            geometryTauWorld = 0.f; // Derived from the initial grid in createGradientPassResource().
             geometryGradClamp = 5.0f;
         }
     };

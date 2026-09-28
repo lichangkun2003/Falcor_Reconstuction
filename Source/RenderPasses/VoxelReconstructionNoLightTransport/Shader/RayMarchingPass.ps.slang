@@ -153,19 +153,14 @@ float calcCandidateSortScore(
     float3 xLocal =
         xStarCell - float3(cellInt);
 
-    float3 gradPhiWorld = gaussianEllipsoidImplicitGradientWorld(
-        ellipsoid,
-        xLocal,
-        voxelSize
-    );
+    float distanceWorld;
+    float distanceScale;
+    if (!calcGaussianEllipsoidWorldDistance(
+        ellipsoid, xLocal, voxelSize, gmin, distanceWorld, distanceScale))
+        return 1e30f;
 
-    float gradNormWorld =
-        max(length(gradPhiWorld), 1e-6f);
-
-    // 一阶 signed-distance approximation。
-    // 对 near-miss candidate，gmin >= 0。
-    float gapWorld =
-        max(gmin, 0.0f) / gradNormWorld;
+    // Use the same surface normalization as the geometry surrogate.
+    float gapWorld = max(distanceWorld, 0.0f);
 
     // ---------------------------------------------------------
     // 2. gap normalization

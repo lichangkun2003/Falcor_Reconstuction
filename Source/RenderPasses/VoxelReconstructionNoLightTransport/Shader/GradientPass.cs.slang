@@ -21,8 +21,8 @@ RWTexture2D<float4> dummy;
 cbuffer CB {
     uint2 gResolution;
     uint3 gVoxelCount;
-    float gGeometryTau;             // soft-hit sigmoid 温度，越小越接近 hard hit
-    float gGeometryGradClamp;       // 防止几何梯度爆炸
+    float gGeometryTauWorld;        // Soft-hit transition width in world units.
+    float gGeometryGradClamp;       // Clamp dL/dg after converting the world-distance gradient.
     float gBackgroundCarveWeight;   // 背景几何清除项的权重
     float gBinaryOpacityWeight;
 
@@ -99,16 +99,24 @@ void calcHardHitGeometryGrad(
     if (isBadFloat(gmin))
         return;
 
-    float tau = max(gGeometryTau, 1e-5f);
-    float w = sigmoid(-gmin / tau);
+    GaussianEllipsoid ellipsoid = voxel.ellipsoid;
+    float3 xLocal = voxelRec.xStar.xyz - float3(cellInt);
+    float distanceWorld;
+    float distanceScale;
+    if (!calcGaussianEllipsoidWorldDistance(
+        ellipsoid, xLocal, gGridDataParamBlock.voxelSize, gmin, distanceWorld, distanceScale))
+        return;
 
-    float dL_dG = 0.0f;
+    float tau = max(gGeometryTauWorld, 1e-8f);
+    float w = sigmoid(-distanceWorld / tau);
+
+    float dL_dDistance = 0.0f;
 
     if (isReferenceBackground)
     {
         // 当前函数只处理实际hard-hit，
         // 因此背景区域可以直接使用carve梯度。
-        dL_dG = -gBackgroundCarveWeight * w / tau;
+        dL_dDistance = -gBackgroundCarveWeight * w / tau;
     }
     else
     {
@@ -133,26 +141,18 @@ void calcHardHitGeometryGrad(
         float3 dC_dW =transmittanceBefore * opacity * (radiance - behindColor);
 
         float dL_dW = dot(dL_dC, dC_dW);
-        float dW_dG =-w *(1.0f - w) /tau;
+        float dW_dDistance = -w * (1.0f - w) / tau;
 
-        dL_dG = dL_dW * dW_dG;
+        dL_dDistance = dL_dW * dW_dDistance;
     }
 
-    dL_dG =
+    // Surface normalization is a stop-gradient preconditioner for the existing dg/d(theta).
+    float dL_dG =
         clamp(
-            sanitizeFloat(dL_dG),
+            sanitizeFloat(dL_dDistance * distanceScale),
             - gGeometryGradClamp,
             gGeometryGradClamp
         );
-
-    GaussianEllipsoid ellipsoid =
-        voxel.ellipsoid;
-
-    // xStar保存在global cell-space，
-    // 这里转换回当前体素局部坐标。
-    float3 xLocal =
-        voxelRec.xStar.xyz -
-        float3(cellInt);
 
     fillGaussianEllipsoidGradient(ellipsoid, xLocal, dL_dG, geometryGradRecord);
 }
@@ -188,8 +188,16 @@ void calcMissCandidateGeometryGrad(
     if (isBadFloat(gmin))
         return;
 
-    float tau = max(gGeometryTau, 1e-5f);
-    float w = sigmoid(-gmin / tau);
+    GaussianEllipsoid ellipsoid = voxel.ellipsoid;
+    float3 xLocal = cand.xStar.xyz - float3(cellInt);
+    float distanceWorld;
+    float distanceScale;
+    if (!calcGaussianEllipsoidWorldDistance(
+        ellipsoid, xLocal, gGridDataParamBlock.voxelSize, gmin, distanceWorld, distanceScale))
+        return;
+
+    float tau = max(gGeometryTauWorld, 1e-8f);
+    float w = sigmoid(-distanceWorld / tau);
 
     float3 radiance = sanitizeFloat3(voxel.radiance.calc(viewDir));
     radiance = max(radiance, 0.0f);
@@ -206,15 +214,10 @@ void calcMissCandidateGeometryGrad(
     */
     float3 dC_dW = transmittanceBefore * opacity * (radiance - candidateBehindColor);
     float dL_dW = dot(dL_dC, dC_dW);
-    float dW_dG = -w * (1.0f - w) / tau;
-    float dL_dG = dL_dW * dW_dG;
+    float dW_dDistance = -w * (1.0f - w) / tau;
+    float dL_dDistance = dL_dW * dW_dDistance;
 
-    dL_dG =clamp( sanitizeFloat(dL_dG),- gGeometryGradClamp, gGeometryGradClamp);
-
-    GaussianEllipsoid ellipsoid = voxel.ellipsoid;
-
-    // cand.xStar 是 global cell-space。
-    float3 xLocal = cand.xStar.xyz - float3(cellInt);
+    float dL_dG = clamp(sanitizeFloat(dL_dDistance * distanceScale), -gGeometryGradClamp, gGeometryGradClamp);
 
     fillGaussianEllipsoidGradient(ellipsoid, xLocal, dL_dG, geometryGradRecord);
 }

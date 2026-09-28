@@ -45,6 +45,14 @@ inline std::string ReferenceCameraFile = "Reconstruction_Input/hotdog/transforms
 
 占据状态只在初始化时确定，空体素不会在训练中自动生长。改用 3DGS 的覆盖式初始化后，只要高斯覆盖到位，原始点云的大孔洞就会被填上；代价是不再是严格的“有点才占据”，多占的体素目前只能靠背景射线剔除压掉（ellipsoid pruning 默认关闭）。pruning 和梯度更新沿用固定分辨率流程。
 
+## 几何代理的距离尺度
+
+前向仍使用硬椭球相交。几何反向的 soft-hit 权重改为 `w = sigmoid(-dWorld / tauWorld)`，其中 `dWorld = gmin / surfaceGradNorm` 是相交边界附近的一阶世界空间有符号距离近似，不是精确椭球 SDF。`surfaceGradNorm` 在沿主轴归一化方向投影到椭球表面的点计算，避免在椭球中心直接除以零梯度。中心附近方向不确定的射线跳过几何梯度，外观梯度仍正常计算。
+
+反向将 `1 / surfaceGradNorm` 视为常数（stop-gradient），乘到原有 center、logScale 和 rotation 的隐式函数梯度上。near-miss 候选排序使用同一个距离近似。`Geometry Grad Clamp` 仍限制转换后的 `dL/dg`；SGD、按计数平均、体素局部中心坐标和学习率保持原有定义。此次没有把 alpha loss 传给几何。
+
+UI 的 **Geometry Tau (world)** 现在以世界空间单位表示，加载场景时默认取初始体素边长的 `0.25` 倍。固定 AABB 边长为 `2.652` 时，128 分辨率默认约 `0.00518`，256 分辨率默认约 `0.00259`。需要跨分辨率比较同一物理作用范围时，在 UI 中填写相同的世界空间 tau；加载不同分辨率的 bin 会保留当前 tau。旧的无量纲 tau（如 `0.15`、`0.32`）不应直接沿用。
+
 ## 路径记录
 
 路径命中容量统一为 8（`MAX_CONTRIBUTING_VOXELS_PER_RAY` 与 `MAX_CANDIDATES`），保留单个路径记录 buffer，CPU 与 shader 使用同一组宏。`PathRecord.slang` 中有编译期检查，保证单个记录不超过 D3D12 的 2048 字节结构化 buffer 元素上限。mode1 和 mode3 都使用固定分辨率，初始化、更新和命中容量路径相同。

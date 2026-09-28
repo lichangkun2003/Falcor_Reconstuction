@@ -84,6 +84,37 @@ float3 gaussianEllipsoidImplicitGradientWorld(
     return 2.0f * mul(rotation, principal * invScaleSquared);
 }
 
+// First-order signed distance at the implicit minimum on a ray segment.
+// Normalize with the gradient at the radially projected surface point, where
+// it cannot vanish. This is accurate near the hit boundary, not an exact SDF.
+// Backward treats distanceScale as constant: d(distance)/d(theta) ~= scale * dg/d(theta).
+bool calcGaussianEllipsoidWorldDistance(
+    GaussianEllipsoid ellipsoid,
+    float3 xLocal,
+    float3 voxelSize,
+    float gmin,
+    out float distanceWorld,
+    out float distanceScale)
+{
+    distanceWorld = 0.0f;
+    distanceScale = 0.0f;
+
+    float3 scale = gaussianEllipsoidScale(ellipsoid);
+    float3 unitOffset = gaussianEllipsoidPrincipalOffset(ellipsoid, xLocal, voxelSize) / scale;
+    float radiusSquared = dot(unitOffset, unitOffset);
+    if (isnan(gmin) || isinf(gmin) || isnan(radiusSquared) || isinf(radiusSquared) || radiusSquared <= 1e-12f)
+        return false; // Center hits have no unique radial direction; skip their geometry gradient.
+
+    float3 surfaceDirection = unitOffset * rsqrt(radiusSquared);
+    float surfaceGradNorm = 2.0f * length(surfaceDirection / scale);
+    if (isnan(surfaceGradNorm) || isinf(surfaceGradNorm) || surfaceGradNorm <= 0.0f)
+        return false;
+
+    distanceScale = 1.0f / surfaceGradNorm;
+    distanceWorld = gmin * distanceScale;
+    return !isnan(distanceWorld) && !isinf(distanceWorld);
+}
+
 void calcGaussianEllipsoidMinimumOnSegment(
     GaussianEllipsoid ellipsoid,
     float3 localFrom,
