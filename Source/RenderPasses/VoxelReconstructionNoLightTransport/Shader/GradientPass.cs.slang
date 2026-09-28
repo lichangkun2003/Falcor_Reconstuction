@@ -23,6 +23,7 @@ cbuffer CB {
     uint3 gVoxelCount;
     float gGeometryTauWorld;        // Current voxel width * Geometry Tau (voxels); shared by hit/miss.
     float gGeometryGradClamp;       // Clamp dL/dg after converting the world-distance gradient.
+    float gAlphaGeometryWeight;     // Geometry-only multiplier; dL/dAlpha already includes the alpha-loss weight.
     float gBackgroundCarveWeight;   // 背景几何清除项的权重
     float gBinaryOpacityWeight;
 
@@ -72,10 +73,34 @@ void fillGaussianEllipsoidGradient(
     geometryGradRecord.rotation = sanitizeFloat3(geometryGradRecord.rotation);
 }
 
+float calcAlphaGeometryDistanceGrad(
+    float dL_dAlpha,
+    float transmittanceBefore,
+    float opacity,
+    float transmittanceAfter,
+    float w,
+    float tau)
+{
+    if (gAlphaGeometryWeight <= 0.0f)
+        return 0.0f;
+
+    // Gate one hard hit or insert one virtual miss into the recorded hard path.
+    // A = 1 - product(1 - opacity_i * gate_i), so dA/dgate_i = T_before * opacity_i * T_after.
+    // The local gate surrogate has dw/dd = -w*(1-w)/tau; forward remains a hard intersection.
+    float dA_dGate =
+        saturate(sanitizeFloat(transmittanceBefore)) *
+        saturate(sanitizeFloat(opacity)) *
+        saturate(sanitizeFloat(transmittanceAfter));
+    float dL_dGate = gAlphaGeometryWeight * sanitizeFloat(dL_dAlpha) * dA_dGate;
+    return dL_dGate * (-w * (1.0f - w) / tau);
+}
+
 void calcHardHitGeometryGrad(
     VoxelRecord voxelRec,
     float3 behindColor,
     float3 dL_dC,
+    float dL_dA,
+    float transmittanceAfter,
     bool isReferenceBackground,
     out GradRecord geometryGradRecord)
 {
@@ -146,6 +171,10 @@ void calcHardHitGeometryGrad(
         dL_dDistance = dL_dW * dW_dDistance;
     }
 
+    // Add the alpha geometry proxy to the existing RGB/carve branch before the shared clamp.
+    dL_dDistance += calcAlphaGeometryDistanceGrad(
+        dL_dA, voxelRec.transmittanceBefore, voxelRec.opacity, transmittanceAfter, w, tau);
+
     // Surface normalization is a stop-gradient preconditioner for the existing dg/d(theta).
     float dL_dG =
         clamp(
@@ -161,6 +190,8 @@ void calcMissCandidateGeometryGrad(
     GeometryCandidateRecord cand,
     float3 candidateBehindColor,
     float3 dL_dC,
+    float dL_dA,
+    float transmittanceAfter,
     float3 viewDir,
     out GradRecord geometryGradRecord)
 {
@@ -216,6 +247,8 @@ void calcMissCandidateGeometryGrad(
     float dL_dW = dot(dL_dC, dC_dW);
     float dW_dDistance = -w * (1.0f - w) / tau;
     float dL_dDistance = dL_dW * dW_dDistance;
+    dL_dDistance += calcAlphaGeometryDistanceGrad(
+        dL_dA, transmittanceBefore, opacity, transmittanceAfter, w, tau);
 
     float dL_dG = clamp(sanitizeFloat(dL_dDistance * distanceScale), -gGeometryGradClamp, gGeometryGradClamp);
 
@@ -424,6 +457,8 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
                 voxelRec,
                 behindColor,
                 dL_dC,
+                dL_dA,
+                transmittanceAfter,
                 isReferenceBackground,
                 geometryGradRecord
             );
@@ -477,6 +512,7 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
             */
             uint behindStart = min( cand.frontHitCount, hitCount);
             float3 candidateBehindColor =sanitizeFloat3(rec.backgroundColor.xyz);
+            float candidateTransmittanceAfter = 1.0f;
 
             /*
             从最后一个 hard-hit 向前合成，直到 candidate 后方的第一个 hard-hit。
@@ -490,6 +526,7 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
 
                 candidateBehindColor = behindOpacity * behindRadiance + (1.0f - behindOpacity) * candidateBehindColor;
                 candidateBehindColor = sanitizeFloat3( candidateBehindColor);
+                candidateTransmittanceAfter *= 1.0f - behindOpacity;
             }
 
             GradRecord geometryGradRecord;
@@ -497,6 +534,8 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
                 cand,
                 candidateBehindColor,
                 dL_dC,
+                dL_dA,
+                candidateTransmittanceAfter,
                 rec.viewDir,
                 geometryGradRecord
             );

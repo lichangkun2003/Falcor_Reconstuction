@@ -217,12 +217,13 @@ public:
         ref<Buffer> gradBuffer;
         float geometryGradClamp;
         float geometryTauVoxelFraction = 0.12f;
+        float alphaGeometryWeight = 0.1f; // Extra multiplier on the existing alpha-loss geometry proxy only.
 
         void init()
         {
             gradBuffer = nullptr;
             mpComputePass = nullptr;
-            geometryTauVoxelFraction = 0.15f; // Width relative to the current voxel, not a pixel footprint.
+            // Keep the configured tau and alpha multiplier when recreating GPU resources.
             geometryGradClamp = 5.0f;
         }
     };

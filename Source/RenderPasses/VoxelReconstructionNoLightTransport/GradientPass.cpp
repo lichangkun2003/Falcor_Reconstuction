@@ -90,6 +90,7 @@ void VoxelReconstructionNoLightTransport::runGradientPass(RenderContext* pRender
     cb["gVoxelCount"] = mGridResources.gridData.voxelCount;
     cb["gGeometryTauWorld"] = getGeometryTauWorld();
     cb["gGeometryGradClamp"] = mGradientPass.geometryGradClamp;
+    cb["gAlphaGeometryWeight"] = mGradientPass.alphaGeometryWeight;
     cb["gBackgroundCarveWeight"] = 0.01f;
     cb["gBinaryOpacityWeight"] = 0.003f;
     

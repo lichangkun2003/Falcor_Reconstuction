@@ -49,9 +49,27 @@ inline std::string ReferenceCameraFile = "Reconstruction_Input/hotdog/transforms
 
 前向仍使用硬椭球相交。首先将 ray 裁到当前体素内部的 `[localFrom, localTo]`，再在线段参数 `t ∈ [0,1]` 上求 `gmin` 和 `xStar`，而不是在整条无限 ray 上求最小值；线段端点也可能是最小值位置。该线段与原椭球的相交等价于与体素截断椭球的相交。几何反向的 soft-hit 权重为 `w = sigmoid(-dWorld / tauWorld)`，其中 `dWorld = gmin / surfaceGradNorm` 是这个相交判定附近的一阶世界空间距离代理，并不是 ray 到截断椭球的精确欧氏距离。`surfaceGradNorm` 在沿主轴归一化方向投影到原椭球表面的点计算，避免在椭球中心直接除以零梯度。中心附近方向不确定的射线跳过几何梯度，外观梯度仍正常计算。
 
-反向将 `1 / surfaceGradNorm` 视为常数（stop-gradient），乘到原有 center、logScale 和 rotation 的隐式函数梯度上。near-miss 候选排序使用同一个距离近似。`Geometry Grad Clamp` 仍限制转换后的 `dL/dg`；SGD、按计数平均和体素局部中心坐标保持原有定义。alpha loss 仍只更新 opacity，没有传给几何。
+反向将 `1 / surfaceGradNorm` 视为常数（stop-gradient），乘到原有 center、logScale 和 rotation 的隐式函数梯度上。near-miss 候选排序使用同一个距离近似。`Geometry Grad Clamp` 仍限制转换后的 `dL/dg`；SGD、按计数平均和体素局部中心坐标保持原有定义。alpha loss 继续更新 opacity，同时通过下述几何代理传给 center、logScale 和 rotation。
 
-**Geometry Tau (voxels)** 是唯一可编辑的 tau 参数，表示当前体素最大边长 `h` 的倍数 `k`，默认 `k=0.15`。每次计算梯度时按当前网格重新计算 `tauWorld = k·h`，hit 与 miss 使用相同数值。**Geometry Tau (world)** 为派生值的只读显示。固定 AABB 边长为 `2.652` 时，128 分辨率默认约 `0.003108`，256 分辨率默认约 `0.001554`。加载不同分辨率的 bin 后保留 `k`，世界 tau 自动跟随新体素大小，避免继续使用旧分辨率的 band。这里不使用像素大小、屏幕分辨率、相机距离或单个椭球半轴来设置 tau；它只控制当前体素内 ray 片段的几何代理过渡。旧的无量纲 `gmin` tau（如 `0.15`、`0.32`）不等于这里的体素倍数。
+**Geometry Tau (voxels)** 是唯一可编辑的 tau 参数，表示当前体素最大边长 `h` 的倍数 `k`，当前默认 `k=0.12`。每次计算梯度时按当前网格重新计算 `tauWorld = k·h`，hit 与 miss 使用相同数值。**Geometry Tau (world)** 为派生值的只读显示。固定 AABB 边长为 `2.652` 时，128 分辨率默认约 `0.00248625`，256 分辨率默认约 `0.001243125`。加载不同分辨率的 bin 后保留 `k`，世界 tau 自动跟随新体素大小，避免继续使用旧分辨率的 band。这里不使用像素大小、屏幕分辨率、相机距离或单个椭球半轴来设置 tau；它只控制当前体素内 ray 片段的几何代理过渡。旧的无量纲 `gmin` tau（如 `0.15`、`0.32`）不等于这里的体素倍数。
+
+## Alpha loss 的几何代理
+
+Loss Pass 仍计算 `L = L_RGB + 0.3·(A_render - A_ref)²`，输出的 `dL/dA` 已包含 `0.3`，几何分支不再乘一次该 loss 权重。前向保持硬 hit，alpha 不乘 soft-hit 权重；新增项只用于反向的局部代理。
+
+将一个实际 hit 看成由 gate 控制的 opacity，或在 near-miss 的位置插入一个虚拟 gate，记录路径的 alpha 为 `A = 1 - Π(1 - opacity_i·gate_i)`，所以 `dA/dgate_i = T_before·opacity_i·T_after`。新增距离梯度为：
+
+```text
+dL_alpha_geom/ddWorld = AlphaGeometryWeight · (dL/dA)
+                     · T_before · opacity · T_after
+                     · [-w·(1-w) / tauWorld]
+```
+
+与现有 RGB/背景 carve 的距离梯度相加后，一起乘 `distanceScale`、应用同一个 `Geometry Grad Clamp`，再传到 center、logScale 和旋转切向量。hard-hit 在反向遍历中使用不含自己的后方透射率；near-miss 根据 `frontHitCount`，只乘候选后方已记录 hard-hit 的 `(1-opacity)`。前方或后方完全不透明时，该 alpha 项为零，避免已被遮挡的椭球仍被 alpha 推动膨胀。near-miss 仍只处理参考前景，背景 hard-hit 保留原 carve 项并增加 alpha 修正。
+
+UI 的 **Alpha Geometry Weight** 是额外的几何倍率，默认 `0.1`，不是 Loss Pass 的 `alphaLossWeight`，也不会改变 opacity 学习率或外观梯度。tau 与该倍率的默认值直接存储在 `GradientPass` 的成员声明中，`init()` 不再重复赋值覆盖配置。设为 `0` 可关闭新增的 alpha 几何项，在相同 tau、学习率、初始化等配置下得到接入前的几何更新。alpha 与 RGB 几何共用现有体素距离和 tau，没有独立的 Alpha Geometry Band。GradRecord、PathRecord 和 bin 格式保持原样，新增项与原梯度合并后每个记录只累计一次几何计数。
+
+这是硬命中前向的代理梯度，不能宣称为硬 hit 的精确导数或真实像素覆盖面积的导数。数值检查应冻结距离归一化，验证局部 gate 代理的导数；完整场景效果需要实验。建议从 `0.1` 开始，与 `0` 对照，必要时测试 `0.05 / 0.2`，并为每组重新初始化、使用不同 Name Tag 保存。
 
 ## 几何学习率对照实验
 
@@ -63,13 +81,14 @@ inline std::string ReferenceCameraFile = "Reconstruction_Input/hotdog/transforms
 | LR shape (log scale / rotation) | `0.1` | 世界半轴的自然对数及局部旋转切向量 |
 | LR opacity | `10` | opacity 的 logit SH 系数，保留原默认值 |
 | LR radiance | `0.1` | radiance SH 系数，保留原默认值 |
-| Geometry Tau (voxels) | `0.15` | 世界距离代理的 sigmoid 过渡宽度除以当前体素边长 |
+| Geometry Tau (voxels) | `0.12` | 世界距离代理的 sigmoid 过渡宽度除以当前体素边长 |
+| Alpha Geometry Weight | `0.1` | 已有 alpha loss 传给几何的额外倍率，`0` 关闭新增项 |
 
 这是基于参数尺度的实验起点，尚未通过完整场景训练选出最优值。切换到新椭球表示时，shape 实际学习率从旧 Cholesky 更新的 `0.1` 改成了 `0.001`。对轴对齐球、相同 `dL/dg`、未触发限幅的一次更新，旧对数 Cholesky 对角线与新对数半轴的梯度大小相同、符号相反；旧形状步幅因此是迁移后默认值的 100 倍。现在恢复 shape 学习率量级并提高 center 步幅；opacity 保留 `10`，外观梯度和更新保持原样，只校准几何相关参数。这不表示两种形状参数化的一般更新轨迹完全相同。
 
 tau 同时影响作用范围和幅度。对中心位于体素中央、初始半径 `r=0.6h` 的球，体素内任意点满足 `|q| ≤ √3·h/2`，当前代理 `dWorld = (|q|²/r² - 1)·r/2` 的范围约为 `[-0.3h, 0.325h]`（中心点除外）。`tauWorld=0.15h` 时 sigmoid 的 10%–90% 过渡总宽度约 `4.394·tau = 0.659h`，该初始范围的 `w·(1-w)` 至少约为边界峰值的 37%，减少体素内有梯度的样本因为 band 过窄而饱和。这个范围估计只用于当前初始球，不适用于优化后的任意椭球。距离代理远离边界可能高估真实距离，不能将它宣称为始终受体素直径约束的精确距离。
 
-先固定 **Geometry Tau (voxels)**=`0.15`，比较 shape LR=`0.03 / 0.1 / 0.3`；再固定合适的 shape LR 比较 tau 倍数 `0.1 / 0.15 / 0.25`。每组重新初始化，保持 opacity LR=`10`、相同视角、Spp 和迭代次数，使用不同 Name Tag 保存。既比较 RGB/alpha loss，也比较椭球半轴和轮廓，不能只凭 loss 降低断定几何变好。tau 越小，边界附近梯度峰值越大、远离边界的 RGB 代理梯度衰减越快；tau 不会随单个椭球收缩而缩窄。形状仍使用按计数平均的 SGD，保留原单次更新限幅：中心每轴 `0.02` 体素、logScale 每轴 `0.02`（半轴相对变化约 2%）、旋转总角度 `0.02` 弧度。频繁触发限幅时继续增大学习率不会按比例增加步幅。
+先固定 **Geometry Tau (voxels)**=`0.12`，比较 shape LR=`0.03 / 0.1 / 0.3`；再固定合适的 shape LR 比较 tau 倍数 `0.1 / 0.12 / 0.15`。每组重新初始化，保持相同 Alpha Geometry Weight、opacity LR=`10`、视角、Spp 和迭代次数，使用不同 Name Tag 保存。既比较 RGB/alpha loss，也比较椭球半轴和轮廓，不能只凭 loss 降低断定几何变好。tau 越小，边界附近梯度峰值越大、远离边界的 RGB/alpha 代理梯度衰减越快；tau 不会随单个椭球收缩而缩窄。形状仍使用按计数平均的 SGD，保留原单次更新限幅：中心每轴 `0.02` 体素、logScale 每轴 `0.02`（半轴相对变化约 2%）、旋转总角度 `0.02` 弧度。频繁触发限幅时继续增大学习率不会按比例增加步幅。
 
 三轴完全相等的初始球对旋转不敏感，此时旋转梯度为零；先出现轴长差异后才能学习朝向。梯度为零、射线未被记录、没有颜色误差信号等情况，不能单靠提高学习率解决。
 

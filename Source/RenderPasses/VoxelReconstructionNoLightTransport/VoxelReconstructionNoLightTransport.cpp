@@ -315,6 +315,7 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
     widget.var("Geometry Tau (voxels)", mGradientPass.geometryTauVoxelFraction, 0.001f, 1.0f, 0.005f, false, "%.4f");
     widget.text(fmt::format("Geometry Tau (world): {:.6f}", getGeometryTauWorld()));
     widget.var("Geometry Grad Clamp", mGradientPass.geometryGradClamp, 0.0f, 10.0f, 1e-4f);
+    widget.var("Alpha Geometry Weight", mGradientPass.alphaGeometryWeight, 0.0f, 1.0f, 0.01f);
     // 改 Spp 后立刻重开一批：否则若 mSampleIndex 已经 >= 新的 Spp.
     // isLastSample 就会永远为假，训练卡在"index 一直涨、loss 和 update 再也不跑"的状态.
     if (widget.var("Spp", mRayMarchingPass.mSpp, 1u, 100u, 1u))
