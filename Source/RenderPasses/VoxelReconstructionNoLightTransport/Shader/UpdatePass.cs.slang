@@ -2,7 +2,9 @@
 #include "../GradRecord.slang"
 
 // Input
+#if RECON_MODE != RECON_MODE_POINT_CLOUD
 StructuredBuffer<GradRecord> gGradBuffer;
+#endif
 
 //StructuredBuffer<float> gVoxelSHGrads;
 
@@ -20,6 +22,9 @@ cbuffer CB {
 
     float gEllipsoidPruneThreshold;
     bool gEnableEllipsoidPruning;
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    uint gSparseUpdateOffset;
+#endif
 
 
     //uint gVoxelSHGradDim;
@@ -196,8 +201,16 @@ void pruneEllipsoid(inout VoxelData voxel)
 
 
 
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+[numthreads(256, 1, 1)]
+#else
 [numthreads(8, 8, 1)]
+#endif
 void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    uint index = gSparseUpdateOffset + dispatchThreadId.x;
+    if (index >= gGridDataParamBlock.activeVoxelCount) return;
+#else
     uint3 voxel = dispatchThreadId;
     if (voxel.x >= gGridDataParamBlock.voxelCount.x ||
     voxel.y >= gGridDataParamBlock.voxelCount.y ||
@@ -210,8 +223,9 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
 
     if (index < 0)
         return;
+#endif
 
-    GradRecord grad = gGradBuffer[(uint)index];
+    GradRecord grad = GRAD_DATA((uint)index);
 
     // 这里 valid 实际上表示当前 voxel 累计了多少个 pixel contribution
     //if (grad.radianceValid == 0 && grad.geometryValid == 0)
@@ -226,7 +240,7 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
         geometryGradScale *= 1.0f / max(1.0f, float(grad.geometryValid));
     }
 
-    VoxelData voxelData = gGridDataParamBlock.gridDataBuffer[index];
+    VoxelData voxelData = VOXEL_DATA(index);
     if (voxelData.occupied == 0)
         return;
 
@@ -279,5 +293,5 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
     }
 
 
-    gGridDataParamBlock.gridDataBuffer[index] = voxelData;
+    VOXEL_DATA(index) = voxelData;
 }

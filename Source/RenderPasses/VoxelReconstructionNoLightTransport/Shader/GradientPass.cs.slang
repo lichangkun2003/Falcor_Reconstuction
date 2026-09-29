@@ -15,7 +15,9 @@ Texture2D<uint> gBackgroundMaskBuffer;
 
 
 // Output
+#if RECON_MODE != RECON_MODE_POINT_CLOUD
 RWStructuredBuffer<GradRecord> gGradBuffer;
+#endif
 RWTexture2D<float4> dummy;
 
 cbuffer CB {
@@ -113,8 +115,12 @@ void calcHardHitGeometryGrad(
     if (!isSolidVoxel(cellInt))
         return;
 
-    uint voxelIndex = CellToIndex( uint3(cellInt), gVoxelCount);
-    VoxelData voxel = gGridDataParamBlock.gridDataBuffer[voxelIndex];
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    uint voxelIndex = voxelRec.voxelID;
+#else
+    uint voxelIndex = CellToIndex(uint3(cellInt), gVoxelCount);
+#endif
+    VoxelData voxel = VOXEL_DATA(voxelIndex);
 
     if (voxel.occupied == 0)
         return;
@@ -207,9 +213,13 @@ void calcMissCandidateGeometryGrad(
     if (!isSolidVoxel(cellInt))
         return;
 
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    uint voxelIndex = cand.voxelID;
+#else
     uint voxelIndex = CellToIndex(uint3(cellInt), gVoxelCount);
+#endif
 
-    VoxelData voxel = gGridDataParamBlock.gridDataBuffer[voxelIndex];
+    VoxelData voxel = VOXEL_DATA(voxelIndex);
 
     if (voxel.occupied == 0)
         return;
@@ -258,27 +268,27 @@ void calcMissCandidateGeometryGrad(
 
 void accumulateGeometryGradRecord(uint indexGradBuffer, GradRecord gradRecord)
 {
-    InterlockedAdd(gGradBuffer[indexGradBuffer].geometryValid, gradRecord.geometryValid);
+    InterlockedAdd(GRAD_DATA(indexGradBuffer).geometryValid, gradRecord.geometryValid);
 
     INTERLOCKED_ADD_FLOAT(
-        gGradBuffer[indexGradBuffer].center.x,
+        GRAD_DATA(indexGradBuffer).center.x,
         gradRecord.center.x
     );
     INTERLOCKED_ADD_FLOAT(
-        gGradBuffer[indexGradBuffer].center.y,
+        GRAD_DATA(indexGradBuffer).center.y,
         gradRecord.center.y
     );
     INTERLOCKED_ADD_FLOAT(
-        gGradBuffer[indexGradBuffer].center.z,
+        GRAD_DATA(indexGradBuffer).center.z,
         gradRecord.center.z
     );
 
-    INTERLOCKED_ADD_FLOAT(gGradBuffer[indexGradBuffer].logScale.x, gradRecord.logScale.x);
-    INTERLOCKED_ADD_FLOAT(gGradBuffer[indexGradBuffer].logScale.y, gradRecord.logScale.y);
-    INTERLOCKED_ADD_FLOAT(gGradBuffer[indexGradBuffer].logScale.z, gradRecord.logScale.z);
-    INTERLOCKED_ADD_FLOAT(gGradBuffer[indexGradBuffer].rotation.x, gradRecord.rotation.x);
-    INTERLOCKED_ADD_FLOAT(gGradBuffer[indexGradBuffer].rotation.y, gradRecord.rotation.y);
-    INTERLOCKED_ADD_FLOAT(gGradBuffer[indexGradBuffer].rotation.z, gradRecord.rotation.z);
+    INTERLOCKED_ADD_FLOAT(GRAD_DATA(indexGradBuffer).logScale.x, gradRecord.logScale.x);
+    INTERLOCKED_ADD_FLOAT(GRAD_DATA(indexGradBuffer).logScale.y, gradRecord.logScale.y);
+    INTERLOCKED_ADD_FLOAT(GRAD_DATA(indexGradBuffer).logScale.z, gradRecord.logScale.z);
+    INTERLOCKED_ADD_FLOAT(GRAD_DATA(indexGradBuffer).rotation.x, gradRecord.rotation.x);
+    INTERLOCKED_ADD_FLOAT(GRAD_DATA(indexGradBuffer).rotation.y, gradRecord.rotation.y);
+    INTERLOCKED_ADD_FLOAT(GRAD_DATA(indexGradBuffer).rotation.z, gradRecord.rotation.z);
 }
 
 void calcAppearanceGrad(
@@ -319,7 +329,7 @@ void accumulateAppearanceGrad(
     SphericalHarmonicsOpacity opacityGrad)
 {
     InterlockedAdd(
-        gGradBuffer[voxelIndex].appearanceValid,
+        GRAD_DATA(voxelIndex).appearanceValid,
         1
     );
 
@@ -327,17 +337,17 @@ void accumulateAppearanceGrad(
     for (uint i = 0; i < SH_COUNT; ++i)
     {
         INTERLOCKED_ADD_FLOAT(
-            gGradBuffer[voxelIndex].radianceGrad.coefficients[i].x,
+            GRAD_DATA(voxelIndex).radianceGrad.coefficients[i].x,
             radianceGrad.coefficients[i].x
         );
 
         INTERLOCKED_ADD_FLOAT(
-            gGradBuffer[voxelIndex].radianceGrad.coefficients[i].y,
+            GRAD_DATA(voxelIndex).radianceGrad.coefficients[i].y,
             radianceGrad.coefficients[i].y
         );
 
         INTERLOCKED_ADD_FLOAT(
-            gGradBuffer[voxelIndex].radianceGrad.coefficients[i].z,
+            GRAD_DATA(voxelIndex).radianceGrad.coefficients[i].z,
             radianceGrad.coefficients[i].z
         );
     }
@@ -346,7 +356,7 @@ void accumulateAppearanceGrad(
     for (uint i = 0; i < SH_OPACITY_COUNT; ++i)
     {
         INTERLOCKED_ADD_FLOAT(
-            gGradBuffer[voxelIndex].opacityGrad.coefficients[i],
+            GRAD_DATA(voxelIndex).opacityGrad.coefficients[i],
             opacityGrad.coefficients[i]
         );
     }
@@ -446,7 +456,11 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
                 opacityGrad
             );
 
-            uint voxelIndex = CellToIndex(uint3(voxelRec.cellInt),gVoxelCount);
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+            uint voxelIndex = voxelRec.voxelID;
+#else
+            uint voxelIndex = CellToIndex(uint3(voxelRec.cellInt), gVoxelCount);
+#endif
             accumulateAppearanceGrad(voxelIndex, radianceGrad, opacityGrad);
 
             // -------------------------
@@ -543,7 +557,11 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
             if (geometryGradRecord.geometryValid == 0)
                 continue;
 
-            uint voxelIndex = CellToIndex( uint3(cand.cellInt), gVoxelCount);
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+            uint voxelIndex = cand.voxelID;
+#else
+            uint voxelIndex = CellToIndex(uint3(cand.cellInt), gVoxelCount);
+#endif
             accumulateGeometryGradRecord(
                 voxelIndex,
                 geometryGradRecord

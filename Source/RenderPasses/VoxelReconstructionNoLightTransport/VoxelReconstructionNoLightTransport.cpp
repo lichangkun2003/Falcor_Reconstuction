@@ -257,9 +257,14 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
         // 批开始时清掉上一批留下的梯度，整批之内只做原子累加.
         // gradBuffer 的元素与 appearanceValid/geometryValid 计数一起累加.
         // update 时按计数求平均，得到的就是本批所有无偏梯度的平均.
-        if (isFirstSample && mGradientPass.gradBuffer)
+        if (isFirstSample)
         {
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+            clearSparseGradients(pRenderContext);
+#else
+            if (mGradientPass.gradBuffer)
             pRenderContext->clearUAV(mGradientPass.gradBuffer->getUAV().get(), uint4(0));
+#endif
         }
 
         if (hasResidualBaseline)
@@ -368,6 +373,14 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
     widget.text("Voxel Count: " + ToString((int3)mGridResources.gridData.voxelCount));
     widget.text("Grid Min: " + ToString(mGridResources.gridData.gridMin));
     widget.text("Solid Voxel Count: " + std::to_string(mGridResources.gridData.solidVoxelCount));
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    widget.text(fmt::format("Compact Pool: {} active / {} capacity ({} pages)",
+        mGridResources.gridData.activeVoxelCount,
+        mGridResources.gridData.voxelCapacity,
+        mGridResources.voxelPages.size()));
+    widget.text(fmt::format("Spatial Index: {} page(s), {}^3 cells/page max",
+        mGridResources.indexPages.size(), SPARSE_INDEX_PAGE_EDGE));
+#endif
     widget.text(
         "Solid Rate: " + std::to_string(mGridResources.gridData.solidVoxelCount / (float)mGridResources.gridData.totalVoxelCount())
     );
@@ -688,6 +701,18 @@ void VoxelReconstructionNoLightTransport::UpdateVoxelGrid(uint voxelResolution)
 
 void VoxelReconstructionNoLightTransport::setupGridResouce(RenderContext* pRenderContext, bool forceReset)
 {
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    if (!mpGridBlock || forceReset)
+    {
+        GridData grid = mGridResources.gridData;
+        grid.solidVoxelCount = 0;
+        grid.activeVoxelCount = 0;
+        auto resources = allocateSparseGrid(pRenderContext, grid, 1u);
+        auto block = createSparseGridBlock(resources);
+        commitSparseGrid(std::move(resources), block, mVoxelResolution);
+    }
+    return;
+#else
     if (!mpGridBlock)
     {
         auto reflector = mpReflectTypes->getProgram()->getReflector()->getParameterBlock("gGridDataParamBlock");
@@ -735,7 +760,7 @@ void VoxelReconstructionNoLightTransport::setupGridResouce(RenderContext* pRende
     gridBlock["voxelSize"] = mGridResources.gridData.voxelSize;
     gridBlock["gridMin"] = mGridResources.gridData.gridMin;
     gridBlock["solidVoxelCount"] = mGridResources.gridData.solidVoxelCount;
-
+#endif
 }
 
 

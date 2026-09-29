@@ -52,8 +52,8 @@
 using namespace Falcor;
 
 static_assert(sizeof(GaussianEllipsoid) == 40, "GaussianEllipsoid host/device layout changed.");
-static_assert(sizeof(VoxelData) == 188, "VoxelData host/device layout changed.");
-static_assert(sizeof(GradRecord) == 188, "GradRecord host/device layout changed.");
+static_assert(sizeof(VoxelData) == 44 + 12 * SH_COUNT + 4 * SH_OPACITY_COUNT, "VoxelData host/device layout changed.");
+static_assert(sizeof(GradRecord) == 44 + 12 * SH_COUNT + 4 * SH_OPACITY_COUNT, "GradRecord host/device layout changed.");
 
 namespace
 {
@@ -153,6 +153,12 @@ public:
         ref<Buffer> gridDataBuffer;
         GridData gridData;
         ref<Texture> vBuffer;
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+        std::vector<ref<Texture>> indexPages;
+        std::vector<ref<Buffer>> voxelPages;
+        std::vector<ref<Buffer>> gradPages;
+        std::vector<ref<Buffer>> cellIndexPages;
+#endif
     };
 
     struct RayMarchingPass
@@ -334,8 +340,20 @@ private:
     };
     PointCloudState mPointCloud;
     ref<ComputePass> mpInitializePointCloudPass;
+    ref<ComputePass> mpBuildSparseIndexPass;
     bool initializePointCloudVoxelData(RenderContext* pRenderContext);
     void resetPointCloudOptimization(RenderContext* pRenderContext);
+    GridResources allocateSparseGrid(RenderContext* pRenderContext, const GridData& grid, uint32_t capacity);
+    ref<ParameterBlock> createSparseGridBlock(const GridResources& resources);
+    void commitSparseGrid(GridResources&& resources, const ref<ParameterBlock>& block, uint32_t resolution);
+    void reserveSparseVoxelCapacity(RenderContext* pRenderContext, uint32_t minimumCapacity);
+    void uploadSparseBatch(RenderContext* pRenderContext, const ref<ParameterBlock>& block,
+        uint32_t offset, const uint32_t* cells, uint32_t count, const VoxelData* data = nullptr);
+    void clearSparseGradients(RenderContext* pRenderContext);
+    void barrierSparseVoxels(RenderContext* pRenderContext);
+    void barrierSparseGradients(RenderContext* pRenderContext);
+    void saveSparseReconstruction(RenderContext* pRenderContext, const std::filesystem::path& path);
+    void loadSparseReconstruction(RenderContext* pRenderContext, const std::filesystem::path& path);
 #endif
 
     ref<Device> mpDevice;

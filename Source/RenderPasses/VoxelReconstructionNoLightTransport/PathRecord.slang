@@ -9,6 +9,9 @@ struct GeometryCandidateRecord
     uint valid;
 
     int3 cellInt; // voxel index
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    uint voxelID;
+#endif
 
     float gmin;   // ray vs ellipsoid implicit min value
     float4 xStar; // closest point on ray segment
@@ -21,6 +24,9 @@ struct GeometryCandidateRecord
     void init() {
         valid = 0;
         cellInt = int3(0);
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+        voxelID = 0;
+#endif
 
         gmin = 1e30f;
         xStar = float4(0.0f);
@@ -36,6 +42,9 @@ struct VoxelRecord
 {
     float3 hitPosition;
     int3 cellInt;
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    uint voxelID;
+#endif
 
     float3 radiance;
     float opacity;
@@ -49,6 +58,9 @@ struct VoxelRecord
     void init() {
         hitPosition = float3(0);
         cellInt = int3(0);
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+        voxelID = 0;
+#endif
         radiance = float3(0);
         opacity = 0.0f;
         transmittanceBefore = 1.0f;

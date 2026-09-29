@@ -3,6 +3,15 @@
 #include "Utils/Math/MathConstants.slangh"
 
 #include "VoxelData.slang"
+#include "../GradRecord.slang"
+
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+#define VOXEL_DATA(ID) gGridDataParamBlock.voxelPages[NonUniformResourceIndex(uint(ID) / SPARSE_POOL_PAGE_SIZE)][uint(ID) % SPARSE_POOL_PAGE_SIZE]
+#define GRAD_DATA(ID) gGridDataParamBlock.gradPages[NonUniformResourceIndex(uint(ID) / SPARSE_POOL_PAGE_SIZE)][uint(ID) % SPARSE_POOL_PAGE_SIZE]
+#else
+#define VOXEL_DATA(ID) gGridDataParamBlock.gridDataBuffer[ID]
+#define GRAD_DATA(ID) gGradBuffer[ID]
+#endif
 
 BEGIN_NAMESPACE_FALCOR
 
@@ -11,6 +20,11 @@ struct GridData{
     float3 gridMin;
     float3 voxelSize;
     uint solidVoxelCount ;
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    uint activeVoxelCount;
+    uint voxelCapacity;
+    uint3 indexPageCount;
+#endif
 
     uint totalVoxelCount()
     {
@@ -18,8 +32,15 @@ struct GridData{
     }
 
 #if !defined(HOST_CODE)
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    RWTexture3D<int> indexPages[SPARSE_INDEX_MAX_PAGES];
+    RWStructuredBuffer<VoxelData> voxelPages[SPARSE_POOL_MAX_PAGES];
+    RWStructuredBuffer<GradRecord> gradPages[SPARSE_POOL_MAX_PAGES];
+    RWStructuredBuffer<uint> cellIndexPages[SPARSE_POOL_MAX_PAGES];
+#else
     RWTexture3D<int> vBuffer;
     RWStructuredBuffer<VoxelData> gridDataBuffer;
+#endif
 #endif
 };
 
@@ -41,14 +62,40 @@ inline int3 IndexToCell(int index, uint3 size)
     return int3(x, y, z);
 }
 
+// Spatial cell indices and compact voxel IDs are deliberately different quantities.
+int lookupVoxelID(int3 cell)
+{
+    if (any(cell < 0) || any(cell >= int3(gGridDataParamBlock.voxelCount))) return -1;
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    uint3 page = uint3(cell) / SPARSE_INDEX_PAGE_EDGE;
+    uint pageID = page.x + page.y * gGridDataParamBlock.indexPageCount.x +
+        page.z * gGridDataParamBlock.indexPageCount.x * gGridDataParamBlock.indexPageCount.y;
+    int id = gGridDataParamBlock.indexPages[NonUniformResourceIndex(pageID)][uint3(cell) % SPARSE_INDEX_PAGE_EDGE];
+    return id >= 0 && uint(id) < gGridDataParamBlock.activeVoxelCount ? id : -1;
+#else
+    return CellToIndex(uint3(cell), gGridDataParamBlock.voxelCount);
+#endif
+}
+
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+void setVoxelID(uint3 cell, uint id)
+{
+    uint3 page = cell / SPARSE_INDEX_PAGE_EDGE;
+    uint pageID = page.x + page.y * gGridDataParamBlock.indexPageCount.x +
+        page.z * gGridDataParamBlock.indexPageCount.x * gGridDataParamBlock.indexPageCount.y;
+    gGridDataParamBlock.indexPages[NonUniformResourceIndex(pageID)][cell % SPARSE_INDEX_PAGE_EDGE] = int(id);
+}
+#endif
+
 
 bool isSolidVoxel(int3 cellInt)
 {
     if (any(cellInt < 0) || any(cellInt >= int3(gGridDataParamBlock.voxelCount)) )
         return false;
-    int offset = CellToIndex(uint3(cellInt), gGridDataParamBlock.voxelCount);
+    int offset = lookupVoxelID(cellInt);
+    if (offset < 0) return false;
     //return offset >= 0;
-    return gGridDataParamBlock.gridDataBuffer[offset].occupied != 0;
+    return VOXEL_DATA(offset).occupied != 0;
 }
 
 
@@ -56,8 +103,9 @@ bool setSolidVoxel(int3 cellInt)
 {
     if (any(cellInt < 0) || any(cellInt >= int3(gGridDataParamBlock.voxelCount)))
         return false;
-    uint offset = CellToIndex(uint3(cellInt), gGridDataParamBlock.voxelCount);
-    gGridDataParamBlock.gridDataBuffer[offset].occupied = 1;
+    int offset = lookupVoxelID(cellInt);
+    if (offset < 0) return false;
+    VOXEL_DATA(offset).occupied = 1;
     return true;
 }
 

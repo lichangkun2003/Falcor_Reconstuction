@@ -3,6 +3,185 @@
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
 #include "PointCloudLoader.h"
 
+namespace
+{
+uint32_t sparsePageCount(uint32_t capacity)
+{
+    return std::max(1u, (capacity + SPARSE_POOL_PAGE_SIZE - 1u) / SPARSE_POOL_PAGE_SIZE);
+}
+}
+
+VoxelReconstructionNoLightTransport::GridResources VoxelReconstructionNoLightTransport::allocateSparseGrid(
+    RenderContext* pRenderContext, const GridData& requestedGrid, uint32_t capacity)
+{
+    GridResources resources;
+    resources.gridData = requestedGrid;
+    if (any(requestedGrid.voxelCount == uint3(0)) || any(requestedGrid.voxelCount > uint3(1024)))
+        throw RuntimeError("Mode 1 compact storage supports voxel grids up to 1024 cells per axis.");
+    resources.gridData.indexPageCount = uint3(
+        (requestedGrid.voxelCount.x + SPARSE_INDEX_PAGE_EDGE - 1u) / SPARSE_INDEX_PAGE_EDGE,
+        (requestedGrid.voxelCount.y + SPARSE_INDEX_PAGE_EDGE - 1u) / SPARSE_INDEX_PAGE_EDGE,
+        (requestedGrid.voxelCount.z + SPARSE_INDEX_PAGE_EDGE - 1u) / SPARSE_INDEX_PAGE_EDGE
+    );
+    const uint32_t indexPageCount = resources.gridData.indexPageCount.x * resources.gridData.indexPageCount.y *
+        resources.gridData.indexPageCount.z;
+    if (indexPageCount > SPARSE_INDEX_MAX_PAGES)
+        throw RuntimeError("Mode 1 compact spatial index requires more than eight 512^3 pages.");
+
+    const uint32_t poolPageCount = sparsePageCount(capacity);
+    if (poolPageCount > SPARSE_POOL_MAX_PAGES)
+        throw RuntimeError("Mode 1 occupied voxel count exceeds the segmented parameter-pool limit.");
+    resources.gridData.voxelCapacity = poolPageCount * SPARSE_POOL_PAGE_SIZE;
+
+    const auto flags = ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess;
+    for (uint32_t z = 0; z < resources.gridData.indexPageCount.z; ++z)
+    for (uint32_t y = 0; y < resources.gridData.indexPageCount.y; ++y)
+    for (uint32_t x = 0; x < resources.gridData.indexPageCount.x; ++x)
+    {
+        const uint32_t width = std::min<uint32_t>(SPARSE_INDEX_PAGE_EDGE, requestedGrid.voxelCount.x - x * SPARSE_INDEX_PAGE_EDGE);
+        const uint32_t height = std::min<uint32_t>(SPARSE_INDEX_PAGE_EDGE, requestedGrid.voxelCount.y - y * SPARSE_INDEX_PAGE_EDGE);
+        const uint32_t depth = std::min<uint32_t>(SPARSE_INDEX_PAGE_EDGE, requestedGrid.voxelCount.z - z * SPARSE_INDEX_PAGE_EDGE);
+        auto page = mpDevice->createTexture3D(width, height, depth, ResourceFormat::R32Int, 1u, nullptr, flags);
+        pRenderContext->clearUAV(page->getUAV().get(), uint4(0xffffffffu));
+        resources.indexPages.push_back(std::move(page));
+    }
+
+    for (uint32_t page = 0; page < poolPageCount; ++page)
+    {
+        auto voxels = mpDevice->createStructuredBuffer(sizeof(VoxelData), SPARSE_POOL_PAGE_SIZE, flags);
+        auto gradients = mpDevice->createStructuredBuffer(sizeof(GradRecord), SPARSE_POOL_PAGE_SIZE, flags);
+        auto cells = mpDevice->createStructuredBuffer(sizeof(uint32_t), SPARSE_POOL_PAGE_SIZE, flags);
+        pRenderContext->clearUAV(voxels->getUAV().get(), uint4(0));
+        pRenderContext->clearUAV(gradients->getUAV().get(), uint4(0));
+        pRenderContext->clearUAV(cells->getUAV().get(), uint4(0));
+        resources.voxelPages.push_back(std::move(voxels));
+        resources.gradPages.push_back(std::move(gradients));
+        resources.cellIndexPages.push_back(std::move(cells));
+    }
+    return resources;
+}
+
+ref<ParameterBlock> VoxelReconstructionNoLightTransport::createSparseGridBlock(const GridResources& resources)
+{
+    auto reflector = mpReflectTypes->getProgram()->getReflector()->getParameterBlock("gGridDataParamBlock");
+    auto block = ParameterBlock::create(mpDevice, reflector);
+    auto var = block->getRootVar();
+    var["voxelCount"] = resources.gridData.voxelCount;
+    var["voxelSize"] = resources.gridData.voxelSize;
+    var["gridMin"] = resources.gridData.gridMin;
+    var["solidVoxelCount"] = resources.gridData.solidVoxelCount;
+    var["activeVoxelCount"] = resources.gridData.activeVoxelCount;
+    var["voxelCapacity"] = resources.gridData.voxelCapacity;
+    var["indexPageCount"] = resources.gridData.indexPageCount;
+    for (uint32_t i = 0; i < resources.indexPages.size(); ++i) var["indexPages"][i] = resources.indexPages[i];
+    for (uint32_t i = 0; i < resources.voxelPages.size(); ++i)
+    {
+        var["voxelPages"][i] = resources.voxelPages[i];
+        var["gradPages"][i] = resources.gradPages[i];
+        var["cellIndexPages"][i] = resources.cellIndexPages[i];
+    }
+    return block;
+}
+
+void VoxelReconstructionNoLightTransport::commitSparseGrid(
+    GridResources&& resources, const ref<ParameterBlock>& block, uint32_t resolution)
+{
+    const auto bind = [&](const auto& pass)
+    {
+        if (pass && pass->getVars()) pass->getRootVar()["gGridDataParamBlock"].setParameterBlock(block);
+    };
+    bind(mpInitializeDataPass);
+    bind(mpInitializePointCloudPass);
+    bind(mpBuildSparseIndexPass);
+    bind(mRayMarchingPass.mpFullScreenPass);
+    bind(mGradientPass.mpComputePass);
+    bind(mUpdatePass.mpComputePass);
+    mGridResources = std::move(resources);
+    mpGridBlock = block;
+    mVoxelResolution = resolution;
+}
+
+void VoxelReconstructionNoLightTransport::reserveSparseVoxelCapacity(
+    RenderContext* pRenderContext, uint32_t minimumCapacity)
+{
+    if (minimumCapacity <= mGridResources.gridData.voxelCapacity) return;
+    const uint32_t requiredPages = sparsePageCount(minimumCapacity);
+    if (requiredPages > SPARSE_POOL_MAX_PAGES) throw RuntimeError("Mode 1 sparse pool capacity exceeded.");
+    const auto flags = ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess;
+    GridResources next = mGridResources;
+    while (next.voxelPages.size() < requiredPages)
+    {
+        auto voxels = mpDevice->createStructuredBuffer(sizeof(VoxelData), SPARSE_POOL_PAGE_SIZE, flags);
+        auto gradients = mpDevice->createStructuredBuffer(sizeof(GradRecord), SPARSE_POOL_PAGE_SIZE, flags);
+        auto cells = mpDevice->createStructuredBuffer(sizeof(uint32_t), SPARSE_POOL_PAGE_SIZE, flags);
+        pRenderContext->clearUAV(voxels->getUAV().get(), uint4(0));
+        pRenderContext->clearUAV(gradients->getUAV().get(), uint4(0));
+        pRenderContext->clearUAV(cells->getUAV().get(), uint4(0));
+        next.voxelPages.push_back(std::move(voxels));
+        next.gradPages.push_back(std::move(gradients));
+        next.cellIndexPages.push_back(std::move(cells));
+    }
+    next.gridData.voxelCapacity = requiredPages * SPARSE_POOL_PAGE_SIZE;
+    auto block = createSparseGridBlock(next);
+    commitSparseGrid(std::move(next), block, mVoxelResolution);
+}
+
+void VoxelReconstructionNoLightTransport::clearSparseGradients(RenderContext* pRenderContext)
+{
+    for (const auto& page : mGridResources.gradPages) pRenderContext->clearUAV(page->getUAV().get(), uint4(0));
+}
+
+void VoxelReconstructionNoLightTransport::barrierSparseVoxels(RenderContext* pRenderContext)
+{
+    for (const auto& page : mGridResources.voxelPages) pRenderContext->uavBarrier(page.get());
+}
+
+void VoxelReconstructionNoLightTransport::barrierSparseGradients(RenderContext* pRenderContext)
+{
+    for (const auto& page : mGridResources.gradPages) pRenderContext->uavBarrier(page.get());
+}
+
+void VoxelReconstructionNoLightTransport::uploadSparseBatch(
+    RenderContext* pRenderContext, const ref<ParameterBlock>& block, uint32_t offset,
+    const uint32_t* cells, uint32_t count, const VoxelData* data)
+{
+    if (count == 0) return;
+    if (!mpBuildSparseIndexPass)
+    {
+        ProgramDesc desc;
+        desc.addShaderLibrary("RenderPasses/VoxelReconstructionNoLightTransport/Shader/BuildSparseIndex.cs.slang").csEntry("main");
+        mpBuildSparseIndexPass = ComputePass::create(mpDevice, desc, getReconstructionDefines());
+    }
+
+    uint32_t copied = 0;
+    while (copied < count)
+    {
+        const uint32_t id = offset + copied;
+        const uint32_t page = id / SPARSE_POOL_PAGE_SIZE;
+        const uint32_t inPage = id % SPARSE_POOL_PAGE_SIZE;
+        const uint32_t chunk = std::min(count - copied, SPARSE_POOL_PAGE_SIZE - inPage);
+        auto root = block->getRootVar();
+        auto cellBuffer = root["cellIndexPages"][page].getBuffer();
+        auto voxelBuffer = root["voxelPages"][page].getBuffer();
+        pRenderContext->updateBuffer(cellBuffer.get(), cells + copied, size_t(inPage) * sizeof(uint32_t), size_t(chunk) * sizeof(uint32_t));
+        if (data)
+            pRenderContext->updateBuffer(voxelBuffer.get(), data + copied, size_t(inPage) * sizeof(VoxelData), size_t(chunk) * sizeof(VoxelData));
+        copied += chunk;
+    }
+
+    auto var = mpBuildSparseIndexPass->getRootVar();
+    var["gGridDataParamBlock"] = block;
+    constexpr uint32_t dispatchLimit = 65535u * 256u;
+    for (uint32_t dispatched = 0; dispatched < count; )
+    {
+        const uint32_t chunk = std::min(dispatchLimit, count - dispatched);
+        var["CB"]["gVoxelOffset"] = offset + dispatched;
+        var["CB"]["gVoxelCount"] = offset + count;
+        mpBuildSparseIndexPass->execute(pRenderContext, uint3(chunk, 1, 1));
+        dispatched += chunk;
+    }
+}
+
 void VoxelReconstructionNoLightTransport::resetPointCloudOptimization(RenderContext* pRenderContext)
 {
     mEnableReconstruction = false;
@@ -18,7 +197,7 @@ void VoxelReconstructionNoLightTransport::resetPointCloudOptimization(RenderCont
     mReduceLossPass.iterationLossCount = 0;
     mReduceLossPass.iterationLossHistory.clear();
     if (mpPathRecordBuffer) pRenderContext->clearUAV(mpPathRecordBuffer->getUAV().get(), uint4(0));
-    if (mGradientPass.gradBuffer) pRenderContext->clearUAV(mGradientPass.gradBuffer->getUAV().get(), uint4(0));
+    clearSparseGradients(pRenderContext);
 }
 
 bool VoxelReconstructionNoLightTransport::initializePointCloudVoxelData(RenderContext* pRenderContext)
@@ -34,6 +213,9 @@ bool VoxelReconstructionNoLightTransport::initializePointCloudVoxelData(RenderCo
             {grid.voxelSize.x, grid.voxelSize.y, grid.voxelSize.z},
             double(mPointCloud.opacityThreshold));
         grid.solidVoxelCount = static_cast<uint32_t>(points.seeds.size());
+        grid.activeVoxelCount = grid.solidVoxelCount;
+        if (grid.activeVoxelCount == 0)
+            throw RuntimeError("Point-cloud initialization produced no occupied voxels for the current grid.");
         static_assert(sizeof(PointCloudInitialization::Seed) == sizeof(uint32_t));
         if (!mpInitializePointCloudPass)
         {
@@ -44,22 +226,17 @@ bool VoxelReconstructionNoLightTransport::initializePointCloudVoxelData(RenderCo
 
         auto seeds = mpDevice->createStructuredBuffer(sizeof(PointCloudInitialization::Seed), grid.solidVoxelCount,
             ResourceBindFlags::ShaderResource, MemoryType::DeviceLocal, points.seeds.data());
-        auto voxels = mpDevice->createStructuredBuffer(sizeof(VoxelData), grid.totalVoxelCount(),
-            ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess);
-        auto reflector = mpReflectTypes->getProgram()->getReflector()->getParameterBlock("gGridDataParamBlock");
-        auto block = ParameterBlock::create(mpDevice, reflector);
-        auto gridVar = block->getRootVar();
-        gridVar["gridDataBuffer"] = voxels;
-        gridVar["vBuffer"] = mGridResources.vBuffer;
-        gridVar["voxelCount"] = grid.voxelCount;
-        gridVar["voxelSize"] = grid.voxelSize;
-        gridVar["gridMin"] = grid.gridMin;
-        gridVar["solidVoxelCount"] = grid.solidVoxelCount;
+        const uint64_t maximumCapacity = uint64_t(SPARSE_POOL_PAGE_SIZE) * SPARSE_POOL_MAX_PAGES;
+        if (uint64_t(grid.solidVoxelCount) > maximumCapacity)
+            throw RuntimeError("Point cloud requires more occupied voxels than the segmented pool supports.");
+        const uint64_t requestedCapacity = std::min(maximumCapacity,
+            uint64_t(grid.solidVoxelCount) + std::max<uint64_t>(1024u, grid.solidVoxelCount / 4u));
+        auto resources = allocateSparseGrid(pRenderContext, grid, uint32_t(requestedCapacity));
+        auto block = createSparseGridBlock(resources);
         auto var = mpInitializePointCloudPass->getRootVar();
         var["gGridDataParamBlock"] = block;
         var["gSeeds"] = seeds;
         var["CB"]["gSeedCount"] = grid.solidVoxelCount;
-        pRenderContext->clearUAV(voxels->getUAV().get(), uint4(0));
         // Limit each dispatch to D3D12's 65535 thread groups in X.
         constexpr uint32_t batchSize = 65535u * 256u;
         for (uint32_t offset = 0; offset < grid.solidVoxelCount; )
@@ -69,22 +246,13 @@ bool VoxelReconstructionNoLightTransport::initializePointCloudVoxelData(RenderCo
             mpInitializePointCloudPass->execute(pRenderContext, uint3(batchCount, 1, 1));
             offset += batchCount;
         }
-        pRenderContext->uavBarrier(voxels.get());
+        for (const auto& page : resources.voxelPages) pRenderContext->uavBarrier(page.get());
+        for (const auto& page : resources.indexPages) pRenderContext->uavBarrier(page.get());
         pRenderContext->submit(true);
         var["gSeeds"].setBuffer(nullptr);
 
         // Commit only after successful initialization, then release references to the old grid.
-        const auto rebindGrid = [&block](const auto& pass)
-        {
-            if (pass && pass->getVars()) pass->getRootVar()["gGridDataParamBlock"].setParameterBlock(block);
-        };
-        rebindGrid(mpInitializeDataPass);
-        rebindGrid(mRayMarchingPass.mpFullScreenPass);
-        rebindGrid(mGradientPass.mpComputePass);
-        rebindGrid(mUpdatePass.mpComputePass);
-        mGridResources.gridDataBuffer = voxels;
-        mGridResources.gridData = grid;
-        mpGridBlock = block;
+        commitSparseGrid(std::move(resources), block, mVoxelResolution);
         resetPointCloudOptimization(pRenderContext);
         mPointCloud.initialized = true;
         mLoadedReconstructionForViewing = false;

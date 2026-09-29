@@ -45,6 +45,7 @@ target_sources(VoxelReconstructionNoLightTransport PRIVATE
     Shader/ReflectTypes.cs.slang
     Shader/InitializeData.cs.slang
     Shader/InitializePointCloud.cs.slang
+    Shader/BuildSparseIndex.cs.slang
     Shader/RayMarchingPass.ps.slang
     Shader/LossPass.cs.slang
     Shader/ReduceTexturePass.cs.slang

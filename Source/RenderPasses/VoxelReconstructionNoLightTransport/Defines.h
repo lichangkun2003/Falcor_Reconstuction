@@ -14,7 +14,7 @@
 #endif
 
 #ifndef GRID_RESOLUTION
-#define GRID_RESOLUTION 128
+#define GRID_RESOLUTION 256
 #endif
 
 #define REFERENCE_IMAGES_COUNT 100
@@ -35,3 +35,14 @@
 #define SH_OPACITY_COUNT 9
 
 #define MAX_CANDIDATES 8
+
+// Mode 1 keeps the complete spatial map, but allocates attributes only for occupied cells.
+// Each pool page stays below Falcor's 4 GiB buffer limit, including SH counts up to 16.
+#define SPARSE_POOL_PAGE_SIZE (1u << 18)
+#define SPARSE_POOL_MAX_PAGES 256
+#define SPARSE_INDEX_PAGE_EDGE 512
+#define SPARSE_INDEX_MAX_PAGES 8
+
+#if SH_COUNT < 1 || SH_COUNT > 16 || SH_OPACITY_COUNT < 1 || SH_OPACITY_COUNT > 16
+#error "SH counts must be between 1 and 16."
+#endif

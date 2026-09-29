@@ -37,6 +37,7 @@
 namespace
 {
 constexpr uint32_t kReconstructionMagic = 0x56525832; // "VRX2"
+constexpr uint32_t kSparseReconstructionVersion = 3;
 
 bool samePathComponent(const std::filesystem::path& a, const std::filesystem::path& b)
 {
@@ -204,6 +205,135 @@ std::filesystem::path VoxelReconstructionNoLightTransport::getDefaultReconstruct
 
 
 
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+void VoxelReconstructionNoLightTransport::saveSparseReconstruction(
+    RenderContext* pRenderContext, const std::filesystem::path& path)
+{
+    const uint32_t activeCount = mGridResources.gridData.activeVoxelCount;
+    if (activeCount == 0 || mGridResources.voxelPages.empty())
+    {
+        logWarning("Save reconstruction skipped: the compact voxel pool is empty.");
+        return;
+    }
+
+    std::filesystem::create_directories(path.parent_path());
+    pRenderContext->submit(true);
+    std::ofstream out(path, std::ios::binary);
+    if (!out) throw RuntimeError("Cannot open sparse reconstruction for writing: " + path.string());
+
+    const uint32_t magic = kReconstructionMagic;
+    const uint32_t version = kSparseReconstructionVersion;
+    const uint3 voxelCount = mGridResources.gridData.voxelCount;
+    const uint32_t voxelDataSize = sizeof(VoxelData);
+    const uint32_t radianceCount = SH_COUNT;
+    const uint32_t opacityCount = SH_OPACITY_COUNT;
+    const float3 gridMin = mGridResources.gridData.gridMin;
+    const float3 voxelSize = mGridResources.gridData.voxelSize;
+    out.write(reinterpret_cast<const char*>(&magic), sizeof(magic));
+    out.write(reinterpret_cast<const char*>(&version), sizeof(version));
+    out.write(reinterpret_cast<const char*>(&voxelCount), sizeof(voxelCount));
+    out.write(reinterpret_cast<const char*>(&voxelDataSize), sizeof(voxelDataSize));
+    out.write(reinterpret_cast<const char*>(&radianceCount), sizeof(radianceCount));
+    out.write(reinterpret_cast<const char*>(&opacityCount), sizeof(opacityCount));
+    out.write(reinterpret_cast<const char*>(&gridMin), sizeof(gridMin));
+    out.write(reinterpret_cast<const char*>(&voxelSize), sizeof(voxelSize));
+    out.write(reinterpret_cast<const char*>(&activeCount), sizeof(activeCount));
+
+    uint32_t written = 0;
+    while (written < activeCount)
+    {
+        const uint32_t page = written / SPARSE_POOL_PAGE_SIZE;
+        const uint32_t count = std::min(activeCount - written, SPARSE_POOL_PAGE_SIZE);
+        std::vector<uint32_t> cells(count);
+        std::vector<VoxelData> voxels(count);
+        mGridResources.cellIndexPages[page]->getBlob(cells.data(), 0, size_t(count) * sizeof(uint32_t));
+        mGridResources.voxelPages[page]->getBlob(voxels.data(), 0, size_t(count) * sizeof(VoxelData));
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            out.write(reinterpret_cast<const char*>(&cells[i]), sizeof(cells[i]));
+            out.write(reinterpret_cast<const char*>(&voxels[i]), sizeof(voxels[i]));
+        }
+        written += count;
+    }
+    if (!out) throw RuntimeError("Failed while writing sparse reconstruction payload.");
+    out.close();
+    saveLossHistory();
+    const uint64_t payloadBytes = uint64_t(activeCount) * (sizeof(uint32_t) + sizeof(VoxelData));
+    logInfo("Saved sparse reconstruction to {}, grid={}x{}x{}, active={}, payload={} bytes",
+        path.string(), voxelCount.x, voxelCount.y, voxelCount.z, activeCount, payloadBytes);
+}
+
+void VoxelReconstructionNoLightTransport::loadSparseReconstruction(
+    RenderContext* pRenderContext, const std::filesystem::path& selectedPath)
+{
+    const auto path = requireModeFile(selectedPath, getReconstructionModeDirectory());
+    std::ifstream in(path, std::ios::binary);
+    if (!in) throw RuntimeError("Cannot open sparse reconstruction: " + path.string());
+
+    uint32_t magic = 0, version = 0, voxelDataSize = 0;
+    uint32_t radianceCount = 0, opacityCount = 0, activeCount = 0;
+    GridData grid{};
+    in.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+    in.read(reinterpret_cast<char*>(&version), sizeof(version));
+    in.read(reinterpret_cast<char*>(&grid.voxelCount), sizeof(grid.voxelCount));
+    in.read(reinterpret_cast<char*>(&voxelDataSize), sizeof(voxelDataSize));
+    in.read(reinterpret_cast<char*>(&radianceCount), sizeof(radianceCount));
+    in.read(reinterpret_cast<char*>(&opacityCount), sizeof(opacityCount));
+    in.read(reinterpret_cast<char*>(&grid.gridMin), sizeof(grid.gridMin));
+    in.read(reinterpret_cast<char*>(&grid.voxelSize), sizeof(grid.voxelSize));
+    in.read(reinterpret_cast<char*>(&activeCount), sizeof(activeCount));
+    if (!in || magic != kReconstructionMagic || version != kSparseReconstructionVersion)
+        throw RuntimeError("Invalid mode 1 sparse reconstruction header.");
+    if (voxelDataSize != sizeof(VoxelData) || radianceCount != SH_COUNT || opacityCount != SH_OPACITY_COUNT)
+        throw RuntimeError("Sparse reconstruction SH counts or VoxelData layout differ from the current build.");
+    const uint64_t totalCells = checkedVoxelCount(grid.voxelCount, reconstructionDimensionLimit(mpDevice));
+    if (activeCount == 0 || uint64_t(activeCount) > totalCells)
+        throw RuntimeError("Sparse reconstruction has an invalid active voxel count.");
+    const uint64_t headerBytes = sizeof(magic) + sizeof(version) + sizeof(grid.voxelCount) + sizeof(voxelDataSize) +
+        sizeof(radianceCount) + sizeof(opacityCount) + sizeof(grid.gridMin) + sizeof(grid.voxelSize) + sizeof(activeCount);
+    const uint64_t expectedBytes = headerBytes + uint64_t(activeCount) * (sizeof(uint32_t) + sizeof(VoxelData));
+    if (std::filesystem::file_size(path) != expectedBytes)
+        throw RuntimeError("Sparse reconstruction file size does not match its header.");
+
+    grid.solidVoxelCount = activeCount;
+    grid.activeVoxelCount = activeCount;
+    const uint64_t maximumCapacity = uint64_t(SPARSE_POOL_PAGE_SIZE) * SPARSE_POOL_MAX_PAGES;
+    if (uint64_t(activeCount) > maximumCapacity)
+        throw RuntimeError("Sparse reconstruction exceeds the segmented parameter-pool limit.");
+    const uint64_t requestedCapacity = std::min(maximumCapacity,
+        uint64_t(activeCount) + std::max<uint64_t>(1024u, activeCount / 4u));
+    auto resources = allocateSparseGrid(pRenderContext, grid, uint32_t(requestedCapacity));
+    auto block = createSparseGridBlock(resources);
+
+    uint32_t loaded = 0;
+    while (loaded < activeCount)
+    {
+        const uint32_t count = std::min(activeCount - loaded, SPARSE_POOL_PAGE_SIZE);
+        std::vector<uint32_t> cells(count);
+        std::vector<VoxelData> voxels(count);
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            in.read(reinterpret_cast<char*>(&cells[i]), sizeof(cells[i]));
+            in.read(reinterpret_cast<char*>(&voxels[i]), sizeof(voxels[i]));
+            if (uint64_t(cells[i]) >= totalCells || voxels[i].occupied == 0)
+                throw RuntimeError("Sparse reconstruction contains an invalid voxel entry.");
+        }
+        if (!in) throw RuntimeError("Cannot read the complete sparse reconstruction payload.");
+        uploadSparseBatch(pRenderContext, block, loaded, cells.data(), count, voxels.data());
+        loaded += count;
+    }
+    for (const auto& page : resources.voxelPages) pRenderContext->uavBarrier(page.get());
+    for (const auto& page : resources.indexPages) pRenderContext->uavBarrier(page.get());
+    pRenderContext->submit(true);
+    const uint32_t resolution = std::max(grid.voxelCount.x, std::max(grid.voxelCount.y, grid.voxelCount.z));
+    commitSparseGrid(std::move(resources), block, resolution);
+    resetLoadedReconstruction(pRenderContext);
+    mReconstructionIOStatus = fmt::format("Loaded sparse reconstruction: {} ({}x{}x{}, {} active voxels)",
+        path.filename().string(), grid.voxelCount.x, grid.voxelCount.y, grid.voxelCount.z, activeCount);
+    logInfo("{}", mReconstructionIOStatus);
+}
+#endif
+
 void VoxelReconstructionNoLightTransport::saveReconstruction(RenderContext* pRenderContext)
 {
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
@@ -212,6 +342,18 @@ void VoxelReconstructionNoLightTransport::saveReconstruction(RenderContext* pRen
         logWarning("Save reconstruction skipped: initialize from PLY or load a reconstruction first.");
         return;
     }
+    const auto sparsePath = getDefaultReconstructionSavePath();
+    try
+    {
+        saveSparseReconstruction(pRenderContext, sparsePath);
+        mReconstructionIOStatus = "Saved sparse reconstruction: " + sparsePath.filename().string();
+    }
+    catch (const std::exception& error)
+    {
+        mReconstructionIOStatus = std::string("Save failed: ") + error.what();
+        logError("{}", mReconstructionIOStatus);
+    }
+    return;
 #endif
     if (!mGridResources.gridDataBuffer)
     {
@@ -277,6 +419,19 @@ void VoxelReconstructionNoLightTransport::loadReconstruction(RenderContext* pRen
     try
     {
         const auto path = requireModeFile(selectedPath, getReconstructionModeDirectory());
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+        {
+            std::ifstream header(path, std::ios::binary);
+            uint32_t magic = 0, version = 0;
+            header.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+            header.read(reinterpret_cast<char*>(&version), sizeof(version));
+            if (magic == kReconstructionMagic && version == kSparseReconstructionVersion)
+            {
+                loadSparseReconstruction(pRenderContext, path);
+                return;
+            }
+        }
+#endif
         std::ifstream in(path, std::ios::binary);
         if (!in) throw std::runtime_error("Cannot open reconstruction: " + path.string());
         const uint32_t dimensionLimit = reconstructionDimensionLimit(mpDevice);

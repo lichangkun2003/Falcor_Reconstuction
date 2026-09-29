@@ -53,14 +53,12 @@ float3 evalPixelColorFromPathAD(
     if (all(viewDir == float3(0.0f)))
         return float3(0.0f);
 
-    uint voxelLinearID = CellToIndex(
-        uint3(hitCellInt),
-        voxelCount
-    );
+    int voxelID = no_diff lookupVoxelID(hitCellInt);
+    if (voxelID < 0) return float3(0.0f);
 
     return evalVoxelRadianceAD(
         gradInfo,
-        voxelLinearID,
+        uint(voxelID),
         viewDir
     );
 }

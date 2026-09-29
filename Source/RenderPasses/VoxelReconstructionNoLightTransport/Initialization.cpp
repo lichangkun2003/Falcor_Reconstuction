@@ -30,6 +30,40 @@
 void VoxelReconstructionNoLightTransport::replaceReconstructionGrid(
     RenderContext* pRenderContext, const GridData& grid, uint32_t resolution, const void* voxelData, size_t byteSize)
 {
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    const uint32_t elementCount = grid.voxelCount.x * grid.voxelCount.y * grid.voxelCount.z;
+    if (!voxelData || byteSize != size_t(elementCount) * sizeof(VoxelData))
+        throw RuntimeError("Dense reconstruction payload does not match the replacement grid.");
+
+    std::vector<uint32_t> cells;
+    std::vector<VoxelData> voxels;
+    cells.reserve(grid.solidVoxelCount);
+    voxels.reserve(grid.solidVoxelCount);
+    const auto* dense = static_cast<const VoxelData*>(voxelData);
+    for (uint32_t cell = 0; cell < elementCount; ++cell)
+    {
+        if (dense[cell].occupied == 0) continue;
+        cells.push_back(cell);
+        voxels.push_back(dense[cell]);
+    }
+
+    GridData sparseGrid = grid;
+    sparseGrid.solidVoxelCount = uint32_t(cells.size());
+    sparseGrid.activeVoxelCount = sparseGrid.solidVoxelCount;
+    const uint64_t maximumCapacity = uint64_t(SPARSE_POOL_PAGE_SIZE) * SPARSE_POOL_MAX_PAGES;
+    if (uint64_t(sparseGrid.activeVoxelCount) > maximumCapacity)
+        throw RuntimeError("Dense reconstruction has too many occupied voxels for the segmented pool.");
+    const uint64_t requestedCapacity = std::min(maximumCapacity,
+        uint64_t(sparseGrid.activeVoxelCount) + std::max<uint64_t>(1024u, sparseGrid.activeVoxelCount / 4u));
+    auto next = allocateSparseGrid(pRenderContext, sparseGrid, uint32_t(requestedCapacity));
+    auto block = createSparseGridBlock(next);
+    uploadSparseBatch(pRenderContext, block, 0u, cells.data(), uint32_t(cells.size()), voxels.data());
+    for (const auto& page : next.voxelPages) pRenderContext->uavBarrier(page.get());
+    for (const auto& page : next.indexPages) pRenderContext->uavBarrier(page.get());
+    pRenderContext->submit(true);
+    commitSparseGrid(std::move(next), block, resolution);
+    return;
+#else
     const auto flags = ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess;
     GridResources next;
     next.gridData = grid;
@@ -88,6 +122,7 @@ void VoxelReconstructionNoLightTransport::replaceReconstructionGrid(
     mGradientPass.gradBuffer = gradient;
     mpGridBlock = block;
     mVoxelResolution = resolution;
+#endif
 }
 
 void VoxelReconstructionNoLightTransport::resetLoadedReconstruction(RenderContext* pRenderContext)
@@ -108,8 +143,8 @@ void VoxelReconstructionNoLightTransport::resetLoadedReconstruction(RenderContex
     mReduceLossPass.iterationLossCount = 0;
     mReduceLossPass.iterationLossHistory.clear();
     if (mpPathRecordBuffer) pRenderContext->clearUAV(mpPathRecordBuffer->getUAV().get(), uint4(0));
-    if (mGradientPass.gradBuffer) pRenderContext->clearUAV(mGradientPass.gradBuffer->getUAV().get(), uint4(0));
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
+    clearSparseGradients(pRenderContext);
     mPointCloud.startRequested = false;
     mPointCloud.initialized = true;
     mPointCloud.clearAccumulation = true;
@@ -127,10 +162,15 @@ DefineList VoxelReconstructionNoLightTransport::getReconstructionDefines()
 
 void VoxelReconstructionNoLightTransport::createInitializationPassResource()
 {
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    mpInitializeDataPass = nullptr;
+    return;
+#else
     ProgramDesc desc;
     desc.addShaderLibrary(InitializeDataShaderFilePath).csEntry("main");
     DefineList defines = getReconstructionDefines();
     mpInitializeDataPass = ComputePass::create(mpDevice, desc, defines, true);
+#endif
 }
 
 void VoxelReconstructionNoLightTransport::initializeVoxelData(RenderContext* pRenderContext)

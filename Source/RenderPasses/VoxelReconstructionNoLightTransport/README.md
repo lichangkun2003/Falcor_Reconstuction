@@ -1,5 +1,16 @@
 # Reconstruction experiments
 
+## Mode1 compact storage (current implementation)
+
+`RECON_MODE_POINT_CLOUD` now separates the complete spatial lookup from voxel attributes. The spatial lookup stores a compact voxel ID for every grid cell in paged `R32Int` 3D textures; only occupied voxels allocate `VoxelData`, `GradRecord`, and cell-index entries in segmented structured-buffer pools. Ray marching resolves `cell -> voxelID`, and path records, gradient accumulation, and SGD updates use that compact ID directly.
+
+- `512^3` uses one spatial-index page. `1024^3` uses eight `512^3` pages, so no individual resource exceeds Falcor's 4 GiB buffer limit.
+- Attribute pools grow in pages of `SPARSE_POOL_PAGE_SIZE`; initialization and loading reserve 25% extra capacity (at least 1024 entries) for later growth/dilation work. The current hard pool limit is `SPARSE_POOL_PAGE_SIZE * SPARSE_POOL_MAX_PAGES` active voxels.
+- Mode1 saves sparse reconstruction format v3: grid metadata followed by `(cellIndex, VoxelData)` for active voxels only. Mode1 can still load the previous dense v2 files and converts their occupied entries into the compact pool. Mode3 keeps its existing dense v2 format.
+- Growth, dilation, deletion compaction, and free-list allocation are not enabled yet. The paged capacity and cell-index reverse map are the storage foundation for those operations.
+
+The UI reports active voxel count, reserved capacity, pool page count, and spatial-index page count. Change `GRID_RESOLUTION`, rebuild the pass, and reinitialize from PLY to start a new resolution.
+
 在 `Defines.h` 中选择实验，修改后重新编译此 Pass。以下为配置示例，实际运行值以源码和 UI 为准：
 
 ```cpp
@@ -41,7 +52,7 @@ inline std::string ReferenceCameraFile = "Reconstruction_Input/hotdog/transforms
 
 等待参考图片加载完，点击 **Init / Reset from PLY** 可先查看初始化结果，再勾选 **Enable Reconstruction** 开始训练。也可以直接勾选 **Enable Reconstruction**，首次会自动初始化。重置按钮会重新读取 PLY、清除迭代和 loss 状态并停止训练。训练建议保持默认 Spp=8。整批 Spp 帧里，每一帧都用“不含自己”的前缀平均残差算出自己那一份无偏梯度，原子累加到梯度缓冲；整批结束后统一更新一次，按各体素的累积计数求平均，也就是整批的平均梯度。第 0 帧没有前缀可用，只作为后续采样的基线，所以 N ≥ 2 才有意义，Spp=1 退化成单样本的旧行为。
 
-结果及 loss 保存到 `Reconstruction_Output/mode1`。当前使用 v2 体素文件格式，形状参数为中心、世界空间对数半轴和单位四元数；**Load Selected Reconstruction** 成功后停止训练，重新开始时直接使用加载结果，不要求 PLY 存在。加载采用文件中的实际分辨率，并按当前版本的固定重建范围 `[-1.326, 1.326]³` 还原网格。旧的 v1 矩阵椭球 bin 不会按新布局误读，需要重新初始化或重新烘焙。
+结果及 loss 保存到 `Reconstruction_Output/mode1`。新保存结果使用稀疏 v3 格式，形状参数仍为中心、世界空间对数半轴和单位四元数；**Load Selected Reconstruction** 成功后停止训练，重新开始时直接使用加载结果，不要求 PLY 存在。v3 直接保存网格 AABB、体素尺寸和非空体素条目；旧的 dense v2 mode1 文件仍可加载并转换到紧密池。旧的 v1 矩阵椭球 bin 不会按新布局误读，需要重新初始化或重新烘焙。
 
 占据状态只在初始化时确定，空体素不会在训练中自动生长。改用 3DGS 的覆盖式初始化后，只要高斯覆盖到位，原始点云的大孔洞就会被填上；代价是不再是严格的“有点才占据”，多占的体素目前只能靠背景射线剔除压掉（ellipsoid pruning 默认关闭）。pruning 和梯度更新沿用固定分辨率流程。
 
@@ -115,10 +126,10 @@ Reconstruction_Output/
 
 mode1 和 mode3 同名 bin 会被覆盖；需要保留多次实验时使用不同的 **Name Tag**。
 
-mode1 和 mode3 都使用 v2 体素文件格式，包含全部体素的占据信息及参数。场景名前缀只改变文件名，不改变 bin 格式。loss CSV 使用日期和 Name Tag 命名，同名会覆盖，不自动添加场景名。
+mode1 新文件使用稀疏 v3 格式，只保存活动体素及其空间格子编号；mode3 继续使用包含全部体素的 dense v2 格式。场景名前缀只改变文件名，不改变对应 mode 的 bin 格式。loss CSV 使用日期和 Name Tag 命名，同名会覆盖，不自动添加场景名。
 
 ## 加载当前版本的结果
 
-在 **Reconstruction IO** 中，点击 **Refresh Files**，选择文件并点击 **Load Selected Reconstruction**。列表递归扫描当前 `RECON_MODE` 对应的目录，显示相对路径；不会混入其他 mode 的文件。v2 本身没有 mode 字段，所以 mode1、mode3 的归属由文件夹区分。
+在 **Reconstruction IO** 中，点击 **Refresh Files**，选择文件并点击 **Load Selected Reconstruction**。列表递归扫描当前 `RECON_MODE` 对应的目录，显示相对路径；不会混入其他 mode 的文件。v2/v3 头均不承担跨 mode 选择，mode1、mode3 的归属仍由文件夹区分。
 
 两个 mode 的 Load 均按文件实际网格尺寸重建资源，暂停优化、取消待执行的初始化，并清除旧采样累积。查看结果只需要已加载的场景和场景相机，不要求 PLY、训练图片或参考相机文件存在。`color` 和 `AccuColor` 都显示加载结果，暂停时不会因训练 Spp 大于 1 而将画面亮度除以 Spp。UI 会显示加载成功或具体失败原因；格式、长度或资源分配失败时保留原结果。

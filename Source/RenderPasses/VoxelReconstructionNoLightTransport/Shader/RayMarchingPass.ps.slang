@@ -285,8 +285,13 @@ HitResult rayMarchingDDA(
                 float4(cellInt + 0.5f, 1.0f) };
             return hit;
 #else
-            uint offset = CellToIndex(cellInt, gGridDataParamBlock.voxelCount);
-            GaussianEllipsoid ellipsoid = gGridDataParamBlock.gridDataBuffer[offset].ellipsoid;
+            int offset = lookupVoxelID(cellInt);
+            if (offset < 0)
+            {
+                leave(cell, cellInt, directions, direction, reciprocal_direction);
+                continue;
+            }
+            GaussianEllipsoid ellipsoid = VOXEL_DATA(offset).ellipsoid;
             HitResult hit = checkPrimitive(ellipsoid, cell, direction, cellInt);
 
             // hard-hit不放入candidate数组，直接返回。
@@ -301,6 +306,9 @@ HitResult rayMarchingDDA(
                 GeometryCandidateRecord cand;
                 cand.valid = 1;
                 cand.cellInt = cellInt;
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+                cand.voxelID = uint(offset);
+#endif
                 cand.gmin = hit.gmin;
                 cand.xStar = hit.xStar;
                 cand.transmittanceBefore = transmittanceBefore;
@@ -423,13 +431,11 @@ float4 shadingGlobal(
         //hits[actualHitCount] = currentHit;
         actualHitCount++;
 
-        uint voxelIndex = CellToIndex(
-            uint3(currentHit.cellInt),
-            gGridDataParamBlock.voxelCount
-        );
+        int voxelIndexSigned = lookupVoxelID(currentHit.cellInt);
+        if (voxelIndexSigned < 0) break;
+        uint voxelIndex = uint(voxelIndexSigned);
 
-        VoxelData data =
-            gGridDataParamBlock.gridDataBuffer[voxelIndex];
+        VoxelData data = VOXEL_DATA(voxelIndex);
 
         // direction 是相机指向场景；
         // -direction 是体素指向相机的观察方向
@@ -442,6 +448,9 @@ float4 shadingGlobal(
         if (enableReconstruction) {
             VoxelRecord voxelRecord;
             voxelRecord.cellInt = currentHit.cellInt;
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+            voxelRecord.voxelID = voxelIndex;
+#endif
             voxelRecord.hitPosition = currentHit.cell;
             voxelRecord.radiance = radiance;
             voxelRecord.opacity = opacity;

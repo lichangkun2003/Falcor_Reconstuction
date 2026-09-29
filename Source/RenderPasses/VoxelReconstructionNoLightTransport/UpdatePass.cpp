@@ -57,7 +57,9 @@ void VoxelReconstructionNoLightTransport::runUpdatePass(RenderContext* pRenderCo
 
 
     var["gGridDataParamBlock"] = mpGridBlock;
+#if RECON_MODE != RECON_MODE_POINT_CLOUD
     var["gGradBuffer"] = mGradientPass.gradBuffer;
+#endif
 
     //var["gVoxelSHGrads"] = mpSceneGradients->getGradsBuffer(GradientType::VoxelSH);
 
@@ -74,10 +76,24 @@ void VoxelReconstructionNoLightTransport::runUpdatePass(RenderContext* pRenderCo
 
     //mpPixelDebug->prepareProgram(mUpdatePass.mpComputePass->getProgram(), mUpdatePass.mpComputePass->getRootVar());
 
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    constexpr uint32_t batchSize = 65535u * 256u;
+    for (uint32_t offset = 0; offset < mGridResources.gridData.activeVoxelCount; )
+    {
+        const uint32_t count = std::min(batchSize, mGridResources.gridData.activeVoxelCount - offset);
+        cb["gSparseUpdateOffset"] = offset;
+        mUpdatePass.mpComputePass->execute(pRenderContext, uint3(count, 1, 1));
+        offset += count;
+    }
+#else
     mUpdatePass.mpComputePass->execute(pRenderContext, mGridResources.gridData.voxelCount);
+#endif
 
-
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    barrierSparseVoxels(pRenderContext);
+#else
     pRenderContext->uavBarrier(mGridResources.gridDataBuffer.get());
+#endif
 
     mUpdatePass.mEnableEllipsoidPruning = false;
 }
