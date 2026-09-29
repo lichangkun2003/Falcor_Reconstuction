@@ -312,6 +312,11 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
 #endif
 
 
+    if (widget.var("Alpha Loss Weight", mLossPass.alphaLossWeight, 0.0f, 10.0f, 0.01f))
+    {
+        // Restart the sample batch so accumulated gradients use a single loss weight.
+        mRayMarchingPass.mSampleIndex = 0;
+    }
     widget.var("Geometry Tau (voxels)", mGradientPass.geometryTauVoxelFraction, 0.001f, 1.0f, 0.005f, false, "%.4f");
     widget.text(fmt::format("Geometry Tau (world): {:.6f}", getGeometryTauWorld()));
     widget.var("Geometry Grad Clamp", mGradientPass.geometryGradClamp, 0.0f, 10.0f, 1e-4f);

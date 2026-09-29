@@ -197,6 +197,7 @@ public:
     struct LossPass
     {
         uint mView;
+        float alphaLossWeight = 0.3f;
         ref<ComputePass> mpComputePass;
         ref<Texture> lossBuffer;
         ref<Texture> dL_dColor;

@@ -17,6 +17,7 @@ cbuffer CB {
     uint gSpp;
     // 到当前帧为止这一批里已经累积的采样数，第 k 帧时等于 k + 1。
     uint gSampleCount;
+    float gAlphaLossWeight;
 }
 
 
@@ -67,11 +68,9 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
     float3 dL_dColor = 2.0f * diff;
 
     // Alpha loss
-    const float alphaLossWeight = 0.3f;
-
     float alphaDiff = renderAlpha - refAlpha;
-    float alphaLoss = alphaLossWeight * alphaDiff * alphaDiff;
-    float dL_dAlpha = 2.0f * alphaLossWeight * alphaDiff;
+    float alphaLoss = gAlphaLossWeight * alphaDiff * alphaDiff;
+    float dL_dAlpha = 2.0f * gAlphaLossWeight * alphaDiff;
 
 
     // Total loss

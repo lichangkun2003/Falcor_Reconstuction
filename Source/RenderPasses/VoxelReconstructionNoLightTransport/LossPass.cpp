@@ -94,6 +94,7 @@ void VoxelReconstructionNoLightTransport::runLossPass(RenderContext* pRenderCont
     // (gSpp * accu - C_k) 还原的是累积和，除以 (gSampleCount - 1) == k 才是前 k 帧的平均.
     // mSampleIndex 在本帧的 rayMarchingPass 里已经自增过，此刻就等于 k + 1，这里不能再加 1.
     cb["gSampleCount"] = mRayMarchingPass.mSampleIndex;
+    cb["gAlphaLossWeight"] = mLossPass.alphaLossWeight;
 
 
     mLossPass.mpComputePass->execute(pRenderContext, uint3(mRayMarchingPass.mOutputResolution.x, mRayMarchingPass.mOutputResolution.y, 1)

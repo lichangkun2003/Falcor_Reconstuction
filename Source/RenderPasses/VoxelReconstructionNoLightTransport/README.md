@@ -55,7 +55,7 @@ inline std::string ReferenceCameraFile = "Reconstruction_Input/hotdog/transforms
 
 ## Alpha loss 的几何代理
 
-Loss Pass 仍计算 `L = L_RGB + 0.3·(A_render - A_ref)²`，输出的 `dL/dA` 已包含 `0.3`，几何分支不再乘一次该 loss 权重。前向保持硬 hit，alpha 不乘 soft-hit 权重；新增项只用于反向的局部代理。
+Loss Pass 计算 `L = L_RGB + AlphaLossWeight·(A_render - A_ref)²`，UI 的 **Alpha Loss Weight** 默认 `0.3`，范围 `0～10`，同时控制 alpha loss 和 `dL/dA`。几何分支不再乘一次该 loss 权重。设为 `0` 会关闭 alpha loss 及其传给 opacity 和几何的梯度，RGB 与背景 carve 保持原有逻辑。调整该值会重新开始当前视角的 SPP 批次，避免累积不同权重的梯度；重建 GPU 资源时保留所选权重。前向保持硬 hit，alpha 不乘 soft-hit 权重；新增项只用于反向的局部代理。
 
 将一个实际 hit 看成由 gate 控制的 opacity，或在 near-miss 的位置插入一个虚拟 gate，记录路径的 alpha 为 `A = 1 - Π(1 - opacity_i·gate_i)`，所以 `dA/dgate_i = T_before·opacity_i·T_after`。新增距离梯度为：
 
@@ -83,6 +83,7 @@ UI 的 **Alpha Geometry Weight** 是额外的几何倍率，默认 `0.1`，不�
 | LR radiance | `0.1` | radiance SH 系数，保留原默认值 |
 | Geometry Tau (voxels) | `0.12` | 世界距离代理的 sigmoid 过渡宽度除以当前体素边长 |
 | Alpha Geometry Weight | `0.1` | 已有 alpha loss 传给几何的额外倍率，`0` 关闭新增项 |
+| Alpha Loss Weight | `0.3` | alpha 图像损失及其梯度的权重，范围 `0～10` |
 
 这是基于参数尺度的实验起点，尚未通过完整场景训练选出最优值。切换到新椭球表示时，shape 实际学习率从旧 Cholesky 更新的 `0.1` 改成了 `0.001`。对轴对齐球、相同 `dL/dg`、未触发限幅的一次更新，旧对数 Cholesky 对角线与新对数半轴的梯度大小相同、符号相反；旧形状步幅因此是迁移后默认值的 100 倍。现在恢复 shape 学习率量级并提高 center 步幅；opacity 保留 `10`，外观梯度和更新保持原样，只校准几何相关参数。这不表示两种形状参数化的一般更新轨迹完全相同。
 
