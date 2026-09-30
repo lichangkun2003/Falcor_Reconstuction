@@ -114,10 +114,14 @@ struct PathRecord
 // D3D12 limits each StructuredBuffer element to 2048 bytes.
 static_assert(sizeof(PathRecord) <= 2048, "PathRecord exceeds the D3D12 structured-buffer stride limit.");
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
-static_assert(sizeof(VoxelRecord) == 40 && sizeof(GeometryCandidateRecord) == 36 && sizeof(PathRecord) == 1616,
+static_assert(sizeof(VoxelRecord) == 40 && sizeof(GeometryCandidateRecord) == 36 &&
+    sizeof(PathRecord) == 48 + MAX_CONTRIBUTING_VOXELS_PER_RAY * sizeof(VoxelRecord) +
+        MAX_CANDIDATES * sizeof(GeometryCandidateRecord),
     "Mode 1 PathRecord host/device layout changed.");
 #else
-static_assert(sizeof(VoxelRecord) == 48 && sizeof(GeometryCandidateRecord) == 44 && sizeof(PathRecord) == 1936,
+static_assert(sizeof(VoxelRecord) == 48 && sizeof(GeometryCandidateRecord) == 44 &&
+    sizeof(PathRecord) == 48 + MAX_CONTRIBUTING_VOXELS_PER_RAY * sizeof(VoxelRecord) +
+        MAX_CANDIDATES * sizeof(GeometryCandidateRecord),
     "Mode 3 PathRecord host/device layout changed.");
 #endif
 #else

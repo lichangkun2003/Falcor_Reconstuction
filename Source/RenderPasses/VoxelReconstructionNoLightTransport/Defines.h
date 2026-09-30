@@ -14,7 +14,7 @@
 #endif
 
 #ifndef GRID_RESOLUTION
-#define GRID_RESOLUTION 1024
+#define GRID_RESOLUTION 512
 #endif
 
 #define REFERENCE_IMAGES_COUNT 100
@@ -22,7 +22,7 @@
 
 
 // Maximum hard-hit records retained for differentiable compositing along one ray.
-#define MAX_CONTRIBUTING_VOXELS_PER_RAY 32
+#define MAX_CONTRIBUTING_VOXELS_PER_RAY 16
 
 
 #define LOBE_COUNT 4
@@ -34,7 +34,7 @@
 // Opacity
 #define SH_OPACITY_COUNT 9
 
-#define MAX_CANDIDATES 8
+#define MAX_CANDIDATES 16
 
 // Mode 1 keeps the complete spatial map, but allocates attributes only for occupied cells.
 // Each pool page stays below Falcor's 4 GiB buffer limit, including SH counts up to 16.
