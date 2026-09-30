@@ -60,7 +60,7 @@ inline std::string ReferenceCameraFile = "Reconstruction_Input/hotdog/transforms
 
 前向仍使用硬椭球相交。首先将 ray 裁到当前体素内部的 `[localFrom, localTo]`，再在线段参数 `t ∈ [0,1]` 上求 `gmin` 和 `xStar`，而不是在整条无限 ray 上求最小值；线段端点也可能是最小值位置。该线段与原椭球的相交等价于与体素截断椭球的相交。几何反向的 soft-hit 权重为 `w = sigmoid(-dWorld / tauWorld)`，其中 `dWorld = gmin / surfaceGradNorm` 是这个相交判定附近的一阶世界空间距离代理，并不是 ray 到截断椭球的精确欧氏距离。`surfaceGradNorm` 在沿主轴归一化方向投影到原椭球表面的点计算，避免在椭球中心直接除以零梯度。中心附近方向不确定的射线跳过几何梯度，外观梯度仍正常计算。
 
-反向将 `1 / surfaceGradNorm` 视为常数（stop-gradient），乘到原有 center、logScale 和 rotation 的隐式函数梯度上。near-miss 候选排序使用同一个距离近似。`Geometry Grad Clamp` 仍限制转换后的 `dL/dg`；按计数平均和体素局部中心坐标保持原有定义。mode1 的 center、logScale 改用 Adam，rotation 仍用 SGD；mode3 保留原有 SGD。alpha loss 继续更新 opacity，同时通过下述几何代理传给 center、logScale 和 rotation。
+反向将 `1 / surfaceGradNorm` 视为常数（stop-gradient），乘到原有 center、logScale 和 rotation 的隐式函数梯度上。near-miss 候选排序使用同一个距离近似。`Geometry Grad Clamp` 仍限制转换后的 `dL/dg`；按计数平均和体素局部中心坐标保持原有定义。mode1 的 center、logScale 和局部切空间 rotation 均使用各自独立的 Adam 状态；mode3 保留原有 SGD。alpha loss 继续更新 opacity，同时通过下述几何代理传给 center、logScale 和 rotation。
 
 **Geometry Tau (voxels)** 是唯一可编辑的 tau 参数，表示当前体素最大边长 `h` 的倍数 `k`，当前默认 `k=0.12`。每次计算梯度时按当前网格重新计算 `tauWorld = k·h`，hit 与 miss 使用相同数值。**Geometry Tau (world)** 为派生值的只读显示。固定 AABB 边长为 `2.652` 时，128 分辨率默认约 `0.00248625`，256 分辨率默认约 `0.001243125`。加载不同分辨率的 bin 后保留 `k`，世界 tau 自动跟随新体素大小，避免继续使用旧分辨率的 band。这里不使用像素大小、屏幕分辨率、相机距离或单个椭球半轴来设置 tau；它只控制当前体素内 ray 片段的几何代理过渡。旧的无量纲 `gmin` tau（如 `0.15`、`0.32`）不等于这里的体素倍数。
 
@@ -90,14 +90,14 @@ UI 的 **Alpha Geometry Weight** 是额外的几何倍率，默认 `0.1`，不�
 | --- | ---: | --- |
 | Adam LR center (voxel local) | `0.001` | mode1 的体素局部中心；mode3 仍为 SGD，默认 `0.005` |
 | Adam LR log scale | `0.001` | mode1 的世界半轴自然对数；mode3 形状与旋转共用 SGD LR `0.1` |
-| SGD LR rotation | `0.1` | mode1 的局部旋转切向量 |
+| Adam LR rotation | `0.0005` | mode1 的局部旋转切向量；单步仍限制为 `0.02 rad` |
 | LR opacity | `10` | opacity 的 logit SH 系数，保留原默认值 |
 | LR radiance | `0.1` | radiance SH 系数，保留原默认值 |
 | Geometry Tau (voxels) | `0.12` | 世界距离代理的 sigmoid 过渡宽度除以当前体素边长 |
 | Alpha Geometry Weight | `0.1` | 已有 alpha loss 传给几何的额外倍率，`0` 关闭新增项 |
 | Alpha Loss Weight | `0.3` | alpha 图像损失及其梯度的权重，范围 `0～10` |
 
-这些是 mode1 Adam 的实验起点，不能沿用旧 SGD 的 shape LR=`0.1`：Adam 会按每个参数的二阶矩归一化梯度。每个视角的 SPP 梯度累积结束后更新一次，中心和 logScale 各自维护一阶矩、二阶矩及实际收到几何梯度的步数；没有几何梯度时不更新。`beta1=0.9`、`beta2=0.999`、`epsilon=1e-8`，旋转、opacity 和 radiance 仍用原 SGD。mode1 每个池槽额外占 56 字节 Adam 状态；重建初始化与加载 bin 会清零状态，当前 v3 bin 只保存体素参数，因此加载后训练是从新 Adam 状态开始，不是精确续训。
+这些是 mode1 Adam 的实验起点，不能沿用旧 SGD 的 shape LR=`0.1`：Adam 会按每个参数的二阶矩归一化梯度。每个视角的 SPP 梯度累积结束后更新一次，中心、logScale 和三维局部切空间旋转各自维护一阶矩、二阶矩及实际收到几何梯度的步数；没有几何梯度时不更新。旋转 Adam 的输出仍限制为单步最多 `0.02 rad`，再转换成增量四元数并归一化，不直接优化四元数的四个分量。`beta1=0.9`、`beta2=0.999`、`epsilon=1e-8`，opacity 和 radiance 仍用原 SGD。mode1 每个池槽额外占 84 字节 Adam 状态；重建初始化与加载 bin 会清零状态，当前 v3 bin 只保存体素参数，因此加载后训练是从新 Adam 状态开始，不是精确续训。
 
 tau 同时影响作用范围和幅度。对中心位于体素中央、初始半径 `r=0.6h` 的球，体素内任意点满足 `|q| ≤ √3·h/2`，当前代理 `dWorld = (|q|²/r² - 1)·r/2` 的范围约为 `[-0.3h, 0.325h]`（中心点除外）。`tauWorld=0.15h` 时 sigmoid 的 10%–90% 过渡总宽度约 `4.394·tau = 0.659h`，该初始范围的 `w·(1-w)` 至少约为边界峰值的 37%，减少体素内有梯度的样本因为 band 过窄而饱和。这个范围估计只用于当前初始球，不适用于优化后的任意椭球。距离代理远离边界可能高估真实距离，不能将它宣称为始终受体素直径约束的精确距离。
 

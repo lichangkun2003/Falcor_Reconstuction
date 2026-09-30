@@ -268,16 +268,17 @@ public:
             mLrRadiance = 0.1f;
             mLrOpacity = 10.0f;
 
-            // Mode 1 uses Adam for center/log semi-axes and SGD for rotation.
-            // Mode 3 retains the original SGD settings.
+            // Mode 1 uses separate Adam states for center, log semi-axes, and
+            // tangent-space rotation. Mode 3 retains the original SGD settings.
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
             mLrCenter = 1e-3f;
             mLrShape = 1e-3f;
+            mLrRotation = 5e-4f;
 #else
             mLrCenter = 5e-3f;
             mLrShape = 0.1f;
-#endif
             mLrRotation = 0.1f;
+#endif
 
             mEllipsoidPruneThreshold = 0.03f;
             mEnableEllipsoidPruning = false;

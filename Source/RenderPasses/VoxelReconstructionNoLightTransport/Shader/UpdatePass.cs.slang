@@ -118,7 +118,7 @@ void updateEllipsoidShape(
 
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
 // Moments are updated once per view, after that view's SPP gradients have been averaged.
-// Center and log scale use independent step counts so an LR of zero does not age a group.
+// Each parameter group uses an independent step count so an LR of zero does not age it.
 static const float kAdamBeta1 = 0.9f;
 static const float kAdamBeta2 = 0.999f;
 static const float kAdamEpsilon = 1e-8f;
@@ -154,10 +154,19 @@ void updateEllipsoidLogScaleAdam(
     ellipsoid.logScale = clamp(sanitizeFloat3(ellipsoid.logScale), log(minScale), log(maxScale));
 }
 
-void updateEllipsoidRotationSGD(inout GaussianEllipsoid ellipsoid, float3 gradient, float lr)
+void updateEllipsoidRotationAdam(
+    inout GaussianEllipsoid ellipsoid, float3 gradient, float lr,
+    inout GeometryAdamState state)
 {
-    float3 rotationGrad = clamp(sanitizeFloat3(gradient), float3(-10.0f), float3(10.0f));
-    float3 deltaAngle = -lr * rotationGrad;
+    // The gradient and Adam moments are local tangent-space axis-angle vectors.
+    // Do not optimize the four quaternion components independently.
+    float3 deltaAngle = -adamStep(
+        gradient,
+        state.rotationMean,
+        state.rotationSquaredMean,
+        state.rotationSteps,
+        lr
+    );
     float angle = length(deltaAngle);
     if (angle > 0.02f)
     {
@@ -348,9 +357,10 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
             updateEllipsoidLogScaleAdam(ellipsoid, grad.logScale * geometryGradScale,
                 gLrShape, gGridDataParamBlock.voxelSize, state);
         if (gLrRotation > 0.0f)
-            updateEllipsoidRotationSGD(ellipsoid, grad.rotation * geometryGradScale, gLrRotation);
+            updateEllipsoidRotationAdam(
+                ellipsoid, grad.rotation * geometryGradScale, gLrRotation, state);
 
-        if (gLrCenter > 0.0f || gLrShape > 0.0f)
+        if (gLrCenter > 0.0f || gLrShape > 0.0f || gLrRotation > 0.0f)
             gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset] = state;
 #else
         if (gLrCenter > 0.0f)
