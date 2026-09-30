@@ -212,10 +212,22 @@ bool VoxelReconstructionNoLightTransport::initializePointCloudVoxelData(RenderCo
             {grid.gridMin.x, grid.gridMin.y, grid.gridMin.z},
             {grid.voxelSize.x, grid.voxelSize.y, grid.voxelSize.z},
             double(mPointCloud.opacityThreshold));
-        grid.solidVoxelCount = static_cast<uint32_t>(points.seeds.size());
-        grid.activeVoxelCount = grid.solidVoxelCount;
-        if (grid.activeVoxelCount == 0)
+        if (points.seeds.empty())
             throw RuntimeError("Point-cloud initialization produced no occupied voxels for the current grid.");
+        const uint64_t occupiedCount = points.seeds.size();
+        const uint64_t maximumCapacity = uint64_t(SPARSE_POOL_PAGE_SIZE) * SPARSE_POOL_MAX_PAGES;
+        if (occupiedCount > maximumCapacity)
+        {
+            const double poolGiB = double(occupiedCount) *
+                double(sizeof(VoxelData) + sizeof(GradRecord) + sizeof(uint32_t)) / double(1ull << 30);
+            throw RuntimeError(fmt::format(
+                "Point cloud occupies {} voxels (pool limit {}). The voxel, gradient, and cell-index pools alone "
+                "would need at least {:.1f} GiB. Increase Gaussian Opacity Threshold to reduce coverage, "
+                "or use a lower grid resolution; raising the page limit alone may exhaust GPU memory.",
+                occupiedCount, maximumCapacity, poolGiB));
+        }
+        grid.solidVoxelCount = static_cast<uint32_t>(occupiedCount);
+        grid.activeVoxelCount = grid.solidVoxelCount;
         static_assert(sizeof(PointCloudInitialization::Seed) == sizeof(uint32_t));
         if (!mpInitializePointCloudPass)
         {
@@ -226,9 +238,6 @@ bool VoxelReconstructionNoLightTransport::initializePointCloudVoxelData(RenderCo
 
         auto seeds = mpDevice->createStructuredBuffer(sizeof(PointCloudInitialization::Seed), grid.solidVoxelCount,
             ResourceBindFlags::ShaderResource, MemoryType::DeviceLocal, points.seeds.data());
-        const uint64_t maximumCapacity = uint64_t(SPARSE_POOL_PAGE_SIZE) * SPARSE_POOL_MAX_PAGES;
-        if (uint64_t(grid.solidVoxelCount) > maximumCapacity)
-            throw RuntimeError("Point cloud requires more occupied voxels than the segmented pool supports.");
         const uint64_t requestedCapacity = std::min(maximumCapacity,
             uint64_t(grid.solidVoxelCount) + std::max<uint64_t>(1024u, grid.solidVoxelCount / 4u));
         auto resources = allocateSparseGrid(pRenderContext, grid, uint32_t(requestedCapacity));

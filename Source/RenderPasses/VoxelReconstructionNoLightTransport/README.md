@@ -4,7 +4,7 @@
 
 `RECON_MODE_POINT_CLOUD` now separates the complete spatial lookup from voxel attributes. The spatial lookup stores a compact voxel ID for every grid cell in paged `R32Int` 3D textures; only occupied voxels allocate `VoxelData`, `GradRecord`, and cell-index entries in segmented structured-buffer pools. Ray marching resolves `cell -> voxelID`, and path records, gradient accumulation, and SGD updates use that compact ID directly.
 
-- `512^3` uses one spatial-index page. `1024^3` uses eight `512^3` pages, so no individual resource exceeds Falcor's 4 GiB buffer limit.
+- `512^3` uses one spatial-index page. `1024^3` uses eight `512^3` pages, so no individual resource exceeds Falcor's 4 GiB buffer limit. This only removes the per-resource size limit: a scene whose Gaussian coverage creates more than `SPARSE_POOL_PAGE_SIZE * SPARSE_POOL_MAX_PAGES` occupied cells still cannot initialize, and the combined index, voxel, and gradient allocations must fit GPU memory. The initialization error reports the occupied count and the minimum pool memory needed.
 - Attribute pools grow in pages of `SPARSE_POOL_PAGE_SIZE`; initialization and loading reserve 25% extra capacity (at least 1024 entries) for later growth/dilation work. The current hard pool limit is `SPARSE_POOL_PAGE_SIZE * SPARSE_POOL_MAX_PAGES` active voxels.
 - Mode1 saves sparse reconstruction format v3: grid metadata followed by `(cellIndex, VoxelData)` for active voxels only. Mode1 can still load the previous dense v2 files and converts their occupied entries into the compact pool. Mode3 keeps its existing dense v2 format.
 - Growth, dilation, deletion compaction, and free-list allocation are not enabled yet. The paged capacity and cell-index reverse map are the storage foundation for those operations.
