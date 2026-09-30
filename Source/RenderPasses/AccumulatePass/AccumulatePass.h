@@ -54,6 +54,7 @@ public:
 
     virtual Properties getProperties() const override;
     virtual RenderPassReflection reflect(const CompileData& compileData) override;
+    virtual void compile(RenderContext* pRenderContext, const CompileData& compileData) override;
     virtual void execute(RenderContext* pRenderContext, const RenderData& renderData) override;
     virtual void renderUI(Gui::Widgets& widget) override;
     virtual void setScene(RenderContext* pRenderContext, const ref<Scene>& pScene) override;
@@ -120,6 +121,7 @@ protected:
     uint32_t mFrameCount = 0;
     /// Current frame dimension in pixels.
     uint2 mFrameDim = {0, 0};
+    uint2 mReflectedOutputSize = {0, 0};
     /// Last frame running sum. Used in Single and SingleKahan mode.
     ref<Texture> mpLastFrameSum;
     /// Last frame running compensation term. Used in SingleKahan mode.

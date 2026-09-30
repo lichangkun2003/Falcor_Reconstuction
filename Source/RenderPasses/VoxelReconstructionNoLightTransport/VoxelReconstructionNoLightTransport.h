@@ -324,6 +324,7 @@ public:
 
 private:
     static DefineList getReconstructionDefines();
+    void updateOutputResolution();
     void createInitializationPassResource();
     void initializeVoxelData(RenderContext* pRenderContext);
     void initializeOriginalVoxelData(RenderContext* pRenderContext);
@@ -393,6 +394,7 @@ private:
 
     // RayMarchingPass
     RayMarchingPass mRayMarchingPass;
+    uint32_t mViewingResolution = 0; // 0: 800x800, 1: 1920x1080; training always uses 800x800.
     uint3 MinFactor = uint3(1, 1, 1);
 
     // Voxel Optimization

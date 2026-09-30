@@ -113,7 +113,7 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
     // auto& pTexture = renderData.getTexture("src");
     if (!mpScene)
         return;
-    mFrameDim = renderData.getDefaultTextureDims();
+    mFrameDim = mRayMarchingPass.mOutputResolution;
     mInvFrameDim = 1.0f / float2(mFrameDim);
     beginFrame(pRenderContext, false);
 
@@ -366,6 +366,15 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
         else
             stopReconstruction();
     }
+    if (!mEnableReconstruction)
+    {
+        static const Gui::DropdownList kViewingResolutions = {
+            {0, "800 x 800"},
+            {1, "1920 x 1080"},
+        };
+        widget.dropdown("Viewing Resolution", kViewingResolutions, mViewingResolution);
+        updateOutputResolution();
+    }
 
     renderUIUpdatePass(widget);
 
@@ -560,6 +569,7 @@ void VoxelReconstructionNoLightTransport::setScene(RenderContext* pRenderContext
 
     // RayMarching
     createRayMarchingPassResource(pRenderContext);
+    updateOutputResolution();
 
     // Loss Pass
     createLossPassResource(pRenderContext);
@@ -765,9 +775,27 @@ void VoxelReconstructionNoLightTransport::setupGridResouce(RenderContext* pRende
 
 
 
+void VoxelReconstructionNoLightTransport::updateOutputResolution()
+{
+    bool training = mEnableReconstruction || mOptimizerParams.isRunning;
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    training |= mPointCloud.startRequested;
+#endif
+    const uint2 resolution = training ? uint2(800, 800) :
+        (mViewingResolution == 0 ? uint2(800, 800) : uint2(1920, 1080));
+    if (any(mRayMarchingPass.mOutputResolution != resolution))
+    {
+        mRayMarchingPass.mOutputResolution = resolution;
+        mRayMarchingPass.mSampleIndex = 0;
+        mRayMarchingPass.mOptionsChanged = true;
+        requestRecompile();
+    }
+}
+
 void VoxelReconstructionNoLightTransport::startReconstruction()
 {
     mReferenceDataError.clear();
+    updateOutputResolution();
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
     // GPU work and first-use initialization are performed at the next frame boundary.
     mPointCloud.startRequested = true;
@@ -804,6 +832,7 @@ void VoxelReconstructionNoLightTransport::stopReconstruction()
     mOptimizerParams.currentIteration = 0;
     mOptimizerParams.currentView = 0;
 #endif
+    updateOutputResolution();
 }
 
 bool VoxelReconstructionNoLightTransport::onMouseEvent(const MouseEvent& mouseEvent)

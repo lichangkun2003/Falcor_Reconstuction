@@ -113,7 +113,15 @@ Properties AccumulatePass::getProperties() const
 RenderPassReflection AccumulatePass::reflect(const CompileData& compileData)
 {
     RenderPassReflection reflector;
-    const uint2 sz = RenderPassHelpers::calculateIOSize(mOutputSizeSelection, mFixedOutputSize, compileData.defaultTexDims);
+    uint2 sz = RenderPassHelpers::calculateIOSize(mOutputSizeSelection, mFixedOutputSize, compileData.defaultTexDims);
+    if (mOutputSizeSelection == RenderPassHelpers::IOSize::Default)
+    {
+        // Follow a connected input with explicit dimensions instead of falling back to the window size.
+        // This allows a dynamically resized upstream pass to be accumulated at its native resolution.
+        if (const auto* input = compileData.connectedResources.getField(kInputChannel))
+            sz = uint2(input->getWidth(), input->getHeight());
+    }
+    mReflectedOutputSize = sz;
     const auto fmt = mOutputFormat != ResourceFormat::Unknown ? mOutputFormat : ResourceFormat::RGBA32Float;
 
     reflector.addInput(kInputChannel, "Input data to be temporally accumulated").bindFlags(ResourceBindFlags::ShaderResource);
@@ -122,6 +130,22 @@ RenderPassReflection AccumulatePass::reflect(const CompileData& compileData)
         .format(fmt)
         .texture2D(sz.x, sz.y);
     return reflector;
+}
+
+void AccumulatePass::compile(RenderContext* pRenderContext, const CompileData& compileData)
+{
+    if (mOutputSizeSelection != RenderPassHelpers::IOSize::Default)
+        return;
+
+    // Falcor initially reflects passes without connections, then retries reflection with
+    // connected resources if compilation fails. Ask for that retry when input dimensions
+    // were unknown during the first reflection.
+    if (const auto* input = compileData.connectedResources.getField(kInputChannel))
+    {
+        const uint2 inputSize(input->getWidth(), input->getHeight());
+        if (all(inputSize > uint2(0)) && any(mReflectedOutputSize != inputSize))
+            FALCOR_THROW("AccumulatePass output must match its connected input.");
+    }
 }
 
 void AccumulatePass::execute(RenderContext* pRenderContext, const RenderData& renderData)

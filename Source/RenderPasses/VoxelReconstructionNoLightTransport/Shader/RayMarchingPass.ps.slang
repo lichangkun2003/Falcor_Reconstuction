@@ -535,9 +535,12 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
     float3 rayOriginCell = from;
 
     uint bufferIndex = PixelToIndex(pixel, pixelCount);
-    gPathRecordBuffer[bufferIndex].init();
-    gPathRecordBuffer[bufferIndex].backgroundColor = renderBackground(direction).xyz;
-    gPathRecordBuffer[bufferIndex].viewDir = normalize(-direction);
+    if (enableReconstruction)
+    {
+        gPathRecordBuffer[bufferIndex].init();
+        gPathRecordBuffer[bufferIndex].backgroundColor = backgroundColor;
+        gPathRecordBuffer[bufferIndex].viewDir = normalize(-direction);
+    }
 
     float2 inOut = clip(float3(0), float3(voxelCount), from, to);
     if (inOut.x < 0) {
@@ -568,7 +571,8 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
 
     if (hit.hit)
     {
-        gPathRecordBuffer[bufferIndex].valid = 1;
+        if (enableReconstruction)
+            gPathRecordBuffer[bufferIndex].valid = 1;
 
         switch (drawMode)
         {
