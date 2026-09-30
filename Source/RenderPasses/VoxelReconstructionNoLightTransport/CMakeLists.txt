@@ -18,6 +18,7 @@ set(voxel_reconstruction_shared_headers
     HostDeviceShared.slang
     PathRecord.slang
     GradRecord.slang
+    GeometryAdamState.slang
     Voxel/ABSDF.slang
     Voxel/VoxelGrid.slang
     Voxel/VoxelData.slang

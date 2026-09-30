@@ -50,12 +50,15 @@ VoxelReconstructionNoLightTransport::GridResources VoxelReconstructionNoLightTra
     {
         auto voxels = mpDevice->createStructuredBuffer(sizeof(VoxelData), SPARSE_POOL_PAGE_SIZE, flags);
         auto gradients = mpDevice->createStructuredBuffer(sizeof(GradRecord), SPARSE_POOL_PAGE_SIZE, flags);
+        auto adam = mpDevice->createStructuredBuffer(sizeof(GeometryAdamState), SPARSE_POOL_PAGE_SIZE, flags);
         auto cells = mpDevice->createStructuredBuffer(sizeof(uint32_t), SPARSE_POOL_PAGE_SIZE, flags);
         pRenderContext->clearUAV(voxels->getUAV().get(), uint4(0));
         pRenderContext->clearUAV(gradients->getUAV().get(), uint4(0));
+        pRenderContext->clearUAV(adam->getUAV().get(), uint4(0));
         pRenderContext->clearUAV(cells->getUAV().get(), uint4(0));
         resources.voxelPages.push_back(std::move(voxels));
         resources.gradPages.push_back(std::move(gradients));
+        resources.adamPages.push_back(std::move(adam));
         resources.cellIndexPages.push_back(std::move(cells));
     }
     return resources;
@@ -96,6 +99,16 @@ void VoxelReconstructionNoLightTransport::commitSparseGrid(
     bind(mRayMarchingPass.mpFullScreenPass);
     bind(mGradientPass.mpComputePass);
     bind(mUpdatePass.mpComputePass);
+    if (mUpdatePass.mpComputePass && mUpdatePass.mpComputePass->getVars())
+    {
+        auto var = mUpdatePass.mpComputePass->getRootVar()["gGeometryAdamPages"];
+        const size_t pageCount = std::max(mGridResources.adamPages.size(), resources.adamPages.size());
+        for (size_t page = 0; page < pageCount; ++page)
+        {
+            if (page < resources.adamPages.size()) var[uint32_t(page)] = resources.adamPages[page];
+            else var[uint32_t(page)].setBuffer(nullptr);
+        }
+    }
     mGridResources = std::move(resources);
     mpGridBlock = block;
     mVoxelResolution = resolution;
@@ -113,12 +126,15 @@ void VoxelReconstructionNoLightTransport::reserveSparseVoxelCapacity(
     {
         auto voxels = mpDevice->createStructuredBuffer(sizeof(VoxelData), SPARSE_POOL_PAGE_SIZE, flags);
         auto gradients = mpDevice->createStructuredBuffer(sizeof(GradRecord), SPARSE_POOL_PAGE_SIZE, flags);
+        auto adam = mpDevice->createStructuredBuffer(sizeof(GeometryAdamState), SPARSE_POOL_PAGE_SIZE, flags);
         auto cells = mpDevice->createStructuredBuffer(sizeof(uint32_t), SPARSE_POOL_PAGE_SIZE, flags);
         pRenderContext->clearUAV(voxels->getUAV().get(), uint4(0));
         pRenderContext->clearUAV(gradients->getUAV().get(), uint4(0));
+        pRenderContext->clearUAV(adam->getUAV().get(), uint4(0));
         pRenderContext->clearUAV(cells->getUAV().get(), uint4(0));
         next.voxelPages.push_back(std::move(voxels));
         next.gradPages.push_back(std::move(gradients));
+        next.adamPages.push_back(std::move(adam));
         next.cellIndexPages.push_back(std::move(cells));
     }
     next.gridData.voxelCapacity = requiredPages * SPARSE_POOL_PAGE_SIZE;
@@ -219,9 +235,10 @@ bool VoxelReconstructionNoLightTransport::initializePointCloudVoxelData(RenderCo
         if (occupiedCount > maximumCapacity)
         {
             const double poolGiB = double(occupiedCount) *
-                double(sizeof(VoxelData) + sizeof(GradRecord) + sizeof(uint32_t)) / double(1ull << 30);
+                double(sizeof(VoxelData) + sizeof(GradRecord) + sizeof(GeometryAdamState) + sizeof(uint32_t)) /
+                double(1ull << 30);
             throw RuntimeError(fmt::format(
-                "Point cloud occupies {} voxels (pool limit {}). The voxel, gradient, and cell-index pools alone "
+                "Point cloud occupies {} voxels (pool limit {}). The voxel, gradient, Adam, and cell-index pools alone "
                 "would need at least {:.1f} GiB. Increase Gaussian Opacity Threshold to reduce coverage, "
                 "or use a lower grid resolution; raising the page limit alone may exhaust GPU memory.",
                 occupiedCount, maximumCapacity, poolGiB));

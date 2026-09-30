@@ -1,9 +1,12 @@
 #include "../Voxel/VoxelGrid.slang"
 #include "../GradRecord.slang"
+#include "../GeometryAdamState.slang"
 
 // Input
 #if RECON_MODE != RECON_MODE_POINT_CLOUD
 StructuredBuffer<GradRecord> gGradBuffer;
+#else
+RWStructuredBuffer<GeometryAdamState> gGeometryAdamPages[SPARSE_POOL_MAX_PAGES];
 #endif
 
 //StructuredBuffer<float> gVoxelSHGrads;
@@ -18,6 +21,9 @@ cbuffer CB {
     float gLrRadiance;
     float gLrCenter;
     float gLrShape;
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    float gLrRotation;
+#endif
     float gLrOpacity;
 
     float gEllipsoidPruneThreshold;
@@ -109,6 +115,70 @@ void updateEllipsoidShape(
         ellipsoid.rotation = normalizeGaussianRotation(ellipsoid.rotation);
     }
 }
+
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+// Moments are updated once per view, after that view's SPP gradients have been averaged.
+// Center and log scale use independent step counts so an LR of zero does not age a group.
+static const float kAdamBeta1 = 0.9f;
+static const float kAdamBeta2 = 0.999f;
+static const float kAdamEpsilon = 1e-8f;
+
+float3 adamStep(float3 gradient, inout float3 mean, inout float3 squaredMean, inout uint steps, float lr)
+{
+    gradient = clamp(sanitizeFloat3(gradient), float3(-10.0f), float3(10.0f));
+    mean = kAdamBeta1 * mean + (1.0f - kAdamBeta1) * gradient;
+    squaredMean = kAdamBeta2 * squaredMean + (1.0f - kAdamBeta2) * gradient * gradient;
+    steps += 1;
+    float bias1 = max(1.0f - pow(kAdamBeta1, float(steps)), 1e-8f);
+    float bias2 = max(1.0f - pow(kAdamBeta2, float(steps)), 1e-8f);
+    float3 correctedMean = mean / bias1;
+    float3 correctedSquaredMean = max(squaredMean / bias2, float3(0.0f));
+    return sanitizeFloat3(lr * correctedMean / (sqrt(correctedSquaredMean) + kAdamEpsilon));
+}
+
+void updateEllipsoidCenterAdam(inout GaussianEllipsoid ellipsoid, float3 gradient, float lr, inout GeometryAdamState state)
+{
+    float3 step = adamStep(gradient, state.centerMean, state.centerSquaredMean, state.centerSteps, lr);
+    ellipsoid.center -= clamp(step, float3(-0.02f), float3(0.02f));
+    ellipsoid.center = clamp(ellipsoid.center, float3(0.01f), float3(0.99f));
+}
+
+void updateEllipsoidLogScaleAdam(
+    inout GaussianEllipsoid ellipsoid, float3 gradient, float lr,
+    float3 voxelSize, inout GeometryAdamState state)
+{
+    float3 step = adamStep(gradient, state.logScaleMean, state.logScaleSquaredMean, state.logScaleSteps, lr);
+    ellipsoid.logScale -= clamp(step, float3(-0.02f), float3(0.02f));
+    float3 minScale = max(voxelSize * 1e-4f, float3(1e-8f));
+    float3 maxScale = max(voxelSize * 4.0f, minScale);
+    ellipsoid.logScale = clamp(sanitizeFloat3(ellipsoid.logScale), log(minScale), log(maxScale));
+}
+
+void updateEllipsoidRotationSGD(inout GaussianEllipsoid ellipsoid, float3 gradient, float lr)
+{
+    float3 rotationGrad = clamp(sanitizeFloat3(gradient), float3(-10.0f), float3(10.0f));
+    float3 deltaAngle = -lr * rotationGrad;
+    float angle = length(deltaAngle);
+    if (angle > 0.02f)
+    {
+        deltaAngle *= 0.02f / angle;
+        angle = 0.02f;
+    }
+    if (angle > 1e-8f)
+    {
+        float halfAngle = 0.5f * angle;
+        float3 axis = deltaAngle / angle;
+        float4 deltaRotation = float4(cos(halfAngle), axis * sin(halfAngle));
+        ellipsoid.rotation = normalizeGaussianRotation(
+            multiplyGaussianRotations(ellipsoid.rotation, deltaRotation)
+        );
+    }
+    else
+    {
+        ellipsoid.rotation = normalizeGaussianRotation(ellipsoid.rotation);
+    }
+}
+#endif
 
 
 void updateOpacitySH(inout SphericalHarmonicsOpacity opacity,GradRecord grad,float lr,float gradScale)
@@ -267,6 +337,22 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
     {
         GaussianEllipsoid ellipsoid = voxelData.ellipsoid;
 
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+        uint adamPage = uint(index) / SPARSE_POOL_PAGE_SIZE;
+        uint adamOffset = uint(index) % SPARSE_POOL_PAGE_SIZE;
+        GeometryAdamState state = gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset];
+
+        if (gLrCenter > 0.0f)
+            updateEllipsoidCenterAdam(ellipsoid, grad.center * geometryGradScale, gLrCenter, state);
+        if (gLrShape > 0.0f)
+            updateEllipsoidLogScaleAdam(ellipsoid, grad.logScale * geometryGradScale,
+                gLrShape, gGridDataParamBlock.voxelSize, state);
+        if (gLrRotation > 0.0f)
+            updateEllipsoidRotationSGD(ellipsoid, grad.rotation * geometryGradScale, gLrRotation);
+
+        if (gLrCenter > 0.0f || gLrShape > 0.0f)
+            gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset] = state;
+#else
         if (gLrCenter > 0.0f)
         {
             float3 gradCenter = grad.center * geometryGradScale;
@@ -283,6 +369,7 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
                 gGridDataParamBlock.voxelSize
             );
         }
+#endif
 
         voxelData.ellipsoid = ellipsoid;
     }

@@ -57,7 +57,10 @@ void VoxelReconstructionNoLightTransport::runUpdatePass(RenderContext* pRenderCo
 
 
     var["gGridDataParamBlock"] = mpGridBlock;
-#if RECON_MODE != RECON_MODE_POINT_CLOUD
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    for (uint32_t page = 0; page < mGridResources.adamPages.size(); ++page)
+        var["gGeometryAdamPages"][page] = mGridResources.adamPages[page];
+#else
     var["gGradBuffer"] = mGradientPass.gradBuffer;
 #endif
 
@@ -69,6 +72,9 @@ void VoxelReconstructionNoLightTransport::runUpdatePass(RenderContext* pRenderCo
     cb["gLrRadiance"] = mUpdatePass.mLrRadiance;
     cb["gLrCenter"] = mUpdatePass.mLrCenter;
     cb["gLrShape"] = mUpdatePass.mLrShape;
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    cb["gLrRotation"] = mUpdatePass.mLrRotation;
+#endif
     cb["gLrOpacity"] = mUpdatePass.mLrOpacity;
     //cb["gVoxelSHGradDim"] = mVoxelSHGradDim;
     cb["gEllipsoidPruneThreshold"] = mUpdatePass.mEllipsoidPruneThreshold;
@@ -91,6 +97,7 @@ void VoxelReconstructionNoLightTransport::runUpdatePass(RenderContext* pRenderCo
 
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
     barrierSparseVoxels(pRenderContext);
+    for (const auto& page : mGridResources.adamPages) pRenderContext->uavBarrier(page.get());
 #else
     pRenderContext->uavBarrier(mGridResources.gridDataBuffer.get());
 #endif
@@ -116,9 +123,14 @@ void VoxelReconstructionNoLightTransport::renderUIUpdatePass(Gui::Widgets& widge
     group.text("Geometry learning rates");
 
 
-    // Edit actual rates: the former scale controls capped shape SGD at 0.001.
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    group.var("Adam LR center (voxel local)", mUpdatePass.mLrCenter, 0.0f, 0.1f, 1e-5f, false, "%.6f");
+    group.var("Adam LR log scale", mUpdatePass.mLrShape, 0.0f, 0.1f, 1e-5f, false, "%.6f");
+    group.var("SGD LR rotation", mUpdatePass.mLrRotation, 0.0f, 1.0f, 0.001f, false, "%.6f");
+#else
     group.var("LR center (voxel local)", mUpdatePass.mLrCenter, 0.0f, 0.1f, 1e-5f, false, "%.6f");
     group.var("LR shape (log scale / rotation)", mUpdatePass.mLrShape, 0.0f, 1.0f, 0.001f, false, "%.6f");
+#endif
     group.text("Step limits: center 0.02 voxel/axis; log scale 0.02/axis; rotation 0.02 rad.");
 
     group.var("Ellipsoid Prune Threshold", mUpdatePass.mEllipsoidPruneThreshold, 0.0f, 1.0f, 1e-7f);

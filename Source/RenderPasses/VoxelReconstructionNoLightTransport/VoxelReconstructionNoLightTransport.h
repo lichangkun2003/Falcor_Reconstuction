@@ -48,6 +48,7 @@
 
 #include "PathRecord.slang"
 #include "GradRecord.slang"
+#include "GeometryAdamState.slang"
 
 using namespace Falcor;
 
@@ -157,6 +158,7 @@ public:
         std::vector<ref<Texture>> indexPages;
         std::vector<ref<Buffer>> voxelPages;
         std::vector<ref<Buffer>> gradPages;
+        std::vector<ref<Buffer>> adamPages;
         std::vector<ref<Buffer>> cellIndexPages;
 #endif
     };
@@ -249,6 +251,7 @@ public:
         float mLrRadiance;
         float mLrCenter;
         float mLrShape;
+        float mLrRotation;
         float mLrOpacity;
 
         // Prune Ellipsoid
@@ -265,9 +268,16 @@ public:
             mLrRadiance = 0.1f;
             mLrOpacity = 10.0f;
 
-            // Actual SGD rates, also used by initialization before the first update.
-            mLrCenter = 5e-3f; // Voxel-local center; 10x the former geometry default.
-            mLrShape = 0.1f;   // Log semi-axes and local rotation angle.
+            // Mode 1 uses Adam for center/log semi-axes and SGD for rotation.
+            // Mode 3 retains the original SGD settings.
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+            mLrCenter = 1e-3f;
+            mLrShape = 1e-3f;
+#else
+            mLrCenter = 5e-3f;
+            mLrShape = 0.1f;
+#endif
+            mLrRotation = 0.1f;
 
             mEllipsoidPruneThreshold = 0.03f;
             mEnableEllipsoidPruning = false;
