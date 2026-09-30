@@ -117,7 +117,11 @@ void VoxelReconstructionNoLightTransport::renderUIUpdatePass(Gui::Widgets& widge
 
     group.text("Appearance Learning rates");
 
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    group.var("Adam LR radiance", mUpdatePass.mLrRadiance, 0.0f, 0.1f, 1e-5f, false, "%.6f");
+#else
     group.var("LR radiance", mUpdatePass.mLrRadiance, 0.0f, 1.0f, 1e-4f);
+#endif
     group.var("LR opacity", mUpdatePass.mLrOpacity, 0.0f, 100.0f, 1e-4f);
 
     group.text("Geometry learning rates");

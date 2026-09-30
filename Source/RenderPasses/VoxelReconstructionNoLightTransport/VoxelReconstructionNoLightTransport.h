@@ -265,16 +265,17 @@ public:
             mUseGradCountNormalize = true;
             mGradScale = 1.0f;
 
-            mLrRadiance = 0.1f;
             mLrOpacity = 10.0f;
 
-            // Mode 1 uses separate Adam states for center, log semi-axes, and
-            // tangent-space rotation. Mode 3 retains the original SGD settings.
+            // Mode 1 uses separate Adam states for radiance, center, log
+            // semi-axes, and tangent-space rotation. Mode 3 retains SGD.
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
+            mLrRadiance = 1e-3f;
             mLrCenter = 1e-3f;
             mLrShape = 1e-3f;
             mLrRotation = 5e-4f;
 #else
+            mLrRadiance = 0.1f;
             mLrCenter = 5e-3f;
             mLrShape = 0.1f;
             mLrRotation = 0.1f;
