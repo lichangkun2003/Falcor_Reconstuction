@@ -305,12 +305,13 @@ HitResult rayMarchingDDA(
             {
                 GeometryCandidateRecord cand;
                 cand.valid = 1;
-                cand.cellInt = cellInt;
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
                 cand.voxelID = uint(offset);
+#else
+                cand.cellInt = cellInt;
 #endif
                 cand.gmin = hit.gmin;
-                cand.xStar = hit.xStar;
+                cand.xStar = hit.xStar.xyz;
                 cand.transmittanceBefore = transmittanceBefore;
                 cand.frontHitCount = frontHitCount;
 
@@ -447,17 +448,17 @@ float4 shadingGlobal(
 
         if (enableReconstruction) {
             VoxelRecord voxelRecord;
-            voxelRecord.cellInt = currentHit.cellInt;
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
             voxelRecord.voxelID = voxelIndex;
+#else
+            voxelRecord.cellInt = currentHit.cellInt;
 #endif
-            voxelRecord.hitPosition = currentHit.cell;
             voxelRecord.radiance = radiance;
             voxelRecord.opacity = opacity;
             voxelRecord.transmittanceBefore = transmittance;
 
             voxelRecord.gmin =currentHit.gmin;
-            voxelRecord.xStar =currentHit.xStar;
+            voxelRecord.xStar = currentHit.xStar.xyz;
 
             gPathRecordBuffer[bufferIndex].voxels[i] = voxelRecord;
         }

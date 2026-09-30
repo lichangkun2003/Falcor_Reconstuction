@@ -108,7 +108,11 @@ void calcHardHitGeometryGrad(
 {
     geometryGradRecord.init();
 
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    int3 cellInt = getVoxelCell(voxelRec.voxelID);
+#else
     int3 cellInt = voxelRec.cellInt;
+#endif
 
     if (any(cellInt < int3(0)) || any(cellInt >= int3(gVoxelCount)))
         return;
@@ -131,7 +135,7 @@ void calcHardHitGeometryGrad(
         return;
 
     GaussianEllipsoid ellipsoid = voxel.ellipsoid;
-    float3 xLocal = voxelRec.xStar.xyz - float3(cellInt);
+    float3 xLocal = voxelRec.xStar - float3(cellInt);
     float distanceWorld;
     float distanceScale;
     if (!calcGaussianEllipsoidWorldDistance(
@@ -206,7 +210,11 @@ void calcMissCandidateGeometryGrad(
     if (cand.valid == 0)
         return;
 
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    int3 cellInt = getVoxelCell(cand.voxelID);
+#else
     int3 cellInt = cand.cellInt;
+#endif
 
     if (any(cellInt < int3(0)) || any(cellInt >= int3(gVoxelCount)))
         return;
@@ -230,7 +238,7 @@ void calcMissCandidateGeometryGrad(
         return;
 
     GaussianEllipsoid ellipsoid = voxel.ellipsoid;
-    float3 xLocal = cand.xStar.xyz - float3(cellInt);
+    float3 xLocal = cand.xStar - float3(cellInt);
     float distanceWorld;
     float distanceScale;
     if (!calcGaussianEllipsoidWorldDistance(
@@ -393,7 +401,12 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
         float transmittanceAfter = 1.0f;
         for (int i = int(hitCount) - 1; i >= 0; --i) {
             VoxelRecord voxelRec = rec.voxels[i];
-            if (any(voxelRec.cellInt < int3(0)) || any(voxelRec.cellInt >= int3(gVoxelCount))){
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+            int3 voxelCell = getVoxelCell(voxelRec.voxelID);
+#else
+            int3 voxelCell = voxelRec.cellInt;
+#endif
+            if (any(voxelCell < int3(0)) || any(voxelCell >= int3(gVoxelCount))){
                 continue;
             }
 
@@ -515,9 +528,14 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
 
             if (cand.valid == 0)
                 continue;
-            if (any(cand.cellInt < int3(0)) || any(cand.cellInt >= int3(gVoxelCount)))
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+            int3 candidateCell = getVoxelCell(cand.voxelID);
+#else
+            int3 candidateCell = cand.cellInt;
+#endif
+            if (any(candidateCell < int3(0)) || any(candidateCell >= int3(gVoxelCount)))
                 continue;
-            if (!isSolidVoxel(cand.cellInt))
+            if (!isSolidVoxel(candidateCell))
                 continue;
 
             /*

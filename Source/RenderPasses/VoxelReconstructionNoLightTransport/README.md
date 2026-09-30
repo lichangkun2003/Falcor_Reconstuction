@@ -106,7 +106,7 @@ tau 同时影响作用范围和幅度。对中心位于体素中央、初始半�
 
 ## 路径记录
 
-路径命中容量统一为 8（`MAX_CONTRIBUTING_VOXELS_PER_RAY` 与 `MAX_CANDIDATES`），保留单个路径记录 buffer，CPU 与 shader 使用同一组宏。`PathRecord.slang` 中有编译期检查，保证单个记录不超过 D3D12 的 2048 字节结构化 buffer 元素上限。mode1 和 mode3 都使用固定分辨率，初始化、更新和命中容量路径相同。
+路径最多保留 32 个实际 hard hit（`MAX_CONTRIBUTING_VOXELS_PER_RAY=32`），near-miss candidate 仍为 8 个（`MAX_CANDIDATES=8`）。为了让 32 个命中仍能放进单个路径记录，记录中去掉了未使用的 `hitPosition` 和 `xStar.w`；mode1 只保存紧密 `voxelID`，反向时通过 `cellIndexPages` 恢复格子坐标，不再重复保存 `cellInt`。mode1 的 `PathRecord` stride 为 1616 字节，mode3 为 1936 字节，均低于 D3D12 的 2048 字节限制，并有编译期布局检查。800×800 输出下，mode1 路径 buffer 约为 0.96 GiB；实际前向仍会在透射率低于阈值时提前停止，因此 32 是记录上限，不代表每条 ray 都遍历和反传 32 个体素。
 
 ## 保存结果
 

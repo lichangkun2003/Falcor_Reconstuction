@@ -21,8 +21,8 @@
 
 
 
-// All modes use the same path-record layout and at most 8 contributing voxels per ray.
-#define MAX_CONTRIBUTING_VOXELS_PER_RAY 8
+// Maximum hard-hit records retained for differentiable compositing along one ray.
+#define MAX_CONTRIBUTING_VOXELS_PER_RAY 32
 
 
 #define LOBE_COUNT 4
