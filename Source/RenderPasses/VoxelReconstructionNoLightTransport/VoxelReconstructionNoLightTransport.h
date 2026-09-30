@@ -131,6 +131,7 @@ public:
     void createUpdatePassResource(RenderContext* pRenderContext);
     void runUpdatePass(RenderContext* pRenderContext, const RenderData& renderData);
     void renderUIUpdatePass(Gui::Widgets& widget);
+    float getEffectiveOpacityLearningRate() const;
 
     void createReducePassResource(RenderContext* pRenderContext);
     void runReducePass(RenderContext* pRenderContext, const RenderData& renderData);
@@ -253,6 +254,8 @@ public:
         float mLrShape;
         float mLrRotation;
         float mLrOpacity;
+        uint32_t mOpacityWarmupIterations;
+        uint32_t mOpacityRampIterations;
 
         // Prune Ellipsoid
         float mEllipsoidPruneThreshold;
@@ -265,21 +268,23 @@ public:
             mUseGradCountNormalize = true;
             mGradScale = 1.0f;
 
-            mLrOpacity = 10.0f;
-
-            // Mode 1 uses separate Adam states for radiance, center, log
-            // semi-axes, and tangent-space rotation. Mode 3 retains SGD.
+            // Mode 1 uses separate Adam states for radiance, opacity, center,
+            // log semi-axes, and tangent-space rotation. Mode 3 retains SGD.
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
             mLrRadiance = 1e-3f;
+            mLrOpacity = 5e-4f;
             mLrCenter = 1e-3f;
             mLrShape = 1e-3f;
             mLrRotation = 5e-4f;
 #else
             mLrRadiance = 0.1f;
+            mLrOpacity = 10.0f;
             mLrCenter = 5e-3f;
             mLrShape = 0.1f;
             mLrRotation = 0.1f;
 #endif
+            mOpacityWarmupIterations = 20u;
+            mOpacityRampIterations = 30u;
 
             mEllipsoidPruneThreshold = 0.03f;
             mEnableEllipsoidPruning = false;

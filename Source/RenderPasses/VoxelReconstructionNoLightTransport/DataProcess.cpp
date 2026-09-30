@@ -143,7 +143,9 @@ std::string VoxelReconstructionNoLightTransport::getOptimizedParamTag() const
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
     if (mUpdatePass.mLrRotation > 0.0f)
         tags.push_back("rotation");
-    if (mUpdatePass.mLrCenter > 0.0f || mUpdatePass.mLrShape > 0.0f)
+    if (mUpdatePass.mLrRadiance > 0.0f || mUpdatePass.mLrOpacity > 0.0f ||
+        mUpdatePass.mLrCenter > 0.0f || mUpdatePass.mLrShape > 0.0f ||
+        mUpdatePass.mLrRotation > 0.0f)
         tags.push_back("adam");
 #endif
 

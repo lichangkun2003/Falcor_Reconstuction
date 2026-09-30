@@ -14,7 +14,7 @@
 #endif
 
 #ifndef GRID_RESOLUTION
-#define GRID_RESOLUTION 512
+#define GRID_RESOLUTION 256
 #endif
 
 #define REFERENCE_IMAGES_COUNT 100

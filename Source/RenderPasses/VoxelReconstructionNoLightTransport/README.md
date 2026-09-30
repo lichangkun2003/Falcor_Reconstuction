@@ -91,13 +91,13 @@ UI 的 **Alpha Geometry Weight** 是额外的几何倍率，默认 `0.1`，不�
 | Adam LR center (voxel local) | `0.001` | mode1 的体素局部中心；mode3 仍为 SGD，默认 `0.005` |
 | Adam LR log scale | `0.001` | mode1 的世界半轴自然对数；mode3 形状与旋转共用 SGD LR `0.1` |
 | Adam LR rotation | `0.0005` | mode1 的局部旋转切向量；单步仍限制为 `0.02 rad` |
-| LR opacity | `10` | opacity 的 logit SH 系数，保留原默认值 |
+| Adam LR opacity (target) | `0.0005` | mode1 的 opacity logit SH 系数；前 20 轮冻结，随后 30 轮线性升到目标值。mode3 仍为 SGD，默认 `10` |
 | Adam LR radiance | `0.001` | mode1 的每个 RGB SH 系数；mode3 仍为 SGD，默认 `0.1` |
 | Geometry Tau (voxels) | `0.12` | 世界距离代理的 sigmoid 过渡宽度除以当前体素边长 |
 | Alpha Geometry Weight | `0.1` | 已有 alpha loss 传给几何的额外倍率，`0` 关闭新增项 |
 | Alpha Loss Weight | `0.3` | alpha 图像损失及其梯度的权重，范围 `0～10` |
 
-这些是 mode1 Adam 的实验起点，不能沿用旧 SGD 的 shape LR=`0.1` 或 radiance LR=`0.1`：Adam 会按每个参数的二阶矩归一化梯度。每个视角的 SPP 梯度累积结束后更新一次。中心、logScale、三维局部切空间旋转和 radiance 各自维护一阶矩、二阶矩及实际收到对应梯度的步数；radiance 的所有 RGB SH 系数共用一个时间步，但每个系数的 moments 独立。没有对应梯度时不更新。旋转 Adam 的输出仍限制为单步最多 `0.02 rad`，再转换成增量四元数并归一化；radiance 单系数、单通道的更新仍限制为 `0.05`。`beta1=0.9`、`beta2=0.999`、`epsilon=1e-8`，opacity 仍用原 SGD。`SH_COUNT=9` 时 mode1 每个池槽占 304 字节 Adam 状态；重建初始化与加载 bin 会清零状态，当前 v3 bin 只保存体素参数，因此加载后训练是从新 Adam 状态开始，不是精确续训。
+这些是 mode1 Adam 的实验起点，不能沿用旧 SGD 的 shape LR=`0.1`、radiance LR=`0.1` 或 opacity LR=`10`：Adam 会按每个参数的二阶矩归一化梯度。每个视角的 SPP 梯度累积结束后更新一次。中心、logScale、三维局部切空间旋转、radiance 和 opacity 各自维护一阶矩、二阶矩及实际收到对应梯度的步数；同一属性的所有 SH 系数共用一个时间步，但每个系数的 moments 独立。没有对应梯度或有效学习率为零时不更新 optimizer step。旋转 Adam 的输出仍限制为单步最多 `0.02 rad`，radiance 单系数、单通道的更新限制为 `0.05`，opacity logit 单系数更新限制为 `0.01`。opacity 调度按完整 iteration 计算，同一 iteration 的所有视角使用相同的有效 LR。真实前向 alpha 和几何代理中的 alpha 均保持原定义，没有设置 opacity 下限。`beta1=0.9`、`beta2=0.999`、`epsilon=1e-8`。`SH_COUNT=9` 且 `SH_OPACITY_COUNT=9` 时 mode1 每个池槽占 380 字节 Adam 状态；重建初始化与加载 bin 会清零状态，当前 v3 bin 只保存体素参数，因此加载后训练是从新 Adam 状态开始，不是精确续训。
 
 tau 同时影响作用范围和幅度。对中心位于体素中央、初始半径 `r=0.6h` 的球，体素内任意点满足 `|q| ≤ √3·h/2`，当前代理 `dWorld = (|q|²/r² - 1)·r/2` 的范围约为 `[-0.3h, 0.325h]`（中心点除外）。`tauWorld=0.15h` 时 sigmoid 的 10%–90% 过渡总宽度约 `4.394·tau = 0.659h`，该初始范围的 `w·(1-w)` 至少约为边界峰值的 37%，减少体素内有梯度的样本因为 band 过窄而饱和。这个范围估计只用于当前初始球，不适用于优化后的任意椭球。距离代理远离边界可能高估真实距离，不能将它宣称为始终受体素直径约束的精确距离。
 

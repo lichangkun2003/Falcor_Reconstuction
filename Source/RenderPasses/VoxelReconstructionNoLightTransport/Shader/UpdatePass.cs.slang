@@ -141,6 +141,18 @@ float3 adamStep(float3 gradient, inout float3 mean, inout float3 squaredMean, in
     return adamStepAtStep(gradient, mean, squaredMean, steps, lr);
 }
 
+float adamStepAtStep(float gradient, inout float mean, inout float squaredMean, uint steps, float lr)
+{
+    gradient = clamp(sanitizeFloat(gradient), -10.0f, 10.0f);
+    mean = kAdamBeta1 * mean + (1.0f - kAdamBeta1) * gradient;
+    squaredMean = kAdamBeta2 * squaredMean + (1.0f - kAdamBeta2) * gradient * gradient;
+    float bias1 = max(1.0f - pow(kAdamBeta1, float(steps)), 1e-8f);
+    float bias2 = max(1.0f - pow(kAdamBeta2, float(steps)), 1e-8f);
+    float correctedMean = mean / bias1;
+    float correctedSquaredMean = max(squaredMean / bias2, 0.0f);
+    return sanitizeFloat(lr * correctedMean / (sqrt(correctedSquaredMean) + kAdamEpsilon));
+}
+
 void updateEllipsoidCenterAdam(inout GaussianEllipsoid ellipsoid, float3 gradient, float lr, inout GeometryAdamState state)
 {
     float3 step = adamStep(gradient, state.centerMean, state.centerSquaredMean, state.centerSteps, lr);
@@ -213,6 +225,29 @@ void updateRadianceSHAdam(
         );
         radiance.coefficients[i] -= clamp(step, float3(-0.05f), float3(0.05f));
         radiance.coefficients[i] = sanitizeFloat3(radiance.coefficients[i]);
+    }
+}
+
+void updateOpacitySHAdam(
+    inout SphericalHarmonicsOpacity opacity, GradRecord grad, float lr, float gradScale,
+    inout GeometryAdamState state)
+{
+    // Optimize the stored SH logits. The forward sigmoid and all geometry
+    // proxy terms continue to use the real opacity without an artificial floor.
+    state.opacitySteps += 1;
+    SH_MAX_ITERS(SH_OPACITY_COUNT)
+    for (uint i = 0; i < SH_OPACITY_COUNT; ++i)
+    {
+        float gradient = grad.opacityGrad.coefficients[i] * gradScale;
+        float step = adamStepAtStep(
+            gradient,
+            state.opacityMean[i],
+            state.opacitySquaredMean[i],
+            state.opacitySteps,
+            lr
+        );
+        opacity.coefficients[i] -= clamp(step, -0.01f, 0.01f);
+        opacity.coefficients[i] = sanitizeFloat(opacity.coefficients[i]);
     }
 }
 #endif
@@ -376,7 +411,13 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
 
         if (gLrOpacity > 0.0f)
         {
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+            updateOpacitySHAdam(
+                voxelData.opacity, grad, gLrOpacity, appearanceGradScale, state);
+            adamStateChanged = true;
+#else
             updateOpacitySH(voxelData.opacity,grad,gLrOpacity,appearanceGradScale);
+#endif
         }
     }
 

@@ -40,6 +40,26 @@ void VoxelReconstructionNoLightTransport::createUpdatePassResource(RenderContext
 
 }
 
+float VoxelReconstructionNoLightTransport::getEffectiveOpacityLearningRate() const
+{
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    if (mUpdatePass.mLrOpacity <= 0.0f ||
+        mOptimizerParams.currentIteration < mUpdatePass.mOpacityWarmupIterations)
+        return 0.0f;
+
+    if (mUpdatePass.mOpacityRampIterations == 0u)
+        return mUpdatePass.mLrOpacity;
+
+    const uint32_t rampIteration =
+        mOptimizerParams.currentIteration - mUpdatePass.mOpacityWarmupIterations;
+    const float ramp = std::min(1.0f,
+        float(rampIteration) / float(mUpdatePass.mOpacityRampIterations));
+    return mUpdatePass.mLrOpacity * ramp;
+#else
+    return mUpdatePass.mLrOpacity;
+#endif
+}
+
 void VoxelReconstructionNoLightTransport::runUpdatePass(RenderContext* pRenderContext, const RenderData& renderData)
 {
     //mUpdatePass.mpComputePass->addDefine("CHECK_VISIBILITY", mRayMarchingPass.mCheckVisibility ? "1" : "0");
@@ -75,7 +95,7 @@ void VoxelReconstructionNoLightTransport::runUpdatePass(RenderContext* pRenderCo
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
     cb["gLrRotation"] = mUpdatePass.mLrRotation;
 #endif
-    cb["gLrOpacity"] = mUpdatePass.mLrOpacity;
+    cb["gLrOpacity"] = getEffectiveOpacityLearningRate();
     //cb["gVoxelSHGradDim"] = mVoxelSHGradDim;
     cb["gEllipsoidPruneThreshold"] = mUpdatePass.mEllipsoidPruneThreshold;
     cb["gEnableEllipsoidPruning"] = mUpdatePass.mEnableEllipsoidPruning;
@@ -119,10 +139,14 @@ void VoxelReconstructionNoLightTransport::renderUIUpdatePass(Gui::Widgets& widge
 
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
     group.var("Adam LR radiance", mUpdatePass.mLrRadiance, 0.0f, 0.1f, 1e-5f, false, "%.6f");
+    group.var("Adam LR opacity (target)", mUpdatePass.mLrOpacity, 0.0f, 0.1f, 1e-5f, false, "%.6f");
+    group.var("Opacity warm-up iterations", mUpdatePass.mOpacityWarmupIterations, 0u, 200u, 1u);
+    group.var("Opacity ramp iterations", mUpdatePass.mOpacityRampIterations, 0u, 200u, 1u);
+    group.text(fmt::format("Effective opacity LR: {:.6f}", getEffectiveOpacityLearningRate()));
 #else
     group.var("LR radiance", mUpdatePass.mLrRadiance, 0.0f, 1.0f, 1e-4f);
-#endif
     group.var("LR opacity", mUpdatePass.mLrOpacity, 0.0f, 100.0f, 1e-4f);
+#endif
 
     group.text("Geometry learning rates");
 
