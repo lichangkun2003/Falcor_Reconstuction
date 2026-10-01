@@ -1,6 +1,5 @@
 #include "VoxelReconstructionNoLightTransport.h"
 
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
 #include "PointCloudLoader.h"
 
 namespace
@@ -17,7 +16,7 @@ VoxelReconstructionNoLightTransport::GridResources VoxelReconstructionNoLightTra
     GridResources resources;
     resources.gridData = requestedGrid;
     if (any(requestedGrid.voxelCount == uint3(0)) || any(requestedGrid.voxelCount > uint3(1024)))
-        throw RuntimeError("Mode 1 compact storage supports voxel grids up to 1024 cells per axis.");
+        throw RuntimeError("Compact storage supports voxel grids up to 1024 cells per axis.");
     resources.gridData.indexPageCount = uint3(
         (requestedGrid.voxelCount.x + SPARSE_INDEX_PAGE_EDGE - 1u) / SPARSE_INDEX_PAGE_EDGE,
         (requestedGrid.voxelCount.y + SPARSE_INDEX_PAGE_EDGE - 1u) / SPARSE_INDEX_PAGE_EDGE,
@@ -26,11 +25,11 @@ VoxelReconstructionNoLightTransport::GridResources VoxelReconstructionNoLightTra
     const uint32_t indexPageCount = resources.gridData.indexPageCount.x * resources.gridData.indexPageCount.y *
         resources.gridData.indexPageCount.z;
     if (indexPageCount > SPARSE_INDEX_MAX_PAGES)
-        throw RuntimeError("Mode 1 compact spatial index requires more than eight 512^3 pages.");
+        throw RuntimeError("Compact spatial index requires more than eight 512^3 pages.");
 
     const uint32_t poolPageCount = sparsePageCount(capacity);
     if (poolPageCount > SPARSE_POOL_MAX_PAGES)
-        throw RuntimeError("Mode 1 occupied voxel count exceeds the segmented parameter-pool limit.");
+        throw RuntimeError("Occupied voxel count exceeds the segmented parameter-pool limit.");
     resources.gridData.voxelCapacity = poolPageCount * SPARSE_POOL_PAGE_SIZE;
 
     const auto flags = ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess;
@@ -108,7 +107,6 @@ void VoxelReconstructionNoLightTransport::commitSparseGrid(
     {
         if (pass && pass->getVars()) pass->getRootVar()["gGridDataParamBlock"].setParameterBlock(block);
     };
-    bind(mpInitializeDataPass);
     bind(mpInitializePointCloudPass);
     bind(mpBuildSparseIndexPass);
     bind(mRayMarchingPass.mpFullScreenPass);
@@ -149,7 +147,7 @@ void VoxelReconstructionNoLightTransport::reserveSparseVoxelCapacity(
 {
     if (minimumCapacity <= mGridResources.gridData.voxelCapacity) return;
     const uint32_t requiredPages = sparsePageCount(minimumCapacity);
-    if (requiredPages > SPARSE_POOL_MAX_PAGES) throw RuntimeError("Mode 1 sparse pool capacity exceeded.");
+    if (requiredPages > SPARSE_POOL_MAX_PAGES) throw RuntimeError("Sparse pool capacity exceeded.");
     const auto flags = ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess;
     GridResources next = mGridResources;
     while (next.voxelPages.size() < requiredPages)
@@ -181,7 +179,7 @@ void VoxelReconstructionNoLightTransport::reserveRadianceAdamCapacity(
     const uint32_t requiredPages = sparsePageCount(minimumCapacity);
     if (requiredPages <= mGridResources.radianceAdamPages.size()) return;
     if (requiredPages > SPARSE_POOL_MAX_PAGES)
-        throw RuntimeError("Mode 1 radiance Adam pool capacity exceeded.");
+        throw RuntimeError("Radiance Adam pool capacity exceeded.");
     const auto flags = ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess;
     auto var = mUpdatePass.mpComputePass->getRootVar()["gRadianceAdamPages"];
     while (mGridResources.radianceAdamPages.size() < requiredPages)
@@ -355,4 +353,3 @@ bool VoxelReconstructionNoLightTransport::initializePointCloudVoxelData(RenderCo
         return false;
     }
 }
-#endif

@@ -86,42 +86,43 @@ uint64_t checkedVoxelCount(uint3 count, uint32_t dimensionLimit)
     return elements * count.z;
 }
 
-// v2 header = magic + version + voxelCount + voxelDataSize, followed by the dense payload.
-// 调用方自己读 payload, 返回时 in 停在第一个数据字节.
-// mode1/3 的 loadReconstruction 和 loadBakedReconstruction 共用它, 两边校验不会跑偏.
-void readCurrentReconstructionHeader(std::ifstream& in, const std::filesystem::path& path, uint32_t dimensionLimit,
-    GridData& grid, uint32_t& resolution, uint64_t& byteSize)
+} // namespace
+
+void VoxelReconstructionNoLightTransport::resetLoadedReconstruction(RenderContext* pRenderContext)
 {
-    uint32_t magic = 0, version = 0, voxelDataSize = 0;
-    in.read(reinterpret_cast<char*>(&magic), sizeof(magic));
-    in.read(reinterpret_cast<char*>(&version), sizeof(version));
-    in.read(reinterpret_cast<char*>(&grid.voxelCount), sizeof(grid.voxelCount));
-    in.read(reinterpret_cast<char*>(&voxelDataSize), sizeof(voxelDataSize));
-    if (!in || magic != kReconstructionMagic || version != 2)
-        throw std::runtime_error("This build loads version 2 Gaussian-ellipsoid reconstruction files.");
-    if (voxelDataSize != sizeof(VoxelData))
-        throw std::runtime_error("Reconstruction VoxelData layout differs from the current build.");
-    const uint64_t elementCount = checkedVoxelCount(grid.voxelCount, dimensionLimit);
-    if (grid.voxelCount.x != grid.voxelCount.y || grid.voxelCount.x != grid.voxelCount.z)
-        throw std::runtime_error("Only current cubic-grid mode 1/3 files are supported; older non-cubic/SVO files are not supported.");
-    resolution = grid.voxelCount.x;
-    byteSize = elementCount * sizeof(VoxelData);
-    const uint64_t headerSize = sizeof(magic) + sizeof(version) + sizeof(grid.voxelCount) + sizeof(voxelDataSize);
-    if (std::filesystem::file_size(path) != headerSize + byteSize)
-        throw std::runtime_error("Reconstruction file size does not match its voxel dimensions and layout.");
-    // v2 does not store the AABB; recover the fixed NeRF reconstruction extent here.
-    // Voxelization 那边必须按同一个 AABB 建格, 即勾选 "Match Reconstruction Grid";
-    // 否则椭球会被放到错的位置.
-    constexpr float extent = 2.6f * 1.02f;
-    grid.voxelSize = float3(extent / float(resolution));
-    grid.gridMin = -0.5f * grid.voxelSize * float3(grid.voxelCount);
+    mEnableReconstruction = false;
+    mOptimizerParams.reset();
+    mInitVoxelData = false;
+    mSaveReconstructionRequested = false;
+    mLoadReconstructionRequested = false;
+    mLoadedReconstructionForViewing = true;
+    mFrameCount = 0;
+    mRayMarchingPass.mFrameIndex = 0;
+    mRayMarchingPass.mSampleIndex = 0;
+    mRayMarchingPass.mOptionsChanged = true;
+    mLossPass.mView = 0;
+    mReduceLossPass.meanLoss = 0.f;
+    mReduceLossPass.iterationLossSum = 0.f;
+    mReduceLossPass.iterationLossCount = 0;
+    mReduceLossPass.iterationLossHistory.clear();
+    if (mpPathRecordBuffer) pRenderContext->clearUAV(mpPathRecordBuffer->getUAV().get(), uint4(0));
+    clearSparseGradients(pRenderContext);
+    mPointCloud.startRequested = false;
+    mPointCloud.initialized = true;
+    mPointCloud.clearAccumulation = true;
+    mPointCloud.status = "Loaded voxel reconstruction; PLY initialization is not required.";
 }
 
-} // namespace
+DefineList VoxelReconstructionNoLightTransport::getReconstructionDefines()
+{
+    DefineList defines;
+    defines.add("GRID_RESOLUTION", std::to_string(GRID_RESOLUTION));
+    return defines;
+}
 
 std::filesystem::path VoxelReconstructionNoLightTransport::getReconstructionModeDirectory() const
 {
-    return resolveReconstructionPath(ReconstructionDataDir) / fmt::format("mode{}", RECON_MODE);
+    return resolveReconstructionPath(ReconstructionDataDir) / "mode1";
 }
 
 
@@ -140,14 +141,12 @@ std::string VoxelReconstructionNoLightTransport::getOptimizedParamTag() const
     if (mUpdatePass.mLrShape > 0.0f)
         tags.push_back("shape");
 
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
     if (mUpdatePass.mLrRotation > 0.0f)
         tags.push_back("rotation");
     if (mUpdatePass.mLrRadiance > 0.0f || mUpdatePass.mLrOpacity > 0.0f ||
         mUpdatePass.mLrCenter > 0.0f || mUpdatePass.mLrShape > 0.0f ||
         mUpdatePass.mLrRotation > 0.0f)
         tags.push_back("adam");
-#endif
 
 
     if (tags.empty())
@@ -214,7 +213,6 @@ std::filesystem::path VoxelReconstructionNoLightTransport::getDefaultReconstruct
 
 
 
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
 void VoxelReconstructionNoLightTransport::saveSparseReconstruction(
     RenderContext* pRenderContext, const std::filesystem::path& path)
 {
@@ -292,7 +290,7 @@ void VoxelReconstructionNoLightTransport::loadSparseReconstruction(
     in.read(reinterpret_cast<char*>(&grid.voxelSize), sizeof(grid.voxelSize));
     in.read(reinterpret_cast<char*>(&activeCount), sizeof(activeCount));
     if (!in || magic != kReconstructionMagic || version != kSparseReconstructionVersion)
-        throw RuntimeError("Invalid mode 1 sparse reconstruction header.");
+        throw RuntimeError("Invalid sparse reconstruction header.");
     if (voxelDataSize != sizeof(VoxelData) || radianceCount != SH_COUNT || opacityCount != SH_OPACITY_COUNT)
         throw RuntimeError("Sparse reconstruction SH counts or VoxelData layout differ from the current build.");
     const uint64_t totalCells = checkedVoxelCount(grid.voxelCount, reconstructionDimensionLimit(mpDevice));
@@ -339,214 +337,33 @@ void VoxelReconstructionNoLightTransport::loadSparseReconstruction(
         path.filename().string(), grid.voxelCount.x, grid.voxelCount.y, grid.voxelCount.z, activeCount);
     logInfo("{}", mReconstructionIOStatus);
 }
-#endif
 
 void VoxelReconstructionNoLightTransport::saveReconstruction(RenderContext* pRenderContext)
 {
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
     if (!mPointCloud.initialized)
     {
         logWarning("Save reconstruction skipped: initialize from PLY or load a reconstruction first.");
         return;
     }
-    const auto sparsePath = getDefaultReconstructionSavePath();
+    const auto path = getDefaultReconstructionSavePath();
     try
     {
-        saveSparseReconstruction(pRenderContext, sparsePath);
-        mReconstructionIOStatus = "Saved sparse reconstruction: " + sparsePath.filename().string();
+        saveSparseReconstruction(pRenderContext, path);
+        mReconstructionIOStatus = "Saved sparse reconstruction: " + path.filename().string();
     }
     catch (const std::exception& error)
     {
         mReconstructionIOStatus = std::string("Save failed: ") + error.what();
         logError("{}", mReconstructionIOStatus);
     }
-    return;
-#endif
-    if (!mGridResources.gridDataBuffer)
-    {
-        logWarning("Save reconstruction failed: gridDataBuffer is null.");
-        return;
-    }
-
-    std::filesystem::path path = getDefaultReconstructionSavePath();
-
-    const uint64_t elementCount = mGridResources.gridData.totalVoxelCount();
-    //const uint64_t elementCount = mGridResources.gridData.solidVoxelCount;
-    const uint64_t byteSize = elementCount * sizeof(VoxelData);
-
-    std::filesystem::create_directories(path.parent_path());
-
-    // 确保 GPU update pass 已完成
-    pRenderContext->submit(true);
-
-    std::vector<uint8_t> data(byteSize);
-
-    // 你的版本是 void getBlob(void* pData, size_t offset, size_t size) const
-    mGridResources.gridDataBuffer->getBlob(data.data(), 0, size_t(byteSize));
-
-    std::ofstream out(path, std::ios::binary);
-
-    if (!out.is_open())
-    {
-        logError("Save reconstruction failed: cannot open file " + path.string());
-        return;
-    }
-
-    uint32_t magic = kReconstructionMagic;
-    uint32_t version = 2;
-    uint3 voxelCount = mGridResources.gridData.voxelCount;
-    uint32_t voxelDataSize = sizeof(VoxelData);
-
-    out.write(reinterpret_cast<const char*>(&magic), sizeof(magic));
-    out.write(reinterpret_cast<const char*>(&version), sizeof(version));
-    out.write(reinterpret_cast<const char*>(&voxelCount), sizeof(voxelCount));
-    out.write(reinterpret_cast<const char*>(&voxelDataSize), sizeof(voxelDataSize));
-
-    out.write(reinterpret_cast<const char*>(data.data()), std::streamsize(byteSize));
-
-    out.close();
-
-    saveLossHistory();
-
-    logInfo(
-        "Saved reconstruction to {}, voxelCount={}x{}x{}, params={}, bytes={}",
-        path.string(),
-        voxelCount.x,
-        voxelCount.y,
-        voxelCount.z,
-        getOptimizedParamTag(),
-        byteSize
-    );
 }
 
-
-
-void VoxelReconstructionNoLightTransport::loadReconstruction(RenderContext* pRenderContext, const std::filesystem::path& selectedPath)
+void VoxelReconstructionNoLightTransport::loadReconstruction(
+    RenderContext* pRenderContext, const std::filesystem::path& selectedPath)
 {
     try
     {
-        const auto path = requireModeFile(selectedPath, getReconstructionModeDirectory());
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
-        {
-            std::ifstream header(path, std::ios::binary);
-            uint32_t magic = 0, version = 0;
-            header.read(reinterpret_cast<char*>(&magic), sizeof(magic));
-            header.read(reinterpret_cast<char*>(&version), sizeof(version));
-            if (magic == kReconstructionMagic && version == kSparseReconstructionVersion)
-            {
-                loadSparseReconstruction(pRenderContext, path);
-                return;
-            }
-        }
-#endif
-        std::ifstream in(path, std::ios::binary);
-        if (!in) throw std::runtime_error("Cannot open reconstruction: " + path.string());
-        const uint32_t dimensionLimit = reconstructionDimensionLimit(mpDevice);
-        GridData grid{};
-        uint32_t resolution = 0;
-        uint64_t elementCount = 0, byteSize = 0;
-        readCurrentReconstructionHeader(in, path, dimensionLimit, grid, resolution, byteSize);
-        elementCount = byteSize / sizeof(VoxelData);
-        std::vector<uint8_t> data(static_cast<size_t>(byteSize));
-        in.read(reinterpret_cast<char*>(data.data()), std::streamsize(byteSize));
-        if (!in) throw std::runtime_error("Cannot read the complete reconstruction voxel payload.");
-        in.close();
-        grid.solidVoxelCount = 0;
-        for (uint64_t i = 0; i < elementCount; ++i)
-        {
-            uint32_t occupied = 0;
-            std::memcpy(&occupied, data.data() + i * sizeof(VoxelData) + offsetof(VoxelData, occupied), sizeof(occupied));
-            if (occupied != 0) ++grid.solidVoxelCount;
-        }
-        auto status = fmt::format("Loaded for viewing: {} (mode {}, {}x{}x{}, {} occupied voxels)",
-            path.filename().string(), RECON_MODE, grid.voxelCount.x, grid.voxelCount.y, grid.voxelCount.z, grid.solidVoxelCount);
-        replaceReconstructionGrid(pRenderContext, grid, resolution, data.data(), data.size());
-        resetLoadedReconstruction(pRenderContext);
-        mReconstructionIOStatus = std::move(status);
-        logInfo("{}", mReconstructionIOStatus);
-    }
-    catch (const std::exception& error)
-    {
-        mReconstructionIOStatus = std::string("Load failed: ") + error.what();
-        logError("{}", mReconstructionIOStatus);
-    }
-}
-
-
-
-void VoxelReconstructionNoLightTransport::refreshBakedFileList()
-{
-    mBakedFilePaths.clear();
-    const auto directory = resolveReconstructionPath(BakeOutputDir);
-    std::error_code error;
-    if (!std::filesystem::exists(directory, error))
-    {
-        mSelectedBakedFile = 0;
-        return;
-    }
-
-    try
-    {
-        for (const auto& entry : std::filesystem::directory_iterator(
-                 directory, std::filesystem::directory_options::skip_permission_denied))
-        {
-            if (entry.is_regular_file() && samePathComponent(entry.path().extension(), ".bin"))
-                mBakedFilePaths.push_back(entry.path());
-        }
-    }
-    catch (const std::filesystem::filesystem_error& e)
-    {
-        logWarning("Cannot list bake results in {}: {}", directory.string(), e.what());
-    }
-
-    std::sort(
-        mBakedFilePaths.begin(),
-        mBakedFilePaths.end(),
-        [](const std::filesystem::path& a, const std::filesystem::path& b) { return a.generic_string() < b.generic_string(); }
-    );
-    mSelectedBakedFile = 0;
-}
-
-void VoxelReconstructionNoLightTransport::loadBakedReconstruction(
-    RenderContext* pRenderContext, const std::filesystem::path& selectedPath
-)
-{
-    try
-    {
-        // 关键: 这里刻意不调用 requireModeFile. 烘焙产物由 Voxelization 写在独立的资源目录里,
-        // 不属于任何一个 mode 目录, 走那条校验会被直接拒绝.
-        const std::filesystem::path directory = resolveReconstructionPath(BakeOutputDir);
-        const std::filesystem::path path = selectedPath.is_absolute() ? selectedPath : directory / selectedPath;
-
-        std::ifstream in(path, std::ios::binary);
-        if (!in) throw std::runtime_error("Cannot open bake result: " + path.string());
-        const uint32_t dimensionLimit = reconstructionDimensionLimit(mpDevice);
-        GridData grid{};
-        uint32_t resolution = 0;
-        uint64_t byteSize = 0;
-        readCurrentReconstructionHeader(in, path, dimensionLimit, grid, resolution, byteSize);
-
-        std::vector<uint8_t> data(static_cast<size_t>(byteSize));
-        in.read(reinterpret_cast<char*>(data.data()), std::streamsize(byteSize));
-        if (!in) throw std::runtime_error("Cannot read the complete bake payload.");
-        in.close();
-
-        grid.solidVoxelCount = 0;
-        for (uint64_t i = 0; i < byteSize / sizeof(VoxelData); ++i)
-        {
-            uint32_t occupied = 0;
-            std::memcpy(&occupied, data.data() + i * sizeof(VoxelData) + offsetof(VoxelData, occupied), sizeof(occupied));
-            if (occupied != 0) ++grid.solidVoxelCount;
-        }
-
-        // 这个数字必须和烘焙端日志里 "written occupied=N" 的 N 相等,
-        // 不等就说明两边对 VoxelData 布局的理解不一致.
-        auto status = fmt::format("Loaded bake result: {} ({}x{}x{}, {} occupied voxels)",
-            path.filename().string(), grid.voxelCount.x, grid.voxelCount.y, grid.voxelCount.z, grid.solidVoxelCount);
-        replaceReconstructionGrid(pRenderContext, grid, resolution, data.data(), data.size());
-        resetLoadedReconstruction(pRenderContext);
-        mReconstructionIOStatus = std::move(status);
-        logInfo("{}", mReconstructionIOStatus);
+        loadSparseReconstruction(pRenderContext, selectedPath);
     }
     catch (const std::exception& error)
     {

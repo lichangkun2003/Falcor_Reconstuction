@@ -1,17 +1,6 @@
 #pragma once
 
-// Shared by the host code and shaders. Select one reconstruction experiment here.
-#define RECON_MODE_POINT_CLOUD 1
-// 2 was RECON_MODE_COARSE_TO_FINE, removed. Do not reuse the value 2.
-#define RECON_MODE_ORIGINAL 3
-
-#ifndef RECON_MODE
-#define RECON_MODE RECON_MODE_POINT_CLOUD
-#endif
-
-#if RECON_MODE != RECON_MODE_POINT_CLOUD && RECON_MODE != RECON_MODE_ORIGINAL
-#error "Invalid RECON_MODE. Use one of the RECON_MODE_* values."
-#endif
+// Shared by host code and shaders. Reconstruction uses point-cloud initialization.
 
 #ifndef GRID_RESOLUTION
 #define GRID_RESOLUTION 512
@@ -36,7 +25,7 @@
 
 #define MAX_CANDIDATES 16
 
-// Mode 1 keeps the complete spatial map, but allocates attributes only for occupied cells.
+// Keep the complete spatial map, but allocate attributes only for occupied cells.
 // Each pool page stays below Falcor's 4 GiB buffer limit, including SH counts up to 16.
 #define SPARSE_POOL_PAGE_SIZE (1u << 18)
 #define SPARSE_POOL_MAX_PAGES 256

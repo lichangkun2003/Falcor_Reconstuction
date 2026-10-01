@@ -40,11 +40,7 @@ VoxelReconstructionNoLightTransport::VoxelReconstructionNoLightTransport(ref<Dev
     // Initial Data
     {
         // Lego
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
         mGridResources.gridData.solidVoxelCount = 0;
-#else
-        mGridResources.gridData.solidVoxelCount = 17650;        // 64
-#endif
 
     }
 
@@ -55,8 +51,6 @@ VoxelReconstructionNoLightTransport::VoxelReconstructionNoLightTransport(ref<Dev
         DefineList defines = getReconstructionDefines();
         mpReflectTypes = ComputePass::create(mpDevice, desc, defines, true);
     }
-
-    createInitializationPassResource();
 
     // RayMarchingPass
     {
@@ -133,25 +127,8 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
         mLoadReconstructionRequested = false;
     }
 
-    if (mLoadBakedReconstructionRequested)
-    {
-        if (!mBakedFilePaths.empty() && mSelectedBakedFile < mBakedFilePaths.size())
-        {
-            loadBakedReconstruction(pRenderContext, mBakedFilePaths[mSelectedBakedFile]);
-        }
-        else
-        {
-            mReconstructionIOStatus = "Load failed: no bake result selected.";
-            logWarning("Load bake result failed: no file selected.");
-        }
-
-        mLoadBakedReconstructionRequested = false;
-    }
-
     bool needsTrainingData = mEnableReconstruction || mOptimizerParams.isRunning || mInitVoxelData;
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
     needsTrainingData |= mPointCloud.startRequested;
-#endif
     if ((needsTrainingData || mUseReferenceCamera || !mLoadedReconstructionForViewing) && mReferenceDataError.empty())
     {
         try { loadReferenceImages(); }
@@ -178,31 +155,19 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
         mEnableReconstruction = false;
         mOptimizerParams.isRunning = false;
         mInitVoxelData = false;
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
         mPointCloud.startRequested = false;
-#endif
         mReconstructionIOStatus = "Training/restore request cancelled: reference data is unavailable. The current grid remains available for viewing.";
     }
 
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
     bool pointCloudInitFailed = false;
-#endif
     if (mInitVoxelData)
     {
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
         const bool startAfterInit = mPointCloud.startRequested;
         pointCloudInitFailed = !initializePointCloudVoxelData(pRenderContext);
         mPointCloud.startRequested = startAfterInit && !pointCloudInitFailed;
-#else
-        initializeVoxelData(pRenderContext);
-#if RECON_MODE == RECON_MODE_ORIGINAL
-        mLoadedReconstructionForViewing = false;
-#endif
-#endif
         mInitVoxelData = false;
     }
 
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
     if (mPointCloud.startRequested && !pointCloudInitFailed)
     {
         const bool ready = mPointCloud.initialized || initializePointCloudVoxelData(pRenderContext);
@@ -220,7 +185,6 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
         pRenderContext->clearUAV(renderData.getTexture(kAccumulateOutputColor)->getUAV().get(), float4(0));
         mPointCloud.clearAccumulation = false;
     }
-#endif
     if (mSaveReconstructionRequested)
     {
         saveReconstruction(pRenderContext);
@@ -259,12 +223,7 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
         // update 时按计数求平均，得到的就是本批所有无偏梯度的平均.
         if (isFirstSample)
         {
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
             clearSparseGradients(pRenderContext);
-#else
-            if (mGradientPass.gradBuffer)
-            pRenderContext->clearUAV(mGradientPass.gradBuffer->getUAV().get(), uint4(0));
-#endif
         }
 
         if (hasResidualBaseline)
@@ -288,7 +247,6 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
             {
                 mOptimizerParams.currentView = 0;
                 mOptimizerParams.currentIteration++;
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
                 if (mGridResources.radianceAdamCounter)
                 {
                     uint32_t counter[2] = {};
@@ -310,7 +268,6 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
                         mGridResources.radianceAdamCounter->setBlob(reset, 0, sizeof(reset));
                     }
                 }
-#endif
                 if (mOptimizerParams.currentIteration >= mOptimizerParams.maxIteration)
                 {
                     stopReconstruction();
@@ -332,12 +289,6 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
     if (widget.checkbox("Render Background", mRayMarchingPass.mRenderBackGround))
         mRayMarchingPass.mOptionsChanged = true;
 
-#if RECON_MODE != RECON_MODE_POINT_CLOUD
-    if (widget.var("Solid Voxel Count", mGridResources.gridData.solidVoxelCount))
-    {
-        requestRecompile();
-    }
-#endif
 
 
     if (widget.var("Alpha Loss Weight", mLossPass.alphaLossWeight, 0.0f, 10.0f, 0.01f))
@@ -371,16 +322,12 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
     }
     else if (!mReferenceCameras.empty() && mReferenceImages.size() < mReferenceCameras.size())
         widget.text(fmt::format("Loading reference images: {} / {}", mReferenceImages.size(), mReferenceCameras.size()));
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
-    widget.text("Mode 1: point-cloud initialization");
+    widget.text("Point-cloud initialization");
     widget.text("PLY: " + (resolveReconstructionPath(ReferenceImageDir) / "point_cloud.ply").string());
     // 高斯占位阈值，改动在下次 Init / Reset from PLY 时生效.
     widget.var("Gaussian Opacity Threshold", mPointCloud.opacityThreshold, 0.001f, 1.0f, 0.005f);
     widget.text(mPointCloud.status);
     if (widget.button("Init / Reset from PLY")) mInitVoxelData = true;
-#else
-    widget.checkbox("Init Voxel Data", mInitVoxelData);
-#endif
     widget.var("Max Iteration", mOptimizerParams.maxIteration);
     if (widget.checkbox("Enable Reconstruction", mEnableReconstruction))
     {
@@ -400,15 +347,12 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
     }
 
     renderUIUpdatePass(widget);
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
     renderUITopology(widget);
-#endif
 
     widget.text("Voxel Size: " + ToString(mGridResources.gridData.voxelSize));
     widget.text("Voxel Count: " + ToString((int3)mGridResources.gridData.voxelCount));
     widget.text("Grid Min: " + ToString(mGridResources.gridData.gridMin));
     widget.text("Solid Voxel Count: " + std::to_string(mGridResources.gridData.solidVoxelCount));
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
     widget.text(fmt::format("Compact Pool: {} active / {} capacity ({} pages)",
         mGridResources.gridData.activeVoxelCount,
         mGridResources.gridData.voxelCapacity,
@@ -425,7 +369,6 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
     widget.text(fmt::format("Radiance Adam capacity: {} slots", radianceCapacity));
     widget.text(fmt::format("Spatial Index: {} page(s), {}^3 cells/page max",
         mGridResources.indexPages.size(), SPARSE_INDEX_PAGE_EDGE));
-#endif
     widget.text(
         "Solid Rate: " + std::to_string(mGridResources.gridData.solidVoxelCount / (float)mGridResources.gridData.totalVoxelCount())
     );
@@ -477,40 +420,6 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
         if (widget.button("Save Reconstruction"))
         {
             mSaveReconstructionRequested = true;
-        }
-    }
-
-    if (auto group = widget.group("Baked Results"))
-    {
-        // Voxelization 的 RayMarchingPass 点 "Bake To Reconstruction Format" 写出的产物。
-        // 目录见头文件里的 BakeOutputDir，走独立加载路径，不经过 mode 目录校验。
-        const auto bakedDirectory = resolveReconstructionPath(BakeOutputDir);
-        widget.text("Directory: " + bakedDirectory.string());
-        if (widget.button("Refresh Baked Files")) mBakedFileListDirty = true;
-        if (mBakedFileListDirty)
-        {
-            refreshBakedFileList();
-            mBakedFileListDirty = false;
-        }
-
-        Gui::DropdownList bakedList;
-        for (uint32_t i = 0; i < mBakedFilePaths.size(); i++)
-        {
-            bakedList.push_back({i, mBakedFilePaths[i].lexically_relative(bakedDirectory).string()});
-        }
-
-        if (!bakedList.empty())
-        {
-            widget.dropdown("Baked File", bakedList, mSelectedBakedFile);
-            widget.text("Selected: " + mBakedFilePaths[mSelectedBakedFile].string());
-            if (widget.button("Load Selected Bake Result"))
-            {
-                mLoadBakedReconstructionRequested = true;
-            }
-        }
-        else
-        {
-            widget.text("No baked .bin files found.");
         }
     }
 
@@ -623,12 +532,10 @@ void VoxelReconstructionNoLightTransport::setScene(RenderContext* pRenderContext
     mLoadedReconstructionForViewing = false;
     mReconstructionIOStatus.clear();
     mReferenceDataError.clear();
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
     mPointCloud = {};
     mGridResources.gridData.solidVoxelCount = 0;
     mEnableReconstruction = false;
     mOptimizerParams.reset();
-#endif
     UpdateVoxelGrid(mVoxelResolution);
     setupGridResouce(pRenderContext, true);
 
@@ -788,7 +695,6 @@ void VoxelReconstructionNoLightTransport::UpdateVoxelGrid(uint voxelResolution)
 
 void VoxelReconstructionNoLightTransport::setupGridResouce(RenderContext* pRenderContext, bool forceReset)
 {
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
     if (!mpGridBlock || forceReset)
     {
         GridData grid = mGridResources.gridData;
@@ -799,55 +705,6 @@ void VoxelReconstructionNoLightTransport::setupGridResouce(RenderContext* pRende
         commitSparseGrid(std::move(resources), block, mVoxelResolution);
     }
     return;
-#else
-    if (!mpGridBlock)
-    {
-        auto reflector = mpReflectTypes->getProgram()->getReflector()->getParameterBlock("gGridDataParamBlock");
-
-        if (!reflector)
-            std::cout << "ComputerPass : ReflectTypes Error !!!!\n ";
-
-        mpGridBlock = ParameterBlock::create(mpDevice, reflector);
-    }
-    ShaderVar gridBlock = mpGridBlock->getRootVar();
-
-    // we only fully initialize resource once
-    const bool initializeResource = !mGridResources.gridDataBuffer;
-
-    // -----------------------------------------------------------------------------
-    // Resource setup
-    // -----------------------------------------------------------------------------
-    if (initializeResource || forceReset)
-    {
-        mGridResources.gridDataBuffer = mpDevice->createStructuredBuffer(
-            sizeof(VoxelData),
-            mGridResources.gridData.totalVoxelCount(),
-            ResourceBindFlags::UnorderedAccess | ResourceBindFlags::ShaderResource
-        );
-        //mGridResources.gridDataBuffer = mpDevice->createStructuredBuffer(
-        //    sizeof(VoxelData),
-        //    mGridResources.gridData.solidVoxelCount,
-        //    ResourceBindFlags::UnorderedAccess | ResourceBindFlags::ShaderResource
-        //);
-        mGridResources.vBuffer = mpDevice->createTexture3D(
-            mGridResources.gridData.voxelCount.x, mGridResources.gridData.voxelCount.y, mGridResources.gridData.voxelCount.z,
-            ResourceFormat::R32Int,
-            1u,
-            nullptr,
-            ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess
-        );
-
-        pRenderContext->clearUAV(mGridResources.gridDataBuffer->getUAV().get(), uint4(0));
-    }
-
-
-    gridBlock["gridDataBuffer"] = mGridResources.gridDataBuffer;
-    gridBlock["vBuffer"] = mGridResources.vBuffer;
-    gridBlock["voxelCount"] = mGridResources.gridData.voxelCount;
-    gridBlock["voxelSize"] = mGridResources.gridData.voxelSize;
-    gridBlock["gridMin"] = mGridResources.gridData.gridMin;
-    gridBlock["solidVoxelCount"] = mGridResources.gridData.solidVoxelCount;
-#endif
 }
 
 
@@ -855,9 +712,7 @@ void VoxelReconstructionNoLightTransport::setupGridResouce(RenderContext* pRende
 void VoxelReconstructionNoLightTransport::updateOutputResolution()
 {
     bool training = mEnableReconstruction || mOptimizerParams.isRunning;
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
     training |= mPointCloud.startRequested;
-#endif
     const uint2 resolution = training ? uint2(800, 800) :
         (mViewingResolution == 0 ? uint2(800, 800) : uint2(1920, 1080));
     if (any(mRayMarchingPass.mOutputResolution != resolution))
@@ -873,42 +728,19 @@ void VoxelReconstructionNoLightTransport::startReconstruction()
 {
     mReferenceDataError.clear();
     updateOutputResolution();
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
     // GPU work and first-use initialization are performed at the next frame boundary.
     mPointCloud.startRequested = true;
-#else
-    mLoadedReconstructionForViewing = false;
-    mEnableReconstruction = true;
-
-    mOptimizerParams.isRunning = true;
-    mOptimizerParams.currentIteration = 0;
-    mOptimizerParams.currentView = 0;
-    mRayMarchingPass.mSampleIndex = 0;
-
-    mReduceLossPass.meanLoss = 0.0f;
-    mReduceLossPass.iterationLossSum = 0.0f;
-    mReduceLossPass.iterationLossCount = 0;
-    mReduceLossPass.iterationLossHistory.clear();
-#endif
 
 }
 
 void VoxelReconstructionNoLightTransport::stopReconstruction()
 {
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
     mPointCloud.startRequested = false;
     mEnableReconstruction = false;
     mOptimizerParams.isRunning = false;
     mOptimizerParams.currentView = 0;
     mRayMarchingPass.mSampleIndex = 0;
     mPointCloud.clearAccumulation = true;
-#else
-    mEnableReconstruction = false;
-
-    mOptimizerParams.isRunning = false;
-    mOptimizerParams.currentIteration = 0;
-    mOptimizerParams.currentView = 0;
-#endif
     updateOutputResolution();
 }
 

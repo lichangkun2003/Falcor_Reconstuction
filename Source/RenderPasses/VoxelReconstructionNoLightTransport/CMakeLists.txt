@@ -2,7 +2,6 @@ add_plugin(VoxelReconstructionNoLightTransport)
 
 set(voxel_reconstruction_sources
     VoxelReconstructionNoLightTransport.cpp
-    Initialization.cpp
     PointCloudInitialization.cpp
     RayMarchingPass.cpp
     LossPass.cpp
@@ -44,7 +43,6 @@ target_sources(VoxelReconstructionNoLightTransport PRIVATE
     Math/Random.slang
 
     Shader/ReflectTypes.cs.slang
-    Shader/InitializeData.cs.slang
     Shader/InitializePointCloud.cs.slang
     Shader/BuildSparseIndex.cs.slang
     Shader/RayMarchingPass.ps.slang

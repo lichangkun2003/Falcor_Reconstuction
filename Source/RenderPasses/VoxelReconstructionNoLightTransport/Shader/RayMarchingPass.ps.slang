@@ -315,11 +315,7 @@ HitResult rayMarchingDDA(
             {
                 GeometryCandidateRecord cand;
                 cand.valid = 1;
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
                 cand.voxelID = uint(offset);
-#else
-                cand.cellInt = cellInt;
-#endif
                 cand.gmin = hit.gmin;
                 cand.xStar = hit.xStar.xyz;
                 cand.transmittanceBefore = transmittanceBefore;
@@ -458,11 +454,7 @@ float4 shadingGlobal(
 
         if (enableReconstruction) {
             VoxelRecord voxelRecord;
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
             voxelRecord.voxelID = voxelIndex;
-#else
-            voxelRecord.cellInt = currentHit.cellInt;
-#endif
             voxelRecord.radiance = radiance;
             voxelRecord.opacity = opacity;
             voxelRecord.transmittanceBefore = transmittance;

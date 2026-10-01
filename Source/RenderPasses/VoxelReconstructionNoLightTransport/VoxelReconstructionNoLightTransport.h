@@ -59,7 +59,6 @@ static_assert(sizeof(GradRecord) == 48 + 12 * SH_COUNT + 4 * SH_OPACITY_COUNT, "
 namespace
 {
 const std::string ReflectTypesShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/ReflectTypes.cs.slang";
-const std::string InitializeDataShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/InitializeData.cs.slang";
 const std::string RayMarchingShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/RayMarchingPass.ps.slang";
 const std::string LossPassShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/LossPass.cs.slang";
 const std::string GradientPassShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/GradientPass.cs.slang";
@@ -68,7 +67,6 @@ const std::string ReduceTexturePassShaderFilePath = "RenderPasses/VoxelReconstru
 const std::string ReduceBufferPassShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/ReduceBufferPass.cs.slang";
 
 inline std::string kGBuffer = "gBuffer";
-inline std::string kVBuffer = "vBuffer";
 inline std::string kPBuffer = "pBuffer";
 inline std::string kOutputColor = "color";
 inline std::string kAccumulateOutputColor = "AccuColor";
@@ -77,12 +75,6 @@ inline std::string kAccumulateOutputColor = "AccuColor";
 inline std::string ReconstructionDataDir = "Reconstruction_Output";
 inline std::string ReferenceImageDir = "Reconstruction_Input/ship";
 inline std::string ReferenceCameraFile = "Reconstruction_Input/ship/transforms_train.json";
-
-// 烘焙产物目录，由 Voxelization 的 RayMarchingPass 写出，文件名形如
-// <scene>_bake_<x>x<y>x<z>.bin，内容就是本工程 v2 的 GaussianEllipsoid 格式。
-// 注意它和 ReconstructionDataDir 是两个来源：这边的文件有意不经过 mode 目录校验
-// （见 DataProcess.cpp 的 requireModeFile），所以走独立的加载入口。
-inline std::string BakeOutputDir = "resource/new";
 
 inline std::filesystem::path resolveReconstructionPath(const std::filesystem::path& path)
 {
@@ -153,10 +145,7 @@ public:
 
     struct GridResources
     {
-        ref<Buffer> gridDataBuffer;
         GridData gridData;
-        ref<Texture> vBuffer;
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
         std::vector<ref<Texture>> indexPages;
         std::vector<ref<Buffer>> voxelPages;
         std::vector<ref<Buffer>> gradPages;
@@ -165,7 +154,6 @@ public:
         std::vector<ref<Buffer>> radianceAdamPages;
         ref<Buffer> radianceAdamCounter;
         std::vector<ref<Buffer>> cellIndexPages;
-#endif
     };
 
     struct RayMarchingPass
@@ -228,14 +216,12 @@ public:
     struct GradientPass
     {
         ref<ComputePass> mpComputePass;
-        ref<Buffer> gradBuffer;
         float geometryGradClamp;
         float geometryTauVoxelFraction = 0.12f;
         float alphaGeometryWeight = 0.1f; // Extra multiplier on the existing alpha-loss geometry proxy only.
 
         void init()
         {
-            gradBuffer = nullptr;
             mpComputePass = nullptr;
             // Keep the configured tau and alpha multiplier when recreating GPU resources.
             geometryTauVoxelFraction = 0.12f;
@@ -273,23 +259,14 @@ public:
             mUseGradCountNormalize = true;
             mGradScale = 1.0f;
 
-            // Mode 1 uses separate Adam states for radiance, opacity, center,
-            // log semi-axes, and tangent-space rotation. Mode 3 retains SGD.
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
+            // Separate Adam states for radiance, opacity, center,
+            // log semi-axes, and tangent-space rotation.
             mLrRadiance = 1e-3f;
             mLrOpacity = 5e-4f;
             mLrCenter = 1e-3f;
             mLrShape = 1e-3f;
             mLrRotation = 5e-4f;
             mBackgroundCarveAdamMultiplier = 5.0f;
-#else
-            mLrRadiance = 0.1f;
-            mLrOpacity = 10.0f;
-            mLrCenter = 5e-3f;
-            mLrShape = 0.1f;
-            mLrRotation = 0.1f;
-            mBackgroundCarveAdamMultiplier = 1.0f;
-#endif
             mOpacityWarmupIterations = 20u;
             mOpacityRampIterations = 30u;
 
@@ -356,18 +333,9 @@ public:
 private:
     static DefineList getReconstructionDefines();
     void updateOutputResolution();
-    void createInitializationPassResource();
-    void initializeVoxelData(RenderContext* pRenderContext);
-    void initializeOriginalVoxelData(RenderContext* pRenderContext);
-    void replaceReconstructionGrid(RenderContext* pRenderContext, const GridData& grid, uint32_t resolution,
-        const void* voxelData = nullptr, size_t byteSize = 0);
     void resetLoadedReconstruction(RenderContext* pRenderContext);
 
-    // Load Voxelization bake results in the v2 GaussianEllipsoid format.
-    void refreshBakedFileList();
-    void loadBakedReconstruction(RenderContext* pRenderContext, const std::filesystem::path& path);
 
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
     struct PointCloudState
     {
         bool initialized = false;
@@ -397,7 +365,6 @@ private:
     void barrierSparseGradients(RenderContext* pRenderContext);
     void saveSparseReconstruction(RenderContext* pRenderContext, const std::filesystem::path& path);
     void loadSparseReconstruction(RenderContext* pRenderContext, const std::filesystem::path& path);
-#endif
 
     ref<Device> mpDevice;
     ref<Scene> mpScene;
@@ -414,7 +381,6 @@ private:
 
     // Passes
     ref<ComputePass> mpReflectTypes;
-    ref<ComputePass> mpInitializeDataPass;
     GradientPass mGradientPass;
     UpdatePass mUpdatePass;
     LossPass mLossPass;
@@ -456,11 +422,6 @@ private:
     uint32_t mSelectedReconstructionFile = 0;
     std::string mReconstructionNameTag = "";
 
-    // 烘焙结果（BakeOutputDir）的选择状态，和上面的 mode 目录列表互不影响。
-    bool mLoadBakedReconstructionRequested = false;
-    bool mBakedFileListDirty = true;
-    std::vector<std::filesystem::path> mBakedFilePaths;
-    uint32_t mSelectedBakedFile = 0;
 };
 
 

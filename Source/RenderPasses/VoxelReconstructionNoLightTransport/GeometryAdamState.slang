@@ -4,7 +4,7 @@
 
 BEGIN_NAMESPACE_FALCOR
 
-// Mode 1 stores optimizer moments only for occupied voxels. Rotation moments
+// Store optimizer moments only for occupied voxels. Rotation moments
 // live in the three-dimensional local tangent space, rather than in quaternion
 // coordinates. Opacity keeps independent moments for every SH coefficient.
 struct GeometryAdamState

@@ -48,17 +48,6 @@ void VoxelReconstructionNoLightTransport::createGradientPassResource(RenderConte
         mGradientPass.mpComputePass = ComputePass::create(mpDevice, desc, defines, true);
     }
 
-#if RECON_MODE != RECON_MODE_POINT_CLOUD
-    mGradientPass.gradBuffer = mpDevice->createStructuredBuffer(
-        sizeof(GradRecord), mGridResources.gridData.totalVoxelCount(),
-        ResourceBindFlags::UnorderedAccess | ResourceBindFlags::ShaderResource
-    );
-#endif
-
-    //mGradientPass.gradBuffer = mpDevice->createStructuredBuffer(
-    //    sizeof(GradRecord), mGridResources.gridData.solidVoxelCount,
-    //    ResourceBindFlags::UnorderedAccess | ResourceBindFlags::ShaderResource
-    //);
 
 }
 
@@ -67,11 +56,7 @@ void VoxelReconstructionNoLightTransport::runGradientPass(RenderContext* pRender
     // gradBuffer 不在这里清零：整批内每一帧都要把自己的梯度原子累加进去.
     // 只在批开始时清一次（见 frameLoop 里 isFirstSample 的处理）.
     // 这里的 barrier 保证上一帧的累加对本帧的原子加可见.
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
     barrierSparseGradients(pRenderContext);
-#else
-    pRenderContext->uavBarrier(mGradientPass.gradBuffer.get());
-#endif
     pRenderContext->uavBarrier(mpPathRecordBuffer.get());
 
     //mpSceneGradients->clearGrads(pRenderContext, GradientType::VoxelSH);
@@ -85,9 +70,6 @@ void VoxelReconstructionNoLightTransport::runGradientPass(RenderContext* pRender
 
     var["gGridDataParamBlock"] = mpGridBlock;
     var["gDL_dColorBuffer"] = mLossPass.dL_dColor;
-#if RECON_MODE != RECON_MODE_POINT_CLOUD
-    var["gGradBuffer"] = mGradientPass.gradBuffer;
-#endif
     var["gPathRecordBuffer"] = mpPathRecordBuffer;
     var["dummy"] = renderData.getTexture("dummy");
     var["gBackgroundMaskBuffer"] = mLossPass.mpBackGroundMask;
@@ -108,11 +90,7 @@ void VoxelReconstructionNoLightTransport::runGradientPass(RenderContext* pRender
         pRenderContext, uint3(mRayMarchingPass.mOutputResolution.x, mRayMarchingPass.mOutputResolution.y, 1)
     );
 
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
     barrierSparseGradients(pRenderContext);
-#else
-    pRenderContext->uavBarrier(mGradientPass.gradBuffer.get());
-#endif
 
     //mpSceneGradients->aggregateGrads(pRenderContext, GradientType::VoxelSH);
 

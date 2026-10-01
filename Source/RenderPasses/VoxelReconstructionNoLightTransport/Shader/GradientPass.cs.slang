@@ -15,9 +15,6 @@ Texture2D<uint> gBackgroundMaskBuffer;
 
 
 // Output
-#if RECON_MODE != RECON_MODE_POINT_CLOUD
-RWStructuredBuffer<GradRecord> gGradBuffer;
-#endif
 RWTexture2D<float4> dummy;
 
 cbuffer CB {
@@ -108,22 +105,14 @@ void calcHardHitGeometryGrad(
 {
     geometryGradRecord.init();
 
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
     int3 cellInt = getVoxelCell(voxelRec.voxelID);
-#else
-    int3 cellInt = voxelRec.cellInt;
-#endif
 
     if (any(cellInt < int3(0)) || any(cellInt >= int3(gVoxelCount)))
         return;
     if (!isSolidVoxel(cellInt))
         return;
 
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
     uint voxelIndex = voxelRec.voxelID;
-#else
-    uint voxelIndex = CellToIndex(uint3(cellInt), gVoxelCount);
-#endif
     VoxelData voxel = VOXEL_DATA(voxelIndex);
 
     if (voxel.occupied == 0)
@@ -212,22 +201,14 @@ void calcMissCandidateGeometryGrad(
     if (cand.valid == 0)
         return;
 
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
     int3 cellInt = getVoxelCell(cand.voxelID);
-#else
-    int3 cellInt = cand.cellInt;
-#endif
 
     if (any(cellInt < int3(0)) || any(cellInt >= int3(gVoxelCount)))
         return;
     if (!isSolidVoxel(cellInt))
         return;
 
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
     uint voxelIndex = cand.voxelID;
-#else
-    uint voxelIndex = CellToIndex(uint3(cellInt), gVoxelCount);
-#endif
 
     VoxelData voxel = VOXEL_DATA(voxelIndex);
 
@@ -404,11 +385,7 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
         float transmittanceAfter = 1.0f;
         for (int i = int(hitCount) - 1; i >= 0; --i) {
             VoxelRecord voxelRec = rec.voxels[i];
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
             int3 voxelCell = getVoxelCell(voxelRec.voxelID);
-#else
-            int3 voxelCell = voxelRec.cellInt;
-#endif
             if (any(voxelCell < int3(0)) || any(voxelCell >= int3(gVoxelCount))){
                 continue;
             }
@@ -472,11 +449,7 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
                 opacityGrad
             );
 
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
             uint voxelIndex = voxelRec.voxelID;
-#else
-            uint voxelIndex = CellToIndex(uint3(voxelRec.cellInt), gVoxelCount);
-#endif
             accumulateAppearanceGrad(voxelIndex, radianceGrad, opacityGrad);
 
             // -------------------------
@@ -531,11 +504,7 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
 
             if (cand.valid == 0)
                 continue;
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
             int3 candidateCell = getVoxelCell(cand.voxelID);
-#else
-            int3 candidateCell = cand.cellInt;
-#endif
             if (any(candidateCell < int3(0)) || any(candidateCell >= int3(gVoxelCount)))
                 continue;
             if (!isSolidVoxel(candidateCell))
@@ -578,11 +547,7 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
             if (geometryGradRecord.geometryValid == 0)
                 continue;
 
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
             uint voxelIndex = cand.voxelID;
-#else
-            uint voxelIndex = CellToIndex(uint3(cand.cellInt), gVoxelCount);
-#endif
             accumulateGeometryGradRecord(
                 voxelIndex,
                 geometryGradRecord

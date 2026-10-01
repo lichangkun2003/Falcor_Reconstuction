@@ -42,7 +42,6 @@ void VoxelReconstructionNoLightTransport::createUpdatePassResource(RenderContext
 
 float VoxelReconstructionNoLightTransport::getEffectiveOpacityLearningRate() const
 {
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
     if (mUpdatePass.mLrOpacity <= 0.0f ||
         mOptimizerParams.currentIteration < mUpdatePass.mOpacityWarmupIterations)
         return 0.0f;
@@ -55,9 +54,6 @@ float VoxelReconstructionNoLightTransport::getEffectiveOpacityLearningRate() con
     const float ramp = std::min(1.0f,
         float(rampIteration) / float(mUpdatePass.mOpacityRampIterations));
     return mUpdatePass.mLrOpacity * ramp;
-#else
-    return mUpdatePass.mLrOpacity;
-#endif
 }
 
 void VoxelReconstructionNoLightTransport::runUpdatePass(RenderContext* pRenderContext, const RenderData& renderData)
@@ -77,11 +73,7 @@ void VoxelReconstructionNoLightTransport::runUpdatePass(RenderContext* pRenderCo
 
 
     var["gGridDataParamBlock"] = mpGridBlock;
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
     // Sparse Adam pages are bound when a grid is committed or extended.
-#else
-    var["gGradBuffer"] = mGradientPass.gradBuffer;
-#endif
 
     //var["gVoxelSHGrads"] = mpSceneGradients->getGradsBuffer(GradientType::VoxelSH);
 
@@ -91,10 +83,8 @@ void VoxelReconstructionNoLightTransport::runUpdatePass(RenderContext* pRenderCo
     cb["gLrRadiance"] = mUpdatePass.mLrRadiance;
     cb["gLrCenter"] = mUpdatePass.mLrCenter;
     cb["gLrShape"] = mUpdatePass.mLrShape;
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
     cb["gLrRotation"] = mUpdatePass.mLrRotation;
     cb["gRadianceAdamCapacity"] = uint32_t(mGridResources.radianceAdamPages.size()) * SPARSE_POOL_PAGE_SIZE;
-#endif
     cb["gLrOpacity"] = getEffectiveOpacityLearningRate();
     cb["gBackgroundCarveAdamMultiplier"] = mUpdatePass.mBackgroundCarveAdamMultiplier;
     //cb["gVoxelSHGradDim"] = mVoxelSHGradDim;
@@ -103,7 +93,6 @@ void VoxelReconstructionNoLightTransport::runUpdatePass(RenderContext* pRenderCo
 
     //mpPixelDebug->prepareProgram(mUpdatePass.mpComputePass->getProgram(), mUpdatePass.mpComputePass->getRootVar());
 
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
     constexpr uint32_t batchSize = 65535u * 256u;
     for (uint32_t offset = 0; offset < mGridResources.gridData.activeVoxelCount; )
     {
@@ -112,16 +101,9 @@ void VoxelReconstructionNoLightTransport::runUpdatePass(RenderContext* pRenderCo
         mUpdatePass.mpComputePass->execute(pRenderContext, uint3(count, 1, 1));
         offset += count;
     }
-#else
-    mUpdatePass.mpComputePass->execute(pRenderContext, mGridResources.gridData.voxelCount);
-#endif
 
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
     barrierSparseVoxels(pRenderContext);
     for (const auto& page : mGridResources.adamPages) pRenderContext->uavBarrier(page.get());
-#else
-    pRenderContext->uavBarrier(mGridResources.gridDataBuffer.get());
-#endif
 
     mUpdatePass.mEnableEllipsoidPruning = false;
 }
@@ -138,29 +120,19 @@ void VoxelReconstructionNoLightTransport::renderUIUpdatePass(Gui::Widgets& widge
 
     group.text("Appearance Learning rates");
 
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
     group.var("Adam LR radiance", mUpdatePass.mLrRadiance, 0.0f, 0.1f, 1e-5f, false, "%.6f");
     group.var("Adam LR opacity (target)", mUpdatePass.mLrOpacity, 0.0f, 0.1f, 1e-5f, false, "%.6f");
     group.var("Opacity warm-up iterations", mUpdatePass.mOpacityWarmupIterations, 0u, 200u, 1u);
     group.var("Opacity ramp iterations", mUpdatePass.mOpacityRampIterations, 0u, 200u, 1u);
     group.text(fmt::format("Effective opacity LR: {:.6f}", getEffectiveOpacityLearningRate()));
-#else
-    group.var("LR radiance", mUpdatePass.mLrRadiance, 0.0f, 1.0f, 1e-4f);
-    group.var("LR opacity", mUpdatePass.mLrOpacity, 0.0f, 100.0f, 1e-4f);
-#endif
 
     group.text("Geometry learning rates");
 
 
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
     group.var("Adam LR center (voxel local)", mUpdatePass.mLrCenter, 0.0f, 0.1f, 1e-5f, false, "%.6f");
     group.var("Adam LR log scale", mUpdatePass.mLrShape, 0.0f, 0.1f, 1e-5f, false, "%.6f");
     group.var("Adam LR rotation", mUpdatePass.mLrRotation, 0.0f, 0.1f, 1e-5f, false, "%.6f");
     group.var("Background Carve Adam Multiplier", mUpdatePass.mBackgroundCarveAdamMultiplier, 1.0f, 20.0f, 0.25f);
-#else
-    group.var("LR center (voxel local)", mUpdatePass.mLrCenter, 0.0f, 0.1f, 1e-5f, false, "%.6f");
-    group.var("LR shape (log scale / rotation)", mUpdatePass.mLrShape, 0.0f, 1.0f, 0.001f, false, "%.6f");
-#endif
     group.text("Step limits: center 0.02 voxel/axis; log scale 0.02/axis; rotation 0.02 rad.");
 
     group.var("Ellipsoid Prune Threshold", mUpdatePass.mEllipsoidPruneThreshold, 0.0f, 1.0f, 1e-7f);
