@@ -20,7 +20,7 @@ struct GradRecord
     // update to the persistent unit quaternion.
     float3 rotation;
     uint geometryValid;
-    // Number of geometry samples produced by reference pixels with alpha == 0.
+    // Number of geometry samples produced by reliably background reference pixels.
     // UpdatePass uses the fraction of these samples to accelerate only
     // background space carving after Adam has normalized the gradient.
     uint backgroundCarveValid;

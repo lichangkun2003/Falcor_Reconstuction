@@ -25,6 +25,11 @@ cbuffer CB {
     float gAlphaGeometryWeight;     // Geometry-only multiplier; dL/dAlpha already includes the alpha-loss weight.
     float gBackgroundCarveWeight;   // 背景几何清除项的权重
     float gBinaryOpacityWeight;
+    bool gCollectDeletionEvidence;
+    uint gEvidenceViewID;
+    float gMinRemovalLossDelta;
+    float gMinEvidenceTransmittance;
+    float gAlphaLossWeight;
 
 }
 
@@ -357,6 +362,66 @@ void accumulateAppearanceGrad(
 
 
 
+void recordUniqueDeletionEvidence(uint voxelIndex, bool foreground)
+{
+    uint previousView = 0u;
+    if (foreground)
+    {
+        InterlockedExchange(
+            TOPOLOGY_DATA(voxelIndex).lastForegroundView,
+            gEvidenceViewID,
+            previousView
+        );
+        if (previousView != gEvidenceViewID)
+            InterlockedAdd(TOPOLOGY_DATA(voxelIndex).packedCountsAndFlags, 1u);
+    }
+    else
+    {
+        InterlockedExchange(
+            TOPOLOGY_DATA(voxelIndex).lastBackgroundView,
+            gEvidenceViewID,
+            previousView
+        );
+        if (previousView != gEvidenceViewID)
+            InterlockedAdd(
+                TOPOLOGY_DATA(voxelIndex).packedCountsAndFlags,
+                1u << kTopologyEvidenceBackgroundShift
+            );
+    }
+}
+
+void collectDeletionEvidence(
+    uint voxelIndex,
+    uint referenceClass,
+    float3 dL_dC,
+    float dL_dA,
+    float3 radiance,
+    float3 behindColor,
+    float opacity,
+    float transmittanceBefore,
+    float transmittanceAfter)
+{
+    if (!gCollectDeletionEvidence ||
+        transmittanceBefore < gMinEvidenceTransmittance ||
+        (referenceClass != 1u && referenceClass != 2u))
+        return;
+
+    // Exact loss change for locally removing this hard hit while holding all
+    // other recorded hits fixed. Positive means removal hurts (keep it);
+    // negative means removal improves the pixel (background conflict).
+    float3 colorDelta = transmittanceBefore * opacity * (behindColor - radiance);
+    float alphaDelta = -transmittanceBefore * opacity * transmittanceAfter;
+    float removalLossDelta =
+        dot(dL_dC, colorDelta) + dot(colorDelta, colorDelta) +
+        dL_dA * alphaDelta + gAlphaLossWeight * alphaDelta * alphaDelta;
+    removalLossDelta = sanitizeFloat(removalLossDelta);
+
+    if (referenceClass == 2u && removalLossDelta > gMinRemovalLossDelta)
+        recordUniqueDeletionEvidence(voxelIndex, true);
+    else if (referenceClass == 1u && removalLossDelta < -gMinRemovalLossDelta)
+        recordUniqueDeletionEvidence(voxelIndex, false);
+}
+
 [numthreads(8, 8, 1)]
 void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
     uint2 pixel = dispatchThreadId.xy;
@@ -373,7 +438,8 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
     float4 dL_dRGBA = gDL_dColorBuffer[pixel];
     float3 dL_dC = dL_dRGBA.xyz;
     float dL_dA = dL_dRGBA.w;
-    bool isReferenceBackground = gBackgroundMaskBuffer[pixel] == 1;
+    uint referenceClass = gBackgroundMaskBuffer[pixel];
+    bool isReferenceBackground = referenceClass == 1u;
 
     // -------------------------
     // 1. Appearance gradient & hit geometry gradient
@@ -451,6 +517,17 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
 
             uint voxelIndex = voxelRec.voxelID;
             accumulateAppearanceGrad(voxelIndex, radianceGrad, opacityGrad);
+            collectDeletionEvidence(
+                voxelIndex,
+                referenceClass,
+                dL_dC,
+                dL_dA,
+                radiance,
+                behindColor,
+                opacity,
+                transmittanceBefore,
+                transmittanceAfter
+            );
 
             // -------------------------
             // Hard-hit geometry gradient

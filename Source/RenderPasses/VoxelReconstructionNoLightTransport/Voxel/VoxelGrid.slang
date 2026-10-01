@@ -4,9 +4,11 @@
 
 #include "VoxelData.slang"
 #include "../GradRecord.slang"
+#include "../TopologyEvidence.slang"
 
 #define VOXEL_DATA(ID) gGridDataParamBlock.voxelPages[NonUniformResourceIndex(uint(ID) / SPARSE_POOL_PAGE_SIZE)][uint(ID) % SPARSE_POOL_PAGE_SIZE]
 #define GRAD_DATA(ID) gGridDataParamBlock.gradPages[NonUniformResourceIndex(uint(ID) / SPARSE_POOL_PAGE_SIZE)][uint(ID) % SPARSE_POOL_PAGE_SIZE]
+#define TOPOLOGY_DATA(ID) gGridDataParamBlock.topologyEvidencePages[NonUniformResourceIndex(uint(ID) / SPARSE_POOL_PAGE_SIZE)][uint(ID) % SPARSE_POOL_PAGE_SIZE]
 
 BEGIN_NAMESPACE_FALCOR
 
@@ -28,6 +30,7 @@ struct GridData{
     RWTexture3D<int> indexPages[SPARSE_INDEX_MAX_PAGES];
     RWStructuredBuffer<VoxelData> voxelPages[SPARSE_POOL_MAX_PAGES];
     RWStructuredBuffer<GradRecord> gradPages[SPARSE_POOL_MAX_PAGES];
+    RWStructuredBuffer<TopologyEvidence> topologyEvidencePages[SPARSE_POOL_MAX_PAGES];
     RWStructuredBuffer<uint> cellIndexPages[SPARSE_POOL_MAX_PAGES];
 #endif
 };
@@ -72,6 +75,11 @@ int3 getVoxelCell(uint voxelID)
     uint cellIndex = gGridDataParamBlock.cellIndexPages[NonUniformResourceIndex(voxelID / SPARSE_POOL_PAGE_SIZE)]
         [voxelID % SPARSE_POOL_PAGE_SIZE];
     return IndexToCell(int(cellIndex), gGridDataParamBlock.voxelCount);
+}
+
+bool isDeletionCandidate(uint voxelID)
+{
+    return topologyIsDeletionCandidate(TOPOLOGY_DATA(voxelID).packedCountsAndFlags);
 }
 
 

@@ -268,6 +268,7 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
                         mGridResources.radianceAdamCounter->setBlob(reset, 0, sizeof(reset));
                     }
                 }
+                evaluateDeletionEvidence(pRenderContext);
                 if (mOptimizerParams.currentIteration >= mOptimizerParams.maxIteration)
                 {
                     stopReconstruction();
@@ -324,6 +325,7 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
         widget.text(fmt::format("Loading reference images: {} / {}", mReferenceImages.size(), mReferenceCameras.size()));
     widget.text("Point-cloud initialization");
     widget.text("PLY: " + (resolveReconstructionPath(ReferenceImageDir) / "point_cloud.ply").string());
+    widget.text("Gaussian Opacity Threshold applies only to PLY files with Gaussian attributes.");
     // 高斯占位阈值，改动在下次 Init / Reset from PLY 时生效.
     widget.var("Gaussian Opacity Threshold", mPointCloud.opacityThreshold, 0.001f, 1.0f, 0.005f);
     widget.text(mPointCloud.status);
@@ -359,7 +361,8 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
         mGridResources.voxelPages.size()));
     constexpr double bytesPerGiB = 1024.0 * 1024.0 * 1024.0;
     const double poolGiB = double(mGridResources.gridData.voxelCapacity) *
-        double(sizeof(VoxelData) + sizeof(GradRecord) + sizeof(GeometryAdamState) + 2u * sizeof(uint32_t)) / bytesPerGiB;
+        double(sizeof(VoxelData) + sizeof(GradRecord) + sizeof(GeometryAdamState) +
+            sizeof(TopologyEvidence) + 2u * sizeof(uint32_t)) / bytesPerGiB;
     const uint32_t radianceCapacity = uint32_t(mGridResources.radianceAdamPages.size()) * SPARSE_POOL_PAGE_SIZE;
     const double radianceGiB = double(radianceCapacity) * sizeof(RadianceAdamState) / bytesPerGiB;
     const auto& count = mGridResources.gridData.voxelCount;
@@ -489,7 +492,7 @@ void VoxelReconstructionNoLightTransport::renderUITopology(Gui::Widgets& widget)
     auto group = widget.group("Topology", true);
     if (!group) return;
 
-    group.text("Framework only: no evidence is collected and no topology changes are applied.");
+    group.text("Deletion evidence only: candidates are marked, never deleted.");
     group.text("TopologyDebug is a viewing mode; training always renders with Default.");
 
     if (group.button("Show TopologyDebug"))
@@ -502,28 +505,50 @@ void VoxelReconstructionNoLightTransport::renderUITopology(Gui::Widgets& widget)
         mRayMarchingPass.mDrawMode = uint32_t(ABSDFDrawMode::Default);
         mRayMarchingPass.mOptionsChanged = true;
     }
+    if (group.button("Show Deletion Candidates"))
+    {
+        mTopologySettings.debugLayer = uint32_t(TopologyDebugLayer::Deletion);
+        mRayMarchingPass.mDrawMode = uint32_t(ABSDFDrawMode::TopologyDebug);
+        mRayMarchingPass.mOptionsChanged = true;
+    }
 
     if (group.dropdown("Debug Layer", reinterpret_cast<TopologyDebugLayer&>(mTopologySettings.debugLayer)))
         mRayMarchingPass.mOptionsChanged = true;
-    group.text("Occupied grid cells: blue; candidate-layer context: gray.");
+    group.text("Occupied: blue; deletion candidates: red; optional context: gray.");
     if (mTopologySettings.debugLayer != uint32_t(TopologyDebugLayer::Occupied))
     {
         if (group.checkbox("Show Occupied Context", mTopologySettings.showOccupiedContext))
             mRayMarchingPass.mOptionsChanged = true;
-        group.text("Candidate scores are not available yet; only occupied context is shown.");
     }
+
+    group.text("Deletion evidence");
+    group.checkbox("Collect Deletion Evidence", mTopologySettings.collectDeletionEvidence);
+    group.text(fmt::format(
+        "Starts at iteration {} (opacity warm-up + ramp); window {} iterations.",
+        getDeletionEvidenceStartIteration(),
+        std::max(1u, mTopologySettings.evidenceInterval)
+    ));
+    group.var("Evidence Interval (iterations)", mTopologySettings.evidenceInterval, 1u, 100u, 1u);
+    group.var("Foreground Alpha Min", mTopologySettings.foregroundAlphaMin, 0.0f, 1.0f, 0.01f);
+    group.var("Background Alpha Max", mTopologySettings.backgroundAlphaMax, 0.0f, 0.1f, 1e-4f, false, "%.4f");
+    group.var("Min Removal Loss Delta", mTopologySettings.minRemovalLossDelta, 0.0f, 0.1f, 1e-5f, false, "%.6f");
+    group.var("Min Evidence Transmittance", mTopologySettings.minEvidenceTransmittance, 0.0f, 1.0f, 0.01f);
+    group.var("Min Background Conflict Views", mTopologySettings.minDeletionConflictViews, 1u, 1000u, 1u);
+    group.var("Max Foreground Support Views", mTopologySettings.maxDeletionSupportViews, 0u, 1000u, 1u);
+    group.text(fmt::format("Completed evidence windows: {}", mTopologySettings.completedWindows));
+    group.text(fmt::format("Deletion candidates (two windows): {}", mTopologySettings.candidateCount));
+    group.text(fmt::format("First-window warnings: {}", mTopologySettings.oneWindowCount));
+    group.text(fmt::format("Foreground-protected: {}", mTopologySettings.protectedCount));
+    group.text(fmt::format("Weak background conflict: {}", mTopologySettings.weakConflictCount));
 
     group.text("Reserved topology switches (inactive until topology edits are implemented)");
     group.checkbox("Enable Growth (inactive)", mTopologySettings.enableGrowth);
     group.checkbox("Enable Split (inactive)", mTopologySettings.enableSplit);
     group.checkbox("Enable Deletion (inactive)", mTopologySettings.enableDeletion);
 
-    group.text("Reserved evidence thresholds (inactive until evidence collection is implemented)");
-    group.var("Foreground Alpha Min", mTopologySettings.foregroundAlphaMin, 0.0f, 1.0f, 0.01f);
-    group.var("Background Alpha Max", mTopologySettings.backgroundAlphaMax, 0.0f, 0.1f, 1e-4f, false, "%.4f");
+    group.text("Reserved growth thresholds");
     group.var("Min Alpha Deficit", mTopologySettings.minAlphaDeficit, 0.0f, 1.0f, 0.01f);
     group.var("Min Growth Views", mTopologySettings.minGrowthViews, 1u, 100u, 1u);
-    group.var("Evidence Interval (iterations)", mTopologySettings.evidenceInterval, 1u, 100u, 1u);
 }
 
 void VoxelReconstructionNoLightTransport::setScene(RenderContext* pRenderContext, const ref<Scene>& pScene)
@@ -563,6 +588,8 @@ void VoxelReconstructionNoLightTransport::setScene(RenderContext* pRenderContext
 
     //// Update Pass
     createUpdatePassResource(pRenderContext);
+
+    createTopologyPassResource(pRenderContext);
 
     // Reduce Pass
     createReducePassResource(pRenderContext);

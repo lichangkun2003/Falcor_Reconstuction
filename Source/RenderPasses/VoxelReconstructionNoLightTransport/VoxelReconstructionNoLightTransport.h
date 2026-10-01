@@ -49,12 +49,14 @@
 #include "PathRecord.slang"
 #include "GradRecord.slang"
 #include "GeometryAdamState.slang"
+#include "TopologyEvidence.slang"
 
 using namespace Falcor;
 
 static_assert(sizeof(GaussianEllipsoid) == 40, "GaussianEllipsoid host/device layout changed.");
 static_assert(sizeof(VoxelData) == 44 + 12 * SH_COUNT + 4 * SH_OPACITY_COUNT, "VoxelData host/device layout changed.");
 static_assert(sizeof(GradRecord) == 48 + 12 * SH_COUNT + 4 * SH_OPACITY_COUNT, "GradRecord host/device layout changed.");
+static_assert(sizeof(TopologyEvidence) == 12, "TopologyEvidence host/device layout changed.");
 
 namespace
 {
@@ -63,6 +65,7 @@ const std::string RayMarchingShaderFilePath = "RenderPasses/VoxelReconstructionN
 const std::string LossPassShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/LossPass.cs.slang";
 const std::string GradientPassShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/GradientPass.cs.slang";
 const std::string UpdatePassShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/UpdatePass.cs.slang";
+const std::string TopologyPassShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/TopologyPass.cs.slang";
 const std::string ReduceTexturePassShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/ReduceTexturePass.cs.slang";
 const std::string ReduceBufferPassShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/ReduceBufferPass.cs.slang";
 
@@ -125,6 +128,11 @@ public:
     void renderUIUpdatePass(Gui::Widgets& widget);
     void renderUITopology(Gui::Widgets& widget);
     float getEffectiveOpacityLearningRate() const;
+    void createTopologyPassResource(RenderContext* pRenderContext);
+    void evaluateDeletionEvidence(RenderContext* pRenderContext);
+    void resetDeletionEvidence(RenderContext* pRenderContext);
+    uint32_t getDeletionEvidenceStartIteration() const;
+    bool shouldCollectDeletionEvidence() const;
 
     void createReducePassResource(RenderContext* pRenderContext);
     void runReducePass(RenderContext* pRenderContext, const RenderData& renderData);
@@ -149,6 +157,7 @@ public:
         std::vector<ref<Texture>> indexPages;
         std::vector<ref<Buffer>> voxelPages;
         std::vector<ref<Buffer>> gradPages;
+        std::vector<ref<Buffer>> topologyEvidencePages;
         std::vector<ref<Buffer>> adamPages;
         std::vector<ref<Buffer>> radianceAdamIndexPages;
         std::vector<ref<Buffer>> radianceAdamPages;
@@ -295,21 +304,30 @@ public:
         }
     };
 
-    // UI and rendering scaffold for topology diagnostics. The evidence
-    // collection and topology operations will be added after their rules are
-    // established; these values do not change occupied cells yet.
+    // Deletion evidence is diagnostic only. It marks candidates but does not
+    // change occupied cells or compact the storage pool.
     struct TopologySettings
     {
         uint32_t debugLayer = uint32_t(TopologyDebugLayer::Occupied);
         bool showOccupiedContext = true;
+        bool collectDeletionEvidence = true;
         bool enableGrowth = false;
         bool enableSplit = false;
         bool enableDeletion = false;
         float foregroundAlphaMin = 0.95f;
         float backgroundAlphaMax = 1e-4f;
+        float minRemovalLossDelta = 1e-4f;
+        float minEvidenceTransmittance = 0.05f;
+        uint32_t minDeletionConflictViews = 3;
+        uint32_t maxDeletionSupportViews = 0;
         float minAlphaDeficit = 0.1f;
         uint32_t minGrowthViews = 3;
         uint32_t evidenceInterval = 5;
+        uint32_t candidateCount = 0;
+        uint32_t oneWindowCount = 0;
+        uint32_t protectedCount = 0;
+        uint32_t weakConflictCount = 0;
+        uint32_t completedWindows = 0;
     };
 
     struct ReduceLossPass
@@ -351,6 +369,8 @@ private:
     PointCloudState mPointCloud;
     ref<ComputePass> mpInitializePointCloudPass;
     ref<ComputePass> mpBuildSparseIndexPass;
+    ref<ComputePass> mpTopologyPass;
+    ref<Buffer> mpTopologySummary;
     bool initializePointCloudVoxelData(RenderContext* pRenderContext);
     void resetPointCloudOptimization(RenderContext* pRenderContext);
     GridResources allocateSparseGrid(RenderContext* pRenderContext, const GridData& grid, uint32_t capacity);
@@ -363,6 +383,7 @@ private:
     void clearSparseGradients(RenderContext* pRenderContext);
     void barrierSparseVoxels(RenderContext* pRenderContext);
     void barrierSparseGradients(RenderContext* pRenderContext);
+    void barrierTopologyEvidence(RenderContext* pRenderContext);
     void saveSparseReconstruction(RenderContext* pRenderContext, const std::filesystem::path& path);
     void loadSparseReconstruction(RenderContext* pRenderContext, const std::filesystem::path& path);
 

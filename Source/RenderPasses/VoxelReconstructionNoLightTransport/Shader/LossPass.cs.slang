@@ -18,6 +18,8 @@ cbuffer CB {
     // 到当前帧为止这一批里已经累积的采样数，第 k 帧时等于 k + 1。
     uint gSampleCount;
     float gAlphaLossWeight;
+    float gForegroundAlphaMin;
+    float gBackgroundAlphaMax;
 }
 
 
@@ -76,7 +78,10 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
     // Total loss
     gLossBuffer[pixel] = rgbLoss + alphaLoss;
 
-    gBackgroundMaskBuffer[pixel] = refAlpha < 1e-4f ? 1u : 0u;
+    // 0 = anti-aliased/uncertain, 1 = reliable background, 2 = reliable foreground.
+    gBackgroundMaskBuffer[pixel] =
+        refAlpha <= gBackgroundAlphaMax ? 1u :
+        (refAlpha >= gForegroundAlphaMin ? 2u : 0u);
 
     // xyz = RGB gradient
     // w   = alpha gradient

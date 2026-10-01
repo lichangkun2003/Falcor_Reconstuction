@@ -49,16 +49,19 @@ VoxelReconstructionNoLightTransport::GridResources VoxelReconstructionNoLightTra
     {
         auto voxels = mpDevice->createStructuredBuffer(sizeof(VoxelData), SPARSE_POOL_PAGE_SIZE, flags);
         auto gradients = mpDevice->createStructuredBuffer(sizeof(GradRecord), SPARSE_POOL_PAGE_SIZE, flags);
+        auto topologyEvidence = mpDevice->createStructuredBuffer(sizeof(TopologyEvidence), SPARSE_POOL_PAGE_SIZE, flags);
         auto adam = mpDevice->createStructuredBuffer(sizeof(GeometryAdamState), SPARSE_POOL_PAGE_SIZE, flags);
         auto radianceIndex = mpDevice->createStructuredBuffer(sizeof(uint32_t), SPARSE_POOL_PAGE_SIZE, flags);
         auto cells = mpDevice->createStructuredBuffer(sizeof(uint32_t), SPARSE_POOL_PAGE_SIZE, flags);
         pRenderContext->clearUAV(voxels->getUAV().get(), uint4(0));
         pRenderContext->clearUAV(gradients->getUAV().get(), uint4(0));
+        pRenderContext->clearUAV(topologyEvidence->getUAV().get(), uint4(0));
         pRenderContext->clearUAV(adam->getUAV().get(), uint4(0));
         pRenderContext->clearUAV(radianceIndex->getUAV().get(), uint4(0xffffffffu));
         pRenderContext->clearUAV(cells->getUAV().get(), uint4(0));
         resources.voxelPages.push_back(std::move(voxels));
         resources.gradPages.push_back(std::move(gradients));
+        resources.topologyEvidencePages.push_back(std::move(topologyEvidence));
         resources.adamPages.push_back(std::move(adam));
         resources.radianceAdamIndexPages.push_back(std::move(radianceIndex));
         resources.cellIndexPages.push_back(std::move(cells));
@@ -95,6 +98,7 @@ ref<ParameterBlock> VoxelReconstructionNoLightTransport::createSparseGridBlock(c
     {
         var["voxelPages"][i] = resources.voxelPages[i];
         var["gradPages"][i] = resources.gradPages[i];
+        var["topologyEvidencePages"][i] = resources.topologyEvidencePages[i];
         var["cellIndexPages"][i] = resources.cellIndexPages[i];
     }
     return block;
@@ -112,6 +116,7 @@ void VoxelReconstructionNoLightTransport::commitSparseGrid(
     bind(mRayMarchingPass.mpFullScreenPass);
     bind(mGradientPass.mpComputePass);
     bind(mUpdatePass.mpComputePass);
+    bind(mpTopologyPass);
     if (mUpdatePass.mpComputePass && mUpdatePass.mpComputePass->getVars())
     {
         auto var = mUpdatePass.mpComputePass->getRootVar()["gGeometryAdamPages"];
@@ -154,16 +159,19 @@ void VoxelReconstructionNoLightTransport::reserveSparseVoxelCapacity(
     {
         auto voxels = mpDevice->createStructuredBuffer(sizeof(VoxelData), SPARSE_POOL_PAGE_SIZE, flags);
         auto gradients = mpDevice->createStructuredBuffer(sizeof(GradRecord), SPARSE_POOL_PAGE_SIZE, flags);
+        auto topologyEvidence = mpDevice->createStructuredBuffer(sizeof(TopologyEvidence), SPARSE_POOL_PAGE_SIZE, flags);
         auto adam = mpDevice->createStructuredBuffer(sizeof(GeometryAdamState), SPARSE_POOL_PAGE_SIZE, flags);
         auto radianceIndex = mpDevice->createStructuredBuffer(sizeof(uint32_t), SPARSE_POOL_PAGE_SIZE, flags);
         auto cells = mpDevice->createStructuredBuffer(sizeof(uint32_t), SPARSE_POOL_PAGE_SIZE, flags);
         pRenderContext->clearUAV(voxels->getUAV().get(), uint4(0));
         pRenderContext->clearUAV(gradients->getUAV().get(), uint4(0));
+        pRenderContext->clearUAV(topologyEvidence->getUAV().get(), uint4(0));
         pRenderContext->clearUAV(adam->getUAV().get(), uint4(0));
         pRenderContext->clearUAV(radianceIndex->getUAV().get(), uint4(0xffffffffu));
         pRenderContext->clearUAV(cells->getUAV().get(), uint4(0));
         next.voxelPages.push_back(std::move(voxels));
         next.gradPages.push_back(std::move(gradients));
+        next.topologyEvidencePages.push_back(std::move(topologyEvidence));
         next.adamPages.push_back(std::move(adam));
         next.radianceAdamIndexPages.push_back(std::move(radianceIndex));
         next.cellIndexPages.push_back(std::move(cells));
@@ -205,6 +213,11 @@ void VoxelReconstructionNoLightTransport::barrierSparseVoxels(RenderContext* pRe
 void VoxelReconstructionNoLightTransport::barrierSparseGradients(RenderContext* pRenderContext)
 {
     for (const auto& page : mGridResources.gradPages) pRenderContext->uavBarrier(page.get());
+}
+
+void VoxelReconstructionNoLightTransport::barrierTopologyEvidence(RenderContext* pRenderContext)
+{
+    for (const auto& page : mGridResources.topologyEvidencePages) pRenderContext->uavBarrier(page.get());
 }
 
 void VoxelReconstructionNoLightTransport::uploadSparseBatch(
@@ -264,6 +277,7 @@ void VoxelReconstructionNoLightTransport::resetPointCloudOptimization(RenderCont
     mReduceLossPass.iterationLossHistory.clear();
     if (mpPathRecordBuffer) pRenderContext->clearUAV(mpPathRecordBuffer->getUAV().get(), uint4(0));
     clearSparseGradients(pRenderContext);
+    resetDeletionEvidence(pRenderContext);
 }
 
 bool VoxelReconstructionNoLightTransport::initializePointCloudVoxelData(RenderContext* pRenderContext)
@@ -285,10 +299,11 @@ bool VoxelReconstructionNoLightTransport::initializePointCloudVoxelData(RenderCo
         if (occupiedCount > maximumCapacity)
         {
             const double poolGiB = double(occupiedCount) *
-                double(sizeof(VoxelData) + sizeof(GradRecord) + sizeof(GeometryAdamState) + 2u * sizeof(uint32_t)) /
+                double(sizeof(VoxelData) + sizeof(GradRecord) + sizeof(GeometryAdamState) +
+                    sizeof(TopologyEvidence) + 2u * sizeof(uint32_t)) /
                 double(1ull << 30);
             throw RuntimeError(fmt::format(
-                "Point cloud occupies {} voxels (pool limit {}). The voxel, gradient, geometry/opacity Adam, and index pools alone "
+                "Point cloud occupies {} voxels (pool limit {}). The voxel, gradient, geometry/opacity Adam, deletion-evidence, and index pools alone "
                 "would need at least {:.1f} GiB. Increase Gaussian Opacity Threshold to reduce coverage, "
                 "or use a lower grid resolution; raising the page limit alone may exhaust GPU memory.",
                 occupiedCount, maximumCapacity, poolGiB));

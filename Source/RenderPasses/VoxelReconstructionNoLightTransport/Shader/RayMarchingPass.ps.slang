@@ -272,6 +272,10 @@ HitResult rayMarchingDDA(
     float3 reciprocal_direction = 1.0f / direction;
     // 可选的前进方向
     int3 directions = int3(sign(direction));
+    HitResult topologyContext = {
+        false, cellInt, float3(cellInt) + 0.5f,
+        -1.0f, float4(float3(cellInt) + 0.5f, 1.0f)
+    };
     if (ignoreFirst)
         leave(cell, cellInt, directions, direction, reciprocal_direction);
 
@@ -288,7 +292,22 @@ HitResult rayMarchingDDA(
             {
                 HitResult occupied = { true, cellInt, float3(cellInt) + 0.5f,
                     -1.0f, float4(float3(cellInt) + 0.5f, 1.0f) };
-                return occupied;
+                int topologyVoxelID = lookupVoxelID(cellInt);
+                bool deletionCandidate =
+                    topologyDebugLayer == uint(TopologyDebugLayer::Deletion) &&
+                    topologyVoxelID >= 0 &&
+                    isDeletionCandidate(uint(topologyVoxelID));
+                if (deletionCandidate)
+                {
+                    occupied.gmin = 1.0f; // Marker used only by the debug color path.
+                    return occupied;
+                }
+                if (topologyDebugLayer == uint(TopologyDebugLayer::Occupied))
+                    return occupied;
+                if (showOccupiedContext && !topologyContext.hit)
+                    topologyContext = occupied;
+                leave(cell, cellInt, directions, direction, reciprocal_direction);
+                continue;
             }
 #if !CHECK_PRIMITIVE
             HitResult hit = { true, cellInt, cellInt + 0.5f, -1.0f,
@@ -365,6 +384,8 @@ HitResult rayMarchingDDA(
         }
         leave(cell, cellInt, directions, direction, reciprocal_direction);
     }
+    if (topologyContext.hit)
+        return topologyContext;
     HitResult hit = { false, cellInt, cellInt + 0.5f,
                       1e30f,float4(cellInt + 0.5f, 1.0f) };
     return hit;
@@ -583,6 +604,8 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
         {
             if (topologyDebugLayer == uint(TopologyDebugLayer::Occupied))
                 psOut.color = float4(0.15f, 0.65f, 1.0f, 1.0f);
+            else if (topologyDebugLayer == uint(TopologyDebugLayer::Deletion) && hit.gmin > 0.0f)
+                psOut.color = float4(1.0f, 0.12f, 0.04f, 1.0f);
             else if (showOccupiedContext)
                 psOut.color = float4(0.18f, 0.2f, 0.23f, 1.0f);
         }

@@ -107,6 +107,7 @@ void VoxelReconstructionNoLightTransport::resetLoadedReconstruction(RenderContex
     mReduceLossPass.iterationLossHistory.clear();
     if (mpPathRecordBuffer) pRenderContext->clearUAV(mpPathRecordBuffer->getUAV().get(), uint4(0));
     clearSparseGradients(pRenderContext);
+    resetDeletionEvidence(pRenderContext);
     mPointCloud.startRequested = false;
     mPointCloud.initialized = true;
     mPointCloud.clearAccumulation = true;

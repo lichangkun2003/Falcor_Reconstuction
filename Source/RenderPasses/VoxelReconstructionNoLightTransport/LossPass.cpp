@@ -95,6 +95,8 @@ void VoxelReconstructionNoLightTransport::runLossPass(RenderContext* pRenderCont
     // mSampleIndex 在本帧的 rayMarchingPass 里已经自增过，此刻就等于 k + 1，这里不能再加 1.
     cb["gSampleCount"] = mRayMarchingPass.mSampleIndex;
     cb["gAlphaLossWeight"] = mLossPass.alphaLossWeight;
+    cb["gForegroundAlphaMin"] = mTopologySettings.foregroundAlphaMin;
+    cb["gBackgroundAlphaMax"] = mTopologySettings.backgroundAlphaMax;
 
 
     mLossPass.mpComputePass->execute(pRenderContext, uint3(mRayMarchingPass.mOutputResolution.x, mRayMarchingPass.mOutputResolution.y, 1)

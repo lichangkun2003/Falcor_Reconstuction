@@ -57,6 +57,7 @@ void VoxelReconstructionNoLightTransport::runGradientPass(RenderContext* pRender
     // 只在批开始时清一次（见 frameLoop 里 isFirstSample 的处理）.
     // 这里的 barrier 保证上一帧的累加对本帧的原子加可见.
     barrierSparseGradients(pRenderContext);
+    if (shouldCollectDeletionEvidence()) barrierTopologyEvidence(pRenderContext);
     pRenderContext->uavBarrier(mpPathRecordBuffer.get());
 
     //mpSceneGradients->clearGrads(pRenderContext, GradientType::VoxelSH);
@@ -83,6 +84,13 @@ void VoxelReconstructionNoLightTransport::runGradientPass(RenderContext* pRender
     cb["gAlphaGeometryWeight"] = mGradientPass.alphaGeometryWeight;
     cb["gBackgroundCarveWeight"] = 0.01f;
     cb["gBinaryOpacityWeight"] = 0.003f;
+    cb["gCollectDeletionEvidence"] = shouldCollectDeletionEvidence();
+    // The topology pass clears these stamps at every evidence-window boundary,
+    // so the camera index makes each physical view vote at most once per window.
+    cb["gEvidenceViewID"] = mOptimizerParams.currentView + 1u;
+    cb["gMinRemovalLossDelta"] = mTopologySettings.minRemovalLossDelta;
+    cb["gMinEvidenceTransmittance"] = mTopologySettings.minEvidenceTransmittance;
+    cb["gAlphaLossWeight"] = mLossPass.alphaLossWeight;
     
     mpPixelDebug->prepareProgram(mGradientPass.mpComputePass->getProgram(), mGradientPass.mpComputePass->getRootVar());
 
@@ -91,6 +99,7 @@ void VoxelReconstructionNoLightTransport::runGradientPass(RenderContext* pRender
     );
 
     barrierSparseGradients(pRenderContext);
+    if (shouldCollectDeletionEvidence()) barrierTopologyEvidence(pRenderContext);
 
     //mpSceneGradients->aggregateGrads(pRenderContext, GradientType::VoxelSH);
 

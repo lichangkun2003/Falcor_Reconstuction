@@ -8,6 +8,7 @@ set(voxel_reconstruction_sources
     ReducePass.cpp
     GradientPass.cpp
     UpdatePass.cpp
+    TopologyPass.cpp
     DataProcess.cpp
 )
 
@@ -18,6 +19,7 @@ set(voxel_reconstruction_shared_headers
     PathRecord.slang
     GradRecord.slang
     GeometryAdamState.slang
+    TopologyEvidence.slang
     Voxel/ABSDF.slang
     Voxel/VoxelGrid.slang
     Voxel/VoxelData.slang
@@ -51,6 +53,7 @@ target_sources(VoxelReconstructionNoLightTransport PRIVATE
     Shader/ReduceBufferPass.cs.slang
     Shader/GradientPass.cs.slang
     Shader/UpdatePass.cs.slang
+    Shader/TopologyPass.cs.slang
     Shader/DiffVoxelIO.slang
     Shader/DiffTools.slang
     Shader/DiffShading.slang
