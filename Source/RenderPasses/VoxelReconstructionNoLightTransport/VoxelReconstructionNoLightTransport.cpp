@@ -377,6 +377,9 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
     }
 
     renderUIUpdatePass(widget);
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    renderUITopology(widget);
+#endif
 
     widget.text("Voxel Size: " + ToString(mGridResources.gridData.voxelSize));
     widget.text("Voxel Count: " + ToString((int3)mGridResources.gridData.voxelCount));
@@ -539,6 +542,47 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
 
 }
 
+void VoxelReconstructionNoLightTransport::renderUITopology(Gui::Widgets& widget)
+{
+    auto group = widget.group("Topology", true);
+    if (!group) return;
+
+    group.text("Framework only: no evidence is collected and no topology changes are applied.");
+    group.text("TopologyDebug is a viewing mode; training always renders with Default.");
+
+    if (group.button("Show TopologyDebug"))
+    {
+        mRayMarchingPass.mDrawMode = uint32_t(ABSDFDrawMode::TopologyDebug);
+        mRayMarchingPass.mOptionsChanged = true;
+    }
+    if (group.button("Show Default"))
+    {
+        mRayMarchingPass.mDrawMode = uint32_t(ABSDFDrawMode::Default);
+        mRayMarchingPass.mOptionsChanged = true;
+    }
+
+    if (group.dropdown("Debug Layer", reinterpret_cast<TopologyDebugLayer&>(mTopologySettings.debugLayer)))
+        mRayMarchingPass.mOptionsChanged = true;
+    group.text("Occupied grid cells: blue; candidate-layer context: gray.");
+    if (mTopologySettings.debugLayer != uint32_t(TopologyDebugLayer::Occupied))
+    {
+        if (group.checkbox("Show Occupied Context", mTopologySettings.showOccupiedContext))
+            mRayMarchingPass.mOptionsChanged = true;
+        group.text("Candidate scores are not available yet; only occupied context is shown.");
+    }
+
+    group.text("Reserved topology switches (inactive until topology edits are implemented)");
+    group.checkbox("Enable Growth (inactive)", mTopologySettings.enableGrowth);
+    group.checkbox("Enable Split (inactive)", mTopologySettings.enableSplit);
+    group.checkbox("Enable Deletion (inactive)", mTopologySettings.enableDeletion);
+
+    group.text("Reserved evidence thresholds (inactive until evidence collection is implemented)");
+    group.var("Foreground Alpha Min", mTopologySettings.foregroundAlphaMin, 0.0f, 1.0f, 0.01f);
+    group.var("Background Alpha Max", mTopologySettings.backgroundAlphaMax, 0.0f, 0.1f, 1e-4f, false, "%.4f");
+    group.var("Min Alpha Deficit", mTopologySettings.minAlphaDeficit, 0.0f, 1.0f, 0.01f);
+    group.var("Min Growth Views", mTopologySettings.minGrowthViews, 1u, 100u, 1u);
+    group.var("Evidence Interval (iterations)", mTopologySettings.evidenceInterval, 1u, 100u, 1u);
+}
 
 void VoxelReconstructionNoLightTransport::setScene(RenderContext* pRenderContext, const ref<Scene>& pScene)
 {

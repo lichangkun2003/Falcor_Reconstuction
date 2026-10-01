@@ -30,6 +30,8 @@ cbuffer CB
     float4x4 invVP;
     float shadowBias;
     uint drawMode;
+    uint topologyDebugLayer;
+    bool showOccupiedContext;
     //uint sampleStrategy;
     uint frameIndex;
     bool renderBackGround;
@@ -280,6 +282,14 @@ HitResult rayMarchingDDA(
 
         if (isSolidVoxel(cellInt))
         {
+            // Inspect the occupied grid independently of ellipsoid intersection.
+            // This path is view-only and never contributes to training records.
+            if (!enableReconstruction && drawMode == uint(ABSDFDrawMode::TopologyDebug))
+            {
+                HitResult occupied = { true, cellInt, float3(cellInt) + 0.5f,
+                    -1.0f, float4(float3(cellInt) + 0.5f, 1.0f) };
+                return occupied;
+            }
 #if !CHECK_PRIMITIVE
             HitResult hit = { true, cellInt, cellInt + 0.5f, -1.0f,
                 float4(cellInt + 0.5f, 1.0f) };
@@ -531,6 +541,9 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
     //psOut.color = renderBackground(direction);
     float3 backgroundColor = renderBackground(direction).xyz;
     psOut.color = float4(backgroundColor, 0.0f);
+    bool topologyPreview = !enableReconstruction && drawMode == uint(ABSDFDrawMode::TopologyDebug);
+    if (topologyPreview)
+        psOut.color = float4(0.02f, 0.02f, 0.025f, 1.0f);
 
     float3 rayOriginCell = from;
 
@@ -574,12 +587,15 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
         if (enableReconstruction)
             gPathRecordBuffer[bufferIndex].valid = 1;
 
-        switch (drawMode)
+        if (topologyPreview)
         {
-        case ABSDFDrawMode::Default:
-            psOut.color = shadingGlobal(hit, direction, maxContributingVoxelCount, pixel, rayOriginCell, sg,candidateCount);
-            break;
+            if (topologyDebugLayer == uint(TopologyDebugLayer::Occupied))
+                psOut.color = float4(0.15f, 0.65f, 1.0f, 1.0f);
+            else if (showOccupiedContext)
+                psOut.color = float4(0.18f, 0.2f, 0.23f, 1.0f);
         }
+        else
+            psOut.color = shadingGlobal(hit, direction, maxContributingVoxelCount, pixel, rayOriginCell, sg, candidateCount);
     }
 
     if (enableReconstruction)

@@ -123,7 +123,10 @@ void VoxelReconstructionNoLightTransport::rayMarchingPass(RenderContext* pRender
         cb["pixelCount"] = pass.mOutputResolution;
         cb["invVP"] = math::inverse(pCamera->getViewProjMatrixNoJitter());
         cb["shadowBias"] = pass.mShadowBias100 / 100 / mGridResources.gridData.voxelSize.x;
-        cb["drawMode"] = pass.mDrawMode;
+        // Keep debug colors out of the reconstruction/loss path.
+        cb["drawMode"] = mEnableReconstruction ? uint32_t(ABSDFDrawMode::Default) : pass.mDrawMode;
+        cb["topologyDebugLayer"] = mTopologySettings.debugLayer;
+        cb["showOccupiedContext"] = mTopologySettings.showOccupiedContext;
         cb["maxContributingVoxelCount"] = pass.mMaxContributingVoxelCount;
         cb["frameIndex"] = pass.mFrameIndex;
         //cb["minPdf"] = params.mMinPdf100 / 100;

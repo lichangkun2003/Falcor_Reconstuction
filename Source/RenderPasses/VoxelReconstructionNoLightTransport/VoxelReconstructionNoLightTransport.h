@@ -131,6 +131,7 @@ public:
     void createUpdatePassResource(RenderContext* pRenderContext);
     void runUpdatePass(RenderContext* pRenderContext, const RenderData& renderData);
     void renderUIUpdatePass(Gui::Widgets& widget);
+    void renderUITopology(Gui::Widgets& widget);
     float getEffectiveOpacityLearningRate() const;
 
     void createReducePassResource(RenderContext* pRenderContext);
@@ -314,6 +315,23 @@ public:
         }
     };
 
+    // UI and rendering scaffold for topology diagnostics. The evidence
+    // collection and topology operations will be added after their rules are
+    // established; these values do not change occupied cells yet.
+    struct TopologySettings
+    {
+        uint32_t debugLayer = uint32_t(TopologyDebugLayer::Occupied);
+        bool showOccupiedContext = true;
+        bool enableGrowth = false;
+        bool enableSplit = false;
+        bool enableDeletion = false;
+        float foregroundAlphaMin = 0.95f;
+        float backgroundAlphaMax = 1e-4f;
+        float minAlphaDeficit = 0.1f;
+        uint32_t minGrowthViews = 3;
+        uint32_t evidenceInterval = 5;
+    };
+
     struct ReduceLossPass
     {
         ref<Buffer> mpReduceBufferA;
@@ -388,6 +406,7 @@ private:
     uint mVoxelResolution = GRID_RESOLUTION; // X,Y,Z三个方向中，最长的边被划分的体素数量
 
     OptimizerParams mOptimizerParams;
+    TopologySettings mTopologySettings;
 
     // Passes
     ref<ComputePass> mpReflectTypes;

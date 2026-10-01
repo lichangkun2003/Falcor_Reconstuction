@@ -149,54 +149,35 @@ struct ABSDF
 enum class ABSDFDrawMode : uint32_t
 {
     Default,
-    Normal,
-    Ellipsoid,
-    PrimitiveProjArea,
-    PolygonsProjArea,
-    TotalProjArea,
-    Coverage,
-    InternalVisibility,
-    TotalArea,
-    Occupancy,
+    TopologyDebug,
 };
 
 FALCOR_ENUM_INFO(
     ABSDFDrawMode,
     {
     { ABSDFDrawMode::Default, "Default" },
-    { ABSDFDrawMode::Normal, "Normal" },
-    { ABSDFDrawMode::Ellipsoid, "Ellipsoid" },
-    { ABSDFDrawMode::PrimitiveProjArea, "PrimitiveProjArea" },
-    { ABSDFDrawMode::PolygonsProjArea, "PolygonsProjArea" },
-    { ABSDFDrawMode::TotalProjArea, "TotalProjArea" },
-    { ABSDFDrawMode::Coverage, "Coverage" },
-    { ABSDFDrawMode::InternalVisibility, "InternalVisibility" },
-    { ABSDFDrawMode::TotalArea, "TotalArea" },
-    { ABSDFDrawMode::Occupancy, "Occupancy" },
+    { ABSDFDrawMode::TopologyDebug, "TopologyDebug" },
 }
 );
 FALCOR_ENUM_REGISTER(ABSDFDrawMode);
 
-#if !defined(HOST_CODE)
-inline float3 valueToColor(float value)
+enum class TopologyDebugLayer : uint32_t
 {
-    if (value <= 1)
-        return float3(value);
-    return float3(value, 2 - value, 2 - value);
+    Occupied,
+    Growth,
+    Split,
+    Deletion,
+};
+
+FALCOR_ENUM_INFO(
+    TopologyDebugLayer,
+    {
+    { TopologyDebugLayer::Occupied, "Occupied grid cells" },
+    { TopologyDebugLayer::Growth, "Growth candidates" },
+    { TopologyDebugLayer::Split, "Split candidates" },
+    { TopologyDebugLayer::Deletion, "Deletion candidates" },
 }
-
-inline float3 pdfToColor(float pdf, float refPdf)
-{
-    float k = pdf / refPdf;
-    // 蓝(0)->青->绿->黄->红(1)->黑(5)渐变
-    float3 c;
-    c.r = smoothstep(0.4, 1.0, k) - smoothstep(1.0, 5.0, k);
-    c.g = smoothstep(0.0, 0.4, k) - smoothstep(0.6, 1.0, k);
-    c.b = smoothstep(0.4, 0.0, k);
-    return c;
-}
-#endif
-
-
+);
+FALCOR_ENUM_REGISTER(TopologyDebugLayer);
 
 END_NAMESPACE_FALCOR

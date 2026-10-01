@@ -1,5 +1,9 @@
 # Reconstruction experiments
 
+## Topology preview scaffold
+
+In mode1, `Draw Mode -> TopologyDebug` and the separate `Topology` UI group provide a view-only preview. `Occupied grid cells` colors the first occupied cell encountered by each camera ray blue, regardless of whether its ellipsoid is hit. The growth, split, and deletion layers currently show only optional gray occupied-cell context; no candidate evidence, scores, or topology edits exist yet. The topology switches and evidence thresholds are reserved and do not affect reconstruction. Training always uses `Default` shading for its color, alpha, and loss even if `TopologyDebug` is selected in the UI. The iteration at which topology updates start will be chosen after the evidence and growth rules are tested.
+
 ## Mode1 compact storage (current implementation)
 
 `RECON_MODE_POINT_CLOUD` now separates the complete spatial lookup from voxel attributes. The spatial lookup stores a compact voxel ID for every grid cell in paged `R32Int` 3D textures; only occupied voxels allocate `VoxelData`, `GradRecord`, geometry Adam state, and cell-index entries in segmented structured-buffer pools. Ray marching resolves `cell -> voxelID`, and path records, gradient accumulation, and updates use that compact ID directly.
