@@ -367,6 +367,11 @@ void recordUniqueDeletionEvidence(uint voxelIndex, bool foreground)
     uint previousView = 0u;
     if (foreground)
     {
+        // Most pixels/samples for a view arrive after its first vote. Avoid an
+        // unnecessary atomic in that common case; the exchange still resolves
+        // races between the first voting pixels.
+        if (TOPOLOGY_DATA(voxelIndex).lastForegroundView == gEvidenceViewID)
+            return;
         InterlockedExchange(
             TOPOLOGY_DATA(voxelIndex).lastForegroundView,
             gEvidenceViewID,
@@ -377,6 +382,8 @@ void recordUniqueDeletionEvidence(uint voxelIndex, bool foreground)
     }
     else
     {
+        if (TOPOLOGY_DATA(voxelIndex).lastBackgroundView == gEvidenceViewID)
+            return;
         InterlockedExchange(
             TOPOLOGY_DATA(voxelIndex).lastBackgroundView,
             gEvidenceViewID,

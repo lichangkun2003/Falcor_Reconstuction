@@ -8,14 +8,15 @@ uint32_t VoxelReconstructionNoLightTransport::getDeletionEvidenceStartIteration(
 bool VoxelReconstructionNoLightTransport::shouldCollectDeletionEvidence() const
 {
     const uint32_t start = getDeletionEvidenceStartIteration();
-    const uint32_t interval = std::max(1u, mTopologySettings.evidenceInterval);
-    const bool sampleIteration = mOptimizerParams.currentIteration >= start &&
-        (mOptimizerParams.currentIteration - start) % interval == 0u;
-    // One full iteration already visits every physical camera. Only the final
-    // SPP sample needs to vote; all other visits would only repeat atomics.
+    // Use one jittered evidence sample per view and iteration, independent of
+    // the training SPP. Repeated iterations improve 1-SPP coverage, while
+    // per-view stamps still limit each camera to one foreground and one
+    // background vote per evidence window.
     const bool finalSppSample = mRayMarchingPass.mSpp > 0u &&
         mRayMarchingPass.mSampleIndex == mRayMarchingPass.mSpp;
-    return mTopologySettings.collectDeletionEvidence && sampleIteration && finalSppSample &&
+    return mTopologySettings.collectDeletionEvidence &&
+        mOptimizerParams.currentIteration >= start &&
+        finalSppSample &&
         mGridResources.gridData.activeVoxelCount > 0;
 }
 

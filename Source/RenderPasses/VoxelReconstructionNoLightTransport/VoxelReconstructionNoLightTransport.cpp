@@ -553,7 +553,7 @@ void VoxelReconstructionNoLightTransport::renderUITopology(Gui::Widgets& widget)
     group.text("Deletion evidence");
     group.checkbox("Collect Deletion Evidence", mTopologySettings.collectDeletionEvidence);
     group.text(fmt::format(
-        "Starts at iteration {} (opacity warm-up + ramp); window {} iterations; one SPP sampled per view.",
+        "Starts at iteration {} (opacity warm-up + ramp); window {} iterations; one evidence sample per view/iteration.",
         getDeletionEvidenceStartIteration(),
         std::max(1u, mTopologySettings.evidenceInterval)
     ));
@@ -567,7 +567,7 @@ void VoxelReconstructionNoLightTransport::renderUITopology(Gui::Widgets& widget)
     group.var("Max Foreground Support Views", mTopologySettings.maxDeletionSupportViews, 0u, 1000u, 1u);
     group.text(fmt::format("Completed evidence windows: {}", mTopologySettings.completedWindows));
     group.text(fmt::format("Deletion candidates (two windows): {}", mTopologySettings.candidateCount));
-    group.text(fmt::format("First-window warnings: {}", mTopologySettings.oneWindowCount));
+    group.text(fmt::format("Pending background strikes: {}", mTopologySettings.oneWindowCount));
     group.text(fmt::format("Foreground-protected: {}", mTopologySettings.protectedCount));
     group.text(fmt::format("Weak background conflict: {}", mTopologySettings.weakConflictCount));
 
