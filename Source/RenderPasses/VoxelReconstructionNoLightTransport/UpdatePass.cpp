@@ -96,6 +96,7 @@ void VoxelReconstructionNoLightTransport::runUpdatePass(RenderContext* pRenderCo
     cb["gLrRotation"] = mUpdatePass.mLrRotation;
 #endif
     cb["gLrOpacity"] = getEffectiveOpacityLearningRate();
+    cb["gBackgroundCarveAdamMultiplier"] = mUpdatePass.mBackgroundCarveAdamMultiplier;
     //cb["gVoxelSHGradDim"] = mVoxelSHGradDim;
     cb["gEllipsoidPruneThreshold"] = mUpdatePass.mEllipsoidPruneThreshold;
     cb["gEnableEllipsoidPruning"] = mUpdatePass.mEnableEllipsoidPruning;
@@ -155,6 +156,7 @@ void VoxelReconstructionNoLightTransport::renderUIUpdatePass(Gui::Widgets& widge
     group.var("Adam LR center (voxel local)", mUpdatePass.mLrCenter, 0.0f, 0.1f, 1e-5f, false, "%.6f");
     group.var("Adam LR log scale", mUpdatePass.mLrShape, 0.0f, 0.1f, 1e-5f, false, "%.6f");
     group.var("Adam LR rotation", mUpdatePass.mLrRotation, 0.0f, 0.1f, 1e-5f, false, "%.6f");
+    group.var("Background Carve Adam Multiplier", mUpdatePass.mBackgroundCarveAdamMultiplier, 1.0f, 20.0f, 0.25f);
 #else
     group.var("LR center (voxel local)", mUpdatePass.mLrCenter, 0.0f, 0.1f, 1e-5f, false, "%.6f");
     group.var("LR shape (log scale / rotation)", mUpdatePass.mLrShape, 0.0f, 1.0f, 0.001f, false, "%.6f");

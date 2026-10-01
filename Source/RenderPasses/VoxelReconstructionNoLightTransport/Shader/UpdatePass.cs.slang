@@ -26,6 +26,11 @@ cbuffer CB {
 #endif
     float gLrOpacity;
 
+    // Applied after Adam normalization. A value above one accelerates geometry
+    // updates in proportion to the fraction of samples coming from known-empty
+    // reference background pixels.
+    float gBackgroundCarveAdamMultiplier;
+
     float gEllipsoidPruneThreshold;
     bool gEnableEllipsoidPruning;
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
@@ -452,21 +457,28 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
     {
         GaussianEllipsoid ellipsoid = voxelData.ellipsoid;
 
+        float geometryLrScale = 1.0f;
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+        float backgroundCarveFraction = saturate(
+            float(grad.backgroundCarveValid) / max(1.0f, float(geometryValid)));
+        geometryLrScale = lerp(1.0f, max(gBackgroundCarveAdamMultiplier, 1.0f), backgroundCarveFraction);
+#endif
+
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
         if (gLrCenter > 0.0f)
         {
             updateEllipsoidCenterAdam(
-                ellipsoid, grad.center * geometryGradScale, gLrCenter, adamPage, adamOffset);
+                ellipsoid, grad.center * geometryGradScale, gLrCenter * geometryLrScale, adamPage, adamOffset);
         }
         if (gLrShape > 0.0f)
         {
             updateEllipsoidLogScaleAdam(ellipsoid, grad.logScale * geometryGradScale,
-                gLrShape, gGridDataParamBlock.voxelSize, adamPage, adamOffset);
+                gLrShape * geometryLrScale, gGridDataParamBlock.voxelSize, adamPage, adamOffset);
         }
         if (gLrRotation > 0.0f)
         {
             updateEllipsoidRotationAdam(
-                ellipsoid, grad.rotation * geometryGradScale, gLrRotation, adamPage, adamOffset);
+                ellipsoid, grad.rotation * geometryGradScale, gLrRotation * geometryLrScale, adamPage, adamOffset);
         }
 #else
         if (gLrCenter > 0.0f)

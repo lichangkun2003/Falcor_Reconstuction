@@ -54,7 +54,7 @@ using namespace Falcor;
 
 static_assert(sizeof(GaussianEllipsoid) == 40, "GaussianEllipsoid host/device layout changed.");
 static_assert(sizeof(VoxelData) == 44 + 12 * SH_COUNT + 4 * SH_OPACITY_COUNT, "VoxelData host/device layout changed.");
-static_assert(sizeof(GradRecord) == 44 + 12 * SH_COUNT + 4 * SH_OPACITY_COUNT, "GradRecord host/device layout changed.");
+static_assert(sizeof(GradRecord) == 48 + 12 * SH_COUNT + 4 * SH_OPACITY_COUNT, "GradRecord host/device layout changed.");
 
 namespace
 {
@@ -254,6 +254,7 @@ public:
         float mLrShape;
         float mLrRotation;
         float mLrOpacity;
+        float mBackgroundCarveAdamMultiplier;
         uint32_t mOpacityWarmupIterations;
         uint32_t mOpacityRampIterations;
 
@@ -276,12 +277,14 @@ public:
             mLrCenter = 1e-3f;
             mLrShape = 1e-3f;
             mLrRotation = 5e-4f;
+            mBackgroundCarveAdamMultiplier = 5.0f;
 #else
             mLrRadiance = 0.1f;
             mLrOpacity = 10.0f;
             mLrCenter = 5e-3f;
             mLrShape = 0.1f;
             mLrRotation = 0.1f;
+            mBackgroundCarveAdamMultiplier = 1.0f;
 #endif
             mOpacityWarmupIterations = 20u;
             mOpacityRampIterations = 30u;

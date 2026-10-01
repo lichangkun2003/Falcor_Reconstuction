@@ -194,6 +194,8 @@ void calcHardHitGeometryGrad(
         );
 
     fillGaussianEllipsoidGradient(ellipsoid, xLocal, dL_dG, geometryGradRecord);
+    if (isReferenceBackground && geometryGradRecord.geometryValid != 0)
+        geometryGradRecord.backgroundCarveValid = 1;
 }
 
 void calcMissCandidateGeometryGrad(
@@ -277,6 +279,7 @@ void calcMissCandidateGeometryGrad(
 void accumulateGeometryGradRecord(uint indexGradBuffer, GradRecord gradRecord)
 {
     InterlockedAdd(GRAD_DATA(indexGradBuffer).geometryValid, gradRecord.geometryValid);
+    InterlockedAdd(GRAD_DATA(indexGradBuffer).backgroundCarveValid, gradRecord.backgroundCarveValid);
 
     INTERLOCKED_ADD_FLOAT(
         GRAD_DATA(indexGradBuffer).center.x,
