@@ -53,9 +53,7 @@ void VoxelReconstructionNoLightTransport::replaceReconstructionGrid(
     const uint64_t maximumCapacity = uint64_t(SPARSE_POOL_PAGE_SIZE) * SPARSE_POOL_MAX_PAGES;
     if (uint64_t(sparseGrid.activeVoxelCount) > maximumCapacity)
         throw RuntimeError("Dense reconstruction has too many occupied voxels for the segmented pool.");
-    const uint64_t requestedCapacity = std::min(maximumCapacity,
-        uint64_t(sparseGrid.activeVoxelCount) + std::max<uint64_t>(1024u, sparseGrid.activeVoxelCount / 4u));
-    auto next = allocateSparseGrid(pRenderContext, sparseGrid, uint32_t(requestedCapacity));
+    auto next = allocateSparseGrid(pRenderContext, sparseGrid, sparseGrid.activeVoxelCount);
     auto block = createSparseGridBlock(next);
     uploadSparseBatch(pRenderContext, block, 0u, cells.data(), uint32_t(cells.size()), voxels.data());
     for (const auto& page : next.voxelPages) pRenderContext->uavBarrier(page.get());

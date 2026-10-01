@@ -78,8 +78,7 @@ void VoxelReconstructionNoLightTransport::runUpdatePass(RenderContext* pRenderCo
 
     var["gGridDataParamBlock"] = mpGridBlock;
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
-    for (uint32_t page = 0; page < mGridResources.adamPages.size(); ++page)
-        var["gGeometryAdamPages"][page] = mGridResources.adamPages[page];
+    // Sparse Adam pages are bound when a grid is committed or extended.
 #else
     var["gGradBuffer"] = mGradientPass.gradBuffer;
 #endif
@@ -94,6 +93,7 @@ void VoxelReconstructionNoLightTransport::runUpdatePass(RenderContext* pRenderCo
     cb["gLrShape"] = mUpdatePass.mLrShape;
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
     cb["gLrRotation"] = mUpdatePass.mLrRotation;
+    cb["gRadianceAdamCapacity"] = uint32_t(mGridResources.radianceAdamPages.size()) * SPARSE_POOL_PAGE_SIZE;
 #endif
     cb["gLrOpacity"] = getEffectiveOpacityLearningRate();
     cb["gBackgroundCarveAdamMultiplier"] = mUpdatePass.mBackgroundCarveAdamMultiplier;

@@ -288,6 +288,29 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
             {
                 mOptimizerParams.currentView = 0;
                 mOptimizerParams.currentIteration++;
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+                if (mGridResources.radianceAdamCounter)
+                {
+                    uint32_t counter[2] = {};
+                    mGridResources.radianceAdamCounter->getBlob(counter, 0, sizeof(counter));
+                    const uint32_t capacity = uint32_t(mGridResources.radianceAdamPages.size()) * SPARSE_POOL_PAGE_SIZE;
+                    if (counter[1])
+                    {
+                        if (capacity < mGridResources.gridData.activeVoxelCount)
+                        {
+                            const uint32_t target = uint32_t(std::min<uint64_t>(
+                                mGridResources.gridData.activeVoxelCount,
+                                std::max<uint64_t>(uint64_t(capacity) + SPARSE_POOL_PAGE_SIZE,
+                                    uint64_t(capacity) * 3u / 2u)));
+                            reserveRadianceAdamCapacity(pRenderContext, target);
+                        }
+                        // Concurrent overflow attempts did not acquire a slot.
+                        // Reuse the first free slot on the next view.
+                        const uint32_t reset[2] = {std::min(counter[0], capacity), 0u};
+                        mGridResources.radianceAdamCounter->setBlob(reset, 0, sizeof(reset));
+                    }
+                }
+#endif
                 if (mOptimizerParams.currentIteration >= mOptimizerParams.maxIteration)
                 {
                     stopReconstruction();
@@ -390,6 +413,16 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
         mGridResources.gridData.activeVoxelCount,
         mGridResources.gridData.voxelCapacity,
         mGridResources.voxelPages.size()));
+    constexpr double bytesPerGiB = 1024.0 * 1024.0 * 1024.0;
+    const double poolGiB = double(mGridResources.gridData.voxelCapacity) *
+        double(sizeof(VoxelData) + sizeof(GradRecord) + sizeof(GeometryAdamState) + 2u * sizeof(uint32_t)) / bytesPerGiB;
+    const uint32_t radianceCapacity = uint32_t(mGridResources.radianceAdamPages.size()) * SPARSE_POOL_PAGE_SIZE;
+    const double radianceGiB = double(radianceCapacity) * sizeof(RadianceAdamState) / bytesPerGiB;
+    const auto& count = mGridResources.gridData.voxelCount;
+    const double indexGiB = double(count.x) * double(count.y) * double(count.z) * sizeof(int32_t) / bytesPerGiB;
+    widget.text(fmt::format("Grid GPU storage: {:.2f} GiB pool + {:.2f} GiB radiance Adam + {:.2f} GiB index",
+        poolGiB, radianceGiB, indexGiB));
+    widget.text(fmt::format("Radiance Adam capacity: {} slots", radianceCapacity));
     widget.text(fmt::format("Spatial Index: {} page(s), {}^3 cells/page max",
         mGridResources.indexPages.size(), SPARSE_INDEX_PAGE_EDGE));
 #endif

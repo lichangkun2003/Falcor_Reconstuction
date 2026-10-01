@@ -309,9 +309,7 @@ void VoxelReconstructionNoLightTransport::loadSparseReconstruction(
     const uint64_t maximumCapacity = uint64_t(SPARSE_POOL_PAGE_SIZE) * SPARSE_POOL_MAX_PAGES;
     if (uint64_t(activeCount) > maximumCapacity)
         throw RuntimeError("Sparse reconstruction exceeds the segmented parameter-pool limit.");
-    const uint64_t requestedCapacity = std::min(maximumCapacity,
-        uint64_t(activeCount) + std::max<uint64_t>(1024u, activeCount / 4u));
-    auto resources = allocateSparseGrid(pRenderContext, grid, uint32_t(requestedCapacity));
+    auto resources = allocateSparseGrid(pRenderContext, grid, activeCount);
     auto block = createSparseGridBlock(resources);
 
     uint32_t loaded = 0;

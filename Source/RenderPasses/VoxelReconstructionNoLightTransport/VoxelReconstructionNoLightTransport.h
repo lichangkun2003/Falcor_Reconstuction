@@ -161,6 +161,9 @@ public:
         std::vector<ref<Buffer>> voxelPages;
         std::vector<ref<Buffer>> gradPages;
         std::vector<ref<Buffer>> adamPages;
+        std::vector<ref<Buffer>> radianceAdamIndexPages;
+        std::vector<ref<Buffer>> radianceAdamPages;
+        ref<Buffer> radianceAdamCounter;
         std::vector<ref<Buffer>> cellIndexPages;
 #endif
     };
@@ -386,6 +389,7 @@ private:
     ref<ParameterBlock> createSparseGridBlock(const GridResources& resources);
     void commitSparseGrid(GridResources&& resources, const ref<ParameterBlock>& block, uint32_t resolution);
     void reserveSparseVoxelCapacity(RenderContext* pRenderContext, uint32_t minimumCapacity);
+    void reserveRadianceAdamCapacity(RenderContext* pRenderContext, uint32_t minimumCapacity);
     void uploadSparseBatch(RenderContext* pRenderContext, const ref<ParameterBlock>& block,
         uint32_t offset, const uint32_t* cells, uint32_t count, const VoxelData* data = nullptr);
     void clearSparseGradients(RenderContext* pRenderContext);
