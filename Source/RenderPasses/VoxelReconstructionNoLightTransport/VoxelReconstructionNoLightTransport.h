@@ -66,6 +66,7 @@ const std::string LossPassShaderFilePath = "RenderPasses/VoxelReconstructionNoLi
 const std::string GradientPassShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/GradientPass.cs.slang";
 const std::string UpdatePassShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/UpdatePass.cs.slang";
 const std::string TopologyPassShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/TopologyPass.cs.slang";
+const std::string DeleteCompactPassShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/DeleteCompactPass.cs.slang";
 const std::string ReduceTexturePassShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/ReduceTexturePass.cs.slang";
 const std::string ReduceBufferPassShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/ReduceBufferPass.cs.slang";
 
@@ -133,6 +134,8 @@ public:
     void resetDeletionEvidence(RenderContext* pRenderContext);
     uint32_t getDeletionEvidenceStartIteration() const;
     bool shouldCollectDeletionEvidence() const;
+    void createDeletionPassResources();
+    void deleteAndCompactCandidates(RenderContext* pRenderContext);
 
     void createReducePassResource(RenderContext* pRenderContext);
     void runReducePass(RenderContext* pRenderContext, const RenderData& renderData);
@@ -304,8 +307,8 @@ public:
         }
     };
 
-    // Deletion evidence is diagnostic only. It marks candidates but does not
-    // change occupied cells or compact the storage pool.
+    // Confirmed evidence triggers periodic deletion and in-place pool
+    // compaction at complete iteration boundaries.
     struct TopologySettings
     {
         uint32_t debugLayer = uint32_t(TopologyDebugLayer::Occupied);
@@ -313,7 +316,6 @@ public:
         bool collectDeletionEvidence = true;
         bool enableGrowth = false;
         bool enableSplit = false;
-        bool enableDeletion = false;
         float foregroundAlphaMin = 0.95f;
         float backgroundAlphaMax = 1e-4f;
         float minRemovalLossDelta = 1e-4f;
@@ -323,11 +325,16 @@ public:
         float minAlphaDeficit = 0.1f;
         uint32_t minGrowthViews = 3;
         uint32_t evidenceInterval = 5;
+        uint32_t deletionInterval = 10;
         uint32_t candidateCount = 0;
         uint32_t oneWindowCount = 0;
         uint32_t protectedCount = 0;
         uint32_t weakConflictCount = 0;
         uint32_t completedWindows = 0;
+        uint32_t lastDeletedCount = 0;
+        uint32_t lastReleasedPoolPages = 0;
+        uint32_t lastReleasedRadiancePages = 0;
+        std::string deletionStatus = "No compaction performed";
     };
 
     struct ReduceLossPass
@@ -371,6 +378,10 @@ private:
     ref<ComputePass> mpBuildSparseIndexPass;
     ref<ComputePass> mpTopologyPass;
     ref<Buffer> mpTopologySummary;
+    ref<ComputePass> mpBuildDeletionListsPass;
+    ref<ComputePass> mpClearDeletionIndicesPass;
+    ref<ComputePass> mpMoveDeletionSurvivorsPass;
+    ref<ComputePass> mpClearDeletionTailPass;
     bool initializePointCloudVoxelData(RenderContext* pRenderContext);
     void resetPointCloudOptimization(RenderContext* pRenderContext);
     GridResources allocateSparseGrid(RenderContext* pRenderContext, const GridData& grid, uint32_t capacity);

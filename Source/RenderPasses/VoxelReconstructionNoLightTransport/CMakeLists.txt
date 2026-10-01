@@ -9,6 +9,7 @@ set(voxel_reconstruction_sources
     GradientPass.cpp
     UpdatePass.cpp
     TopologyPass.cpp
+    TopologyDeletion.cpp
     DataProcess.cpp
 )
 
@@ -54,6 +55,7 @@ target_sources(VoxelReconstructionNoLightTransport PRIVATE
     Shader/GradientPass.cs.slang
     Shader/UpdatePass.cs.slang
     Shader/TopologyPass.cs.slang
+    Shader/DeleteCompactPass.cs.slang
     Shader/DiffVoxelIO.slang
     Shader/DiffTools.slang
     Shader/DiffShading.slang

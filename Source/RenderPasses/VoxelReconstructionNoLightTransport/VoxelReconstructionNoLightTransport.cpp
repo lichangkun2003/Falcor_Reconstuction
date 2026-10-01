@@ -259,7 +259,7 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
                             const uint32_t target = uint32_t(std::min<uint64_t>(
                                 mGridResources.gridData.activeVoxelCount,
                                 std::max<uint64_t>(uint64_t(capacity) + SPARSE_POOL_PAGE_SIZE,
-                                    uint64_t(capacity) * 3u / 2u)));
+                                    uint64_t(capacity) * 6u / 5u)));
                             reserveRadianceAdamCapacity(pRenderContext, target);
                         }
                         // Concurrent overflow attempts did not acquire a slot.
@@ -269,9 +269,38 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
                     }
                 }
                 evaluateDeletionEvidence(pRenderContext);
-                if (mOptimizerParams.currentIteration >= mOptimizerParams.maxIteration)
+                const bool reachedMaximumIteration =
+                    mOptimizerParams.currentIteration >= mOptimizerParams.maxIteration;
+                const uint32_t evidenceInterval = std::max(1u, mTopologySettings.evidenceInterval);
+                const uint32_t deletionInterval = std::max(1u, mTopologySettings.deletionInterval);
+                const uint32_t firstDeletionIteration =
+                    getDeletionEvidenceStartIteration() + 2u * evidenceInterval;
+                const bool periodicDeletionBoundary =
+                    mOptimizerParams.currentIteration >= firstDeletionIteration &&
+                    (mOptimizerParams.currentIteration - firstDeletionIteration) % deletionInterval == 0u;
+
+                const bool hadCandidatesAtBoundary = mTopologySettings.candidateCount > 0u;
+                if (hadCandidatesAtBoundary &&
+                    (periodicDeletionBoundary || reachedMaximumIteration))
+                {
+                    try
+                    {
+                        deleteAndCompactCandidates(pRenderContext);
+                    }
+                    catch (const std::exception& e)
+                    {
+                        mTopologySettings.deletionStatus = std::string("Automatic compaction failed: ") + e.what();
+                        logError("{}", mTopologySettings.deletionStatus);
+                    }
+                }
+
+                if (reachedMaximumIteration)
                 {
                     stopReconstruction();
+                    if (!hadCandidatesAtBoundary)
+                        mTopologySettings.deletionStatus = "Maximum iteration reached; no additional confirmed candidates";
+                    // Saving is deferred to the next frame, after compaction has
+                    // produced a continuous active prefix and released pages.
                     mSaveReconstructionRequested = true;
                 }
             }
@@ -492,7 +521,7 @@ void VoxelReconstructionNoLightTransport::renderUITopology(Gui::Widgets& widget)
     auto group = widget.group("Topology", true);
     if (!group) return;
 
-    group.text("Deletion evidence only: candidates are marked, never deleted.");
+    group.text("Confirmed candidates are deleted and compacted periodically at complete iteration boundaries.");
     group.text("TopologyDebug is a viewing mode; training always renders with Default.");
 
     if (group.button("Show TopologyDebug"))
@@ -524,11 +553,12 @@ void VoxelReconstructionNoLightTransport::renderUITopology(Gui::Widgets& widget)
     group.text("Deletion evidence");
     group.checkbox("Collect Deletion Evidence", mTopologySettings.collectDeletionEvidence);
     group.text(fmt::format(
-        "Starts at iteration {} (opacity warm-up + ramp); window {} iterations.",
+        "Starts at iteration {} (opacity warm-up + ramp); window {} iterations; one SPP sampled per view.",
         getDeletionEvidenceStartIteration(),
         std::max(1u, mTopologySettings.evidenceInterval)
     ));
     group.var("Evidence Interval (iterations)", mTopologySettings.evidenceInterval, 1u, 100u, 1u);
+    group.var("Deletion Interval (iterations)", mTopologySettings.deletionInterval, 1u, 100u, 1u);
     group.var("Foreground Alpha Min", mTopologySettings.foregroundAlphaMin, 0.0f, 1.0f, 0.01f);
     group.var("Background Alpha Max", mTopologySettings.backgroundAlphaMax, 0.0f, 0.1f, 1e-4f, false, "%.4f");
     group.var("Min Removal Loss Delta", mTopologySettings.minRemovalLossDelta, 0.0f, 0.1f, 1e-5f, false, "%.6f");
@@ -541,10 +571,20 @@ void VoxelReconstructionNoLightTransport::renderUITopology(Gui::Widgets& widget)
     group.text(fmt::format("Foreground-protected: {}", mTopologySettings.protectedCount));
     group.text(fmt::format("Weak background conflict: {}", mTopologySettings.weakConflictCount));
 
-    group.text("Reserved topology switches (inactive until topology edits are implemented)");
+    group.text(fmt::format(
+        "Automatic deletion starts at iteration {} and then runs every {} iterations when candidates exist.",
+        getDeletionEvidenceStartIteration() + 2u * std::max(1u, mTopologySettings.evidenceInterval),
+        std::max(1u, mTopologySettings.deletionInterval)));
+    group.text(mTopologySettings.deletionStatus);
+    group.text(fmt::format(
+        "Last compaction: {} voxels, {} pool pages, {} radiance-Adam pages released",
+        mTopologySettings.lastDeletedCount,
+        mTopologySettings.lastReleasedPoolPages,
+        mTopologySettings.lastReleasedRadiancePages));
+
+    group.text("Reserved topology switches");
     group.checkbox("Enable Growth (inactive)", mTopologySettings.enableGrowth);
     group.checkbox("Enable Split (inactive)", mTopologySettings.enableSplit);
-    group.checkbox("Enable Deletion (inactive)", mTopologySettings.enableDeletion);
 
     group.text("Reserved growth thresholds");
     group.var("Min Alpha Deficit", mTopologySettings.minAlphaDeficit, 0.0f, 1.0f, 0.01f);
@@ -590,6 +630,7 @@ void VoxelReconstructionNoLightTransport::setScene(RenderContext* pRenderContext
     createUpdatePassResource(pRenderContext);
 
     createTopologyPassResource(pRenderContext);
+    createDeletionPassResources();
 
     // Reduce Pass
     createReducePassResource(pRenderContext);

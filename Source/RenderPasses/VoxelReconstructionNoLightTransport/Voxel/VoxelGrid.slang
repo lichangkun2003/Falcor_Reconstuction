@@ -70,6 +70,14 @@ void setVoxelID(uint3 cell, uint id)
     gGridDataParamBlock.indexPages[NonUniformResourceIndex(pageID)][cell % SPARSE_INDEX_PAGE_EDGE] = int(id);
 }
 
+void clearVoxelID(uint3 cell)
+{
+    uint3 page = cell / SPARSE_INDEX_PAGE_EDGE;
+    uint pageID = page.x + page.y * gGridDataParamBlock.indexPageCount.x +
+        page.z * gGridDataParamBlock.indexPageCount.x * gGridDataParamBlock.indexPageCount.y;
+    gGridDataParamBlock.indexPages[NonUniformResourceIndex(pageID)][cell % SPARSE_INDEX_PAGE_EDGE] = -1;
+}
+
 int3 getVoxelCell(uint voxelID)
 {
     uint cellIndex = gGridDataParamBlock.cellIndexPages[NonUniformResourceIndex(voxelID / SPARSE_POOL_PAGE_SIZE)]

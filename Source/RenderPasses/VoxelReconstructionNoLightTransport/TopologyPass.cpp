@@ -7,8 +7,15 @@ uint32_t VoxelReconstructionNoLightTransport::getDeletionEvidenceStartIteration(
 
 bool VoxelReconstructionNoLightTransport::shouldCollectDeletionEvidence() const
 {
-    return mTopologySettings.collectDeletionEvidence &&
-        mOptimizerParams.currentIteration >= getDeletionEvidenceStartIteration() &&
+    const uint32_t start = getDeletionEvidenceStartIteration();
+    const uint32_t interval = std::max(1u, mTopologySettings.evidenceInterval);
+    const bool sampleIteration = mOptimizerParams.currentIteration >= start &&
+        (mOptimizerParams.currentIteration - start) % interval == 0u;
+    // One full iteration already visits every physical camera. Only the final
+    // SPP sample needs to vote; all other visits would only repeat atomics.
+    const bool finalSppSample = mRayMarchingPass.mSpp > 0u &&
+        mRayMarchingPass.mSampleIndex == mRayMarchingPass.mSpp;
+    return mTopologySettings.collectDeletionEvidence && sampleIteration && finalSppSample &&
         mGridResources.gridData.activeVoxelCount > 0;
 }
 
