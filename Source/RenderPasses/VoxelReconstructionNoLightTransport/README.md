@@ -99,6 +99,8 @@ UI 的 **Alpha Geometry Weight** 是额外的几何倍率，默认 `0.1`，不�
 
 这些是 mode1 Adam 的实验起点，不能沿用旧 SGD 的 shape LR=`0.1`、radiance LR=`0.1` 或 opacity LR=`10`：Adam 会按每个参数的二阶矩归一化梯度。每个视角的 SPP 梯度累积结束后更新一次。中心、logScale、三维局部切空间旋转、radiance 和 opacity 各自维护一阶矩、二阶矩及实际收到对应梯度的步数；同一属性的所有 SH 系数共用一个时间步，但每个系数的 moments 独立。没有对应梯度或有效学习率为零时不更新 optimizer step。旋转 Adam 的输出仍限制为单步最多 `0.02 rad`，radiance 单系数、单通道的更新限制为 `0.05`，opacity logit 单系数更新限制为 `0.01`。opacity 调度按完整 iteration 计算，同一 iteration 的所有视角使用相同的有效 LR。真实前向 alpha 和几何代理中的 alpha 均保持原定义，没有设置 opacity 下限。`beta1=0.9`、`beta2=0.999`、`epsilon=1e-8`。`SH_COUNT=9` 且 `SH_OPACITY_COUNT=9` 时 mode1 每个池槽占 380 字节 Adam 状态；重建初始化与加载 bin 会清零状态，当前 v3 bin 只保存体素参数，因此加载后训练是从新 Adam 状态开始，不是精确续训。
 
+UpdatePass 先只读取 `appearanceValid` 和 `geometryValid`，当前视角没有有效梯度且未请求 prune 的体素会立即返回。Adam moments 按参数组和 SH 系数逐项流式读写，不再把完整的 380 字节状态复制到每个 GPU 线程后整体写回。该实现保持 Adam 数值公式和状态布局不变，主要用于降低高分辨率下的无效显存流量、寄存器占用和 local-memory spill。
+
 tau 同时影响作用范围和幅度。对中心位于体素中央、初始半径 `r=0.6h` 的球，体素内任意点满足 `|q| ≤ √3·h/2`，当前代理 `dWorld = (|q|²/r² - 1)·r/2` 的范围约为 `[-0.3h, 0.325h]`（中心点除外）。`tauWorld=0.15h` 时 sigmoid 的 10%–90% 过渡总宽度约 `4.394·tau = 0.659h`，该初始范围的 `w·(1-w)` 至少约为边界峰值的 37%，减少体素内有梯度的样本因为 band 过窄而饱和。这个范围估计只用于当前初始球，不适用于优化后的任意椭球。距离代理远离边界可能高估真实距离，不能将它宣称为始终受体素直径约束的精确距离。
 
 先固定 **Geometry Tau (voxels)**=`0.12`，分别比较 mode1 的 Adam center 与 logScale LR；再固定合适的学习率比较 tau 倍数 `0.1 / 0.12 / 0.15`。每组重新初始化，保持相同 Alpha Geometry Weight、opacity LR=`10`、视角、Spp 和迭代次数，使用不同 Name Tag 保存。既比较 RGB/alpha loss，也比较椭球半轴和轮廓，不能只凭 loss 降低断定几何变好。tau 越小，边界附近梯度峰值越大、远离边界的 RGB/alpha 代理梯度衰减越快；tau 不会随单个椭球收缩而缩窄。保留原单次更新限幅：中心每轴 `0.02` 体素、logScale 每轴 `0.02`（半轴相对变化约 2%）、旋转总角度 `0.02` 弧度。频繁触发限幅时继续增大学习率不会按比例增加步幅。

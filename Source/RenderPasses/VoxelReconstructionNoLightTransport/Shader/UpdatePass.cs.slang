@@ -153,18 +153,32 @@ float adamStepAtStep(float gradient, inout float mean, inout float squaredMean, 
     return sanitizeFloat(lr * correctedMean / (sqrt(correctedSquaredMean) + kAdamEpsilon));
 }
 
-void updateEllipsoidCenterAdam(inout GaussianEllipsoid ellipsoid, float3 gradient, float lr, inout GeometryAdamState state)
+void updateEllipsoidCenterAdam(
+    inout GaussianEllipsoid ellipsoid, float3 gradient, float lr,
+    uint adamPage, uint adamOffset)
 {
-    float3 step = adamStep(gradient, state.centerMean, state.centerSquaredMean, state.centerSteps, lr);
+    float3 mean = gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].centerMean;
+    float3 squaredMean = gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].centerSquaredMean;
+    uint steps = gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].centerSteps;
+    float3 step = adamStep(gradient, mean, squaredMean, steps, lr);
+    gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].centerMean = mean;
+    gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].centerSquaredMean = squaredMean;
+    gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].centerSteps = steps;
     ellipsoid.center -= clamp(step, float3(-0.02f), float3(0.02f));
     ellipsoid.center = clamp(ellipsoid.center, float3(0.01f), float3(0.99f));
 }
 
 void updateEllipsoidLogScaleAdam(
     inout GaussianEllipsoid ellipsoid, float3 gradient, float lr,
-    float3 voxelSize, inout GeometryAdamState state)
+    float3 voxelSize, uint adamPage, uint adamOffset)
 {
-    float3 step = adamStep(gradient, state.logScaleMean, state.logScaleSquaredMean, state.logScaleSteps, lr);
+    float3 mean = gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].logScaleMean;
+    float3 squaredMean = gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].logScaleSquaredMean;
+    uint steps = gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].logScaleSteps;
+    float3 step = adamStep(gradient, mean, squaredMean, steps, lr);
+    gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].logScaleMean = mean;
+    gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].logScaleSquaredMean = squaredMean;
+    gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].logScaleSteps = steps;
     ellipsoid.logScale -= clamp(step, float3(-0.02f), float3(0.02f));
     float3 minScale = max(voxelSize * 1e-4f, float3(1e-8f));
     float3 maxScale = max(voxelSize * 4.0f, minScale);
@@ -173,17 +187,17 @@ void updateEllipsoidLogScaleAdam(
 
 void updateEllipsoidRotationAdam(
     inout GaussianEllipsoid ellipsoid, float3 gradient, float lr,
-    inout GeometryAdamState state)
+    uint adamPage, uint adamOffset)
 {
     // The gradient and Adam moments are local tangent-space axis-angle vectors.
     // Do not optimize the four quaternion components independently.
-    float3 deltaAngle = -adamStep(
-        gradient,
-        state.rotationMean,
-        state.rotationSquaredMean,
-        state.rotationSteps,
-        lr
-    );
+    float3 mean = gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].rotationMean;
+    float3 squaredMean = gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].rotationSquaredMean;
+    uint steps = gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].rotationSteps;
+    float3 deltaAngle = -adamStep(gradient, mean, squaredMean, steps, lr);
+    gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].rotationMean = mean;
+    gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].rotationSquaredMean = squaredMean;
+    gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].rotationSteps = steps;
     float angle = length(deltaAngle);
     if (angle > 0.02f)
     {
@@ -207,22 +221,23 @@ void updateEllipsoidRotationAdam(
 
 void updateRadianceSHAdam(
     inout SphericalHarmonicsRGB radiance, GradRecord grad, float lr, float gradScale,
-    inout GeometryAdamState state)
+    uint adamPage, uint adamOffset)
 {
     // All radiance coefficients belong to one parameter group and therefore
-    // share one optimizer time step. Their RGB moments remain independent.
-    state.radianceSteps += 1;
+    // share one optimizer time step. Stream one coefficient at a time so the
+    // full SH moment arrays never become thread-local state.
+    uint steps = gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].radianceSteps + 1u;
+    gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].radianceSteps = steps;
     SH_MAX_ITERS(SH_COUNT)
     for (uint i = 0; i < SH_COUNT; ++i)
     {
         float3 gradient = grad.radianceGrad.coefficients[i] * gradScale;
-        float3 step = adamStepAtStep(
-            gradient,
-            state.radianceMean[i],
-            state.radianceSquaredMean[i],
-            state.radianceSteps,
-            lr
-        );
+        float3 mean = gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].radianceMean[i];
+        float3 squaredMean =
+            gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].radianceSquaredMean[i];
+        float3 step = adamStepAtStep(gradient, mean, squaredMean, steps, lr);
+        gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].radianceMean[i] = mean;
+        gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].radianceSquaredMean[i] = squaredMean;
         radiance.coefficients[i] -= clamp(step, float3(-0.05f), float3(0.05f));
         radiance.coefficients[i] = sanitizeFloat3(radiance.coefficients[i]);
     }
@@ -230,22 +245,22 @@ void updateRadianceSHAdam(
 
 void updateOpacitySHAdam(
     inout SphericalHarmonicsOpacity opacity, GradRecord grad, float lr, float gradScale,
-    inout GeometryAdamState state)
+    uint adamPage, uint adamOffset)
 {
     // Optimize the stored SH logits. The forward sigmoid and all geometry
     // proxy terms continue to use the real opacity without an artificial floor.
-    state.opacitySteps += 1;
+    uint steps = gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].opacitySteps + 1u;
+    gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].opacitySteps = steps;
     SH_MAX_ITERS(SH_OPACITY_COUNT)
     for (uint i = 0; i < SH_OPACITY_COUNT; ++i)
     {
         float gradient = grad.opacityGrad.coefficients[i] * gradScale;
-        float step = adamStepAtStep(
-            gradient,
-            state.opacityMean[i],
-            state.opacitySquaredMean[i],
-            state.opacitySteps,
-            lr
-        );
+        float mean = gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].opacityMean[i];
+        float squaredMean =
+            gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].opacitySquaredMean[i];
+        float step = adamStepAtStep(gradient, mean, squaredMean, steps, lr);
+        gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].opacityMean[i] = mean;
+        gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].opacitySquaredMean[i] = squaredMean;
         opacity.coefficients[i] -= clamp(step, -0.01f, 0.01f);
         opacity.coefficients[i] = sanitizeFloat(opacity.coefficients[i]);
     }
@@ -367,19 +382,32 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
         return;
 #endif
 
+    // Check the compact validity counters before loading the full gradient,
+    // voxel, or Adam records. Most high-resolution voxels are untouched by a
+    // single view.
+    uint appearanceValid = GRAD_DATA((uint)index).appearanceValid;
+    uint geometryValid = GRAD_DATA((uint)index).geometryValid;
+#if RECON_MODE == RECON_MODE_POINT_CLOUD
+    bool updateAppearance = appearanceValid > 0u && (gLrRadiance > 0.0f || gLrOpacity > 0.0f);
+    bool updateGeometry = geometryValid > 0u &&
+        (gLrCenter > 0.0f || gLrShape > 0.0f || gLrRotation > 0.0f);
+#else
+    bool updateAppearance = appearanceValid > 0u && (gLrRadiance > 0.0f || gLrOpacity > 0.0f);
+    bool updateGeometry = geometryValid > 0u && (gLrCenter > 0.0f || gLrShape > 0.0f);
+#endif
+    if (!updateAppearance && !updateGeometry && !gEnableEllipsoidPruning)
+        return;
+
     GradRecord grad = GRAD_DATA((uint)index);
 
     // 这里 valid 实际上表示当前 voxel 累计了多少个 pixel contribution
-    //if (grad.radianceValid == 0 && grad.geometryValid == 0)
-    //    return;
-
     float appearanceGradScale = gGradScale;
     float geometryGradScale = gGradScale;
 
     if (gUseGradCountNormalize)
     {
-        appearanceGradScale *= 1.0f / max(1.0f, float(grad.appearanceValid));
-        geometryGradScale *= 1.0f / max(1.0f, float(grad.geometryValid));
+        appearanceGradScale *= 1.0f / max(1.0f, float(appearanceValid));
+        geometryGradScale *= 1.0f / max(1.0f, float(geometryValid));
     }
 
     VoxelData voxelData = VOXEL_DATA(index);
@@ -389,21 +417,18 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
     uint adamPage = uint(index) / SPARSE_POOL_PAGE_SIZE;
     uint adamOffset = uint(index) % SPARSE_POOL_PAGE_SIZE;
-    GeometryAdamState state = gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset];
-    bool adamStateChanged = false;
 #endif
 
     // -------------------------
     // appearance  SH update
     // -------------------------
-    if (grad.appearanceValid > 0)
+    if (updateAppearance)
     {
         if (gLrRadiance > 0.0f)
         {
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
             updateRadianceSHAdam(
-                voxelData.radiance, grad, gLrRadiance, appearanceGradScale, state);
-            adamStateChanged = true;
+                voxelData.radiance, grad, gLrRadiance, appearanceGradScale, adamPage, adamOffset);
 #else
             updateRadianceSH(voxelData.radiance,grad,gLrRadiance,appearanceGradScale);
 #endif
@@ -413,8 +438,7 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
         {
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
             updateOpacitySHAdam(
-                voxelData.opacity, grad, gLrOpacity, appearanceGradScale, state);
-            adamStateChanged = true;
+                voxelData.opacity, grad, gLrOpacity, appearanceGradScale, adamPage, adamOffset);
 #else
             updateOpacitySH(voxelData.opacity,grad,gLrOpacity,appearanceGradScale);
 #endif
@@ -424,27 +448,25 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
     // -------------------------
     // geometry update
     // -------------------------
-    if (grad.geometryValid > 0)
+    if (updateGeometry)
     {
         GaussianEllipsoid ellipsoid = voxelData.ellipsoid;
 
 #if RECON_MODE == RECON_MODE_POINT_CLOUD
         if (gLrCenter > 0.0f)
         {
-            updateEllipsoidCenterAdam(ellipsoid, grad.center * geometryGradScale, gLrCenter, state);
-            adamStateChanged = true;
+            updateEllipsoidCenterAdam(
+                ellipsoid, grad.center * geometryGradScale, gLrCenter, adamPage, adamOffset);
         }
         if (gLrShape > 0.0f)
         {
             updateEllipsoidLogScaleAdam(ellipsoid, grad.logScale * geometryGradScale,
-                gLrShape, gGridDataParamBlock.voxelSize, state);
-            adamStateChanged = true;
+                gLrShape, gGridDataParamBlock.voxelSize, adamPage, adamOffset);
         }
         if (gLrRotation > 0.0f)
         {
             updateEllipsoidRotationAdam(
-                ellipsoid, grad.rotation * geometryGradScale, gLrRotation, state);
-            adamStateChanged = true;
+                ellipsoid, grad.rotation * geometryGradScale, gLrRotation, adamPage, adamOffset);
         }
 #else
         if (gLrCenter > 0.0f)
@@ -467,11 +489,6 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
 
         voxelData.ellipsoid = ellipsoid;
     }
-
-#if RECON_MODE == RECON_MODE_POINT_CLOUD
-    if (adamStateChanged)
-        gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset] = state;
-#endif
 
     if (gEnableEllipsoidPruning)
     {
