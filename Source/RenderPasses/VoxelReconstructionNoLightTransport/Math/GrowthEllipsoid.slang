@@ -1,14 +1,15 @@
 #pragma once
 #include "GaussianEllipsoid.slang"
 
-// Minimize the ellipsoid's positive-definite quadratic on the finite voxel
-// face, not its infinite supporting plane or axis-aligned bounding box.
-bool growthFaceContact(GaussianEllipsoid parent, float3 voxelSize, uint face, out float3 contact)
+// Minimize the ellipsoid's positive-definite quadratic on a finite face-sized
+// section, not its infinite supporting plane or axis-aligned bounding box.
+// penetration moves the section into the neighbor in voxel-local units.
+bool growthFaceContact(GaussianEllipsoid parent, float3 voxelSize, uint face, float penetration, out float3 contact)
 {
     uint n = face / 2u;
     uint u = (n + 1u) % 3u;
     uint v = (n + 2u) % 3u;
-    float plane = (face & 1u) != 0u ? 1.0f : 0.0f;
+    float plane = (face & 1u) != 0u ? 1.0f + penetration : -penetration;
     float3 scale = gaussianEllipsoidScale(parent);
     float3x3 rotation = gaussianRotationMatrix(parent.rotation);
     float3x3 metric;
@@ -62,6 +63,7 @@ bool makeGrowthEllipsoid(
     GaussianEllipsoid parent,
     float3 voxelSize,
     uint face,
+    float penetration,
     float shrink,
     float contactOffset,
     out GaussianEllipsoid child
@@ -69,7 +71,13 @@ bool makeGrowthEllipsoid(
 {
     child = parent;
     float3 contact;
-    if (!growthFaceContact(parent, voxelSize, face, contact))
+    if (!growthFaceContact(parent, voxelSize, face, 0.0f, contact))
+        return false;
+    // A genuine intersection at this depth proves the shape extends strictly
+    // beyond the threshold INSIDE the neighbor's tangential footprint. An
+    // AABB extremum outside that footprint must not trigger growth.
+    float3 depthContact;
+    if (penetration > 0.0f && !growthFaceContact(parent, voxelSize, face, penetration, depthContact))
         return false;
     uint n = face / 2u;
     bool positive = (face & 1u) != 0u;

@@ -43,12 +43,13 @@ struct NeighborGrowthTestAccess
         VoxelReconstructionNoLightTransport& pass,
         RenderContext* ctx,
         const std::vector<uint32_t>& cells,
-        const std::vector<VoxelData>& voxels
+        const std::vector<VoxelData>& voxels,
+        float3 voxelSize = float3(1.0f)
     )
     {
         GridData grid = {};
         grid.voxelCount = uint3(8u);
-        grid.voxelSize = float3(1.0f);
+        grid.voxelSize = voxelSize;
         grid.activeVoxelCount = grid.solidVoxelCount = uint32_t(cells.size());
         auto resources = pass.allocateSparseGrid(ctx, grid, grid.activeVoxelCount);
         auto block = pass.createSparseGridBlock(resources);
@@ -60,7 +61,7 @@ struct NeighborGrowthTestAccess
         ctx->submit(true);
         pass.mOptimizerParams.currentIteration = 50u;
         pass.mTopologySettings.enableGrowth = true;
-        pass.mTopologySettings.growthScaleThreshold = ELLIPSOID_MAX_SCALE_VOXELS;
+        pass.mTopologySettings.growthFacePenetration = 0.05f;
         pass.mGrowthCooldownPresent = false;
         pass.resetDeletionEvidence(ctx);
     }
@@ -213,6 +214,86 @@ struct NeighborGrowthTestAccess
         pass.mTopologySettings.evidenceInterval = interval;
         pass.mOptimizerParams.currentIteration = 50u;
     }
+    static void checkGrowthPenetration(VoxelReconstructionNoLightTransport& pass, RenderContext* ctx)
+    {
+        const uint32_t origin = cell(3, 3, 3);
+        auto sphere = parentVoxel();
+        sphere.ellipsoid.rotation = float4(1, 0, 0, 0);
+        sphere.ellipsoid.logScale = float3(std::log(0.6f));
+        seed(pass, ctx, {origin}, {sphere});
+        pass.growNeighborVoxels(ctx);
+        require(pass.mTopologySettings.lastGrowthCount == 6u, "Default depth threshold did not grow a 0.6-voxel sphere");
+        require(pass.mGridResources.gridData.activeVoxelCount == 7u, "Depth-triggered growth cascaded within one round");
+
+        seed(pass, ctx, {origin}, {sphere});
+        pass.mTopologySettings.growthFacePenetration = 0.2f;
+        pass.growNeighborVoxels(ctx);
+        require(pass.mTopologySettings.lastGrowthCount == 0u, "0.1-voxel penetration passed a 0.2-voxel threshold");
+        seed(pass, ctx, {origin}, {sphere});
+        pass.mTopologySettings.growthFacePenetration = 0.1f;
+        pass.growNeighborVoxels(ctx);
+        require(pass.mTopologySettings.lastGrowthCount == 0u, "Mere tangency at the depth threshold triggered growth");
+        pass.mTopologySettings.growthFacePenetration = 0.099f;
+        pass.growNeighborVoxels(ctx);
+        require(pass.mTopologySettings.lastGrowthCount == 6u, "Lowering the depth threshold did not enable growth");
+
+        for (float radius : {0.549f, 0.551f})
+        {
+            sphere.ellipsoid.logScale = float3(std::log(radius));
+            seed(pass, ctx, {origin}, {sphere});
+            pass.growNeighborVoxels(ctx);
+            require(
+                pass.mTopologySettings.lastGrowthCount == (radius > 0.55f ? 6u : 0u),
+                "Growth did not distinguish depths just below/above the default threshold"
+            );
+        }
+        sphere.ellipsoid.logScale = float3(std::log(0.5f));
+        seed(pass, ctx, {origin}, {sphere});
+        pass.mTopologySettings.growthFacePenetration = 0.0f;
+        pass.growNeighborVoxels(ctx);
+        require(pass.mTopologySettings.lastGrowthCount == 0u, "Zero threshold accepted a tangent shared face");
+
+        sphere.ellipsoid.logScale = float3(std::log(0.6f));
+        for (float x : {0.25f, 0.75f})
+        {
+            sphere.ellipsoid.center = float3(x, 0.5f, 0.5f);
+            seed(pass, ctx, {origin}, {sphere});
+            pass.mTopologySettings.growthFacePenetration = 0.2f;
+            pass.growNeighborVoxels(ctx);
+            require(pass.mTopologySettings.lastGrowthCount == 1u, "Depth threshold was not evaluated separately for each face");
+            const auto map = indices(pass, ctx);
+            require(map[cell(x < 0.5f ? 2u : 4u, 3, 3)] >= 0, "Growth selected the wrong outward face direction");
+        }
+        auto small = sphere;
+        small.ellipsoid.center = float3(0.5f);
+        small.ellipsoid.logScale = float3(std::log(0.1f));
+        seed(pass, ctx, {origin, cell(4, 3, 3)}, {sphere, small});
+        pass.mTopologySettings.growthFacePenetration = 0.2f;
+        pass.growNeighborVoxels(ctx);
+        require(pass.mTopologySettings.lastGrowthCount == 0u, "Growth duplicated an already occupied face neighbor");
+
+        const float3 widths(2.0f, 3.0f, 0.5f);
+        sphere.ellipsoid.center = float3(0.5f);
+        sphere.ellipsoid.logScale = float3(std::log(0.6f * widths.x), std::log(0.6f * widths.y), std::log(0.6f * widths.z));
+        seed(pass, ctx, {origin}, {sphere}, widths);
+        pass.growNeighborVoxels(ctx);
+        require(pass.mTopologySettings.lastGrowthCount == 6u, "Depth was not normalized by the face axis's voxel width");
+
+        // A 45-degree skinny shape crosses each XY face, but its AABB's 0.070
+        // outward depth occurs outside the neighbor footprint. True depth in
+        // that footprint is about 0.052, so 0.05 passes and 0.06 must fail.
+        auto diagonal = parentVoxel();
+        diagonal.ellipsoid.logScale = float3(std::log(0.8f), std::log(0.1f), std::log(0.1f));
+        diagonal.ellipsoid.rotation = float4(std::cos(3.14159265359f / 8.0f), 0, 0, std::sin(3.14159265359f / 8.0f));
+        seed(pass, ctx, {origin}, {diagonal});
+        pass.mTopologySettings.growthFacePenetration = 0.06f;
+        pass.growNeighborVoxels(ctx);
+        require(pass.mTopologySettings.lastGrowthCount == 0u, "AABB-only penetration outside the neighbor footprint triggered growth");
+        pass.mTopologySettings.growthFacePenetration = 0.05f;
+        pass.growNeighborVoxels(ctx);
+        require(pass.mTopologySettings.lastGrowthCount == 4u, "Valid rotated finite-face penetration did not grow XY neighbors");
+    }
+
     static void checkGrowthPreview(VoxelReconstructionNoLightTransport& pass, RenderContext* ctx)
     {
         auto voxel = parentVoxel();
@@ -305,6 +386,9 @@ struct NeighborGrowthTestAccess
             pass->mUpdatePass.init();
             pass->createTopologyPassResource(ctx);
             pass->createDeletionPassResources();
+            checkGrowthPenetration(*pass, ctx);
+            std::cout << "PASS: face-depth trigger, strict thresholds, per-face direction, occupied neighbors, non-cubic widths, rotated "
+                         "footprint\n";
             const auto parent = parentVoxel();
             const uint32_t origin = cell(3, 3, 3);
             seed(*pass, ctx, {origin}, {parent});
@@ -370,7 +454,7 @@ struct NeighborGrowthTestAccess
             );
             auto map = indices(*pass, ctx);
             require(map[origin] == -58, "Cooldown is not bound to the deleted spatial cell");
-            pass->mTopologySettings.growthScaleThreshold = 0.01f;
+            pass->mTopologySettings.growthFacePenetration = 0.0f;
             pass->growNeighborVoxels(ctx);
             require(indices(*pass, ctx)[origin] < 0, "Deleted cell grew back during cooldown");
             pass->mOptimizerParams.currentIteration = 55;

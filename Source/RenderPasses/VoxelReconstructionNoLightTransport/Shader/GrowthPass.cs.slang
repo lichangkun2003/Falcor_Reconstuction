@@ -13,7 +13,7 @@ cbuffer CB
     uint gNewCount;
     uint gCurrentIteration;
     uint gEligibleIteration;
-    float gScaleThreshold;
+    float gFacePenetration;
     float gShrink;
     float gContactOffset;
     float gInitialOpacity;
@@ -42,15 +42,12 @@ bool growthChild(uint parentID, uint face, out uint3 cell, out GaussianEllipsoid
     child = VOXEL_DATA(parentID).ellipsoid;
     if (VOXEL_DATA(parentID).occupied == 0u || isDeletionCandidate(parentID))
         return false;
-    float3 axes = gaussianEllipsoidScale(child);
-    if (!any(axes >= gGridDataParamBlock.voxelSize * gScaleThreshold * (1.0f - 1e-4f)))
-        return false;
     int3 neighbor = getVoxelCell(parentID);
     neighbor[face / 2u] += (face & 1u) != 0u ? 1 : -1;
     if (any(neighbor < 0) || any(neighbor >= int3(gGridDataParamBlock.voxelCount)))
         return false;
     cell = uint3(neighbor);
-    return makeGrowthEllipsoid(child, gGridDataParamBlock.voxelSize, face, gShrink, gContactOffset, child);
+    return makeGrowthEllipsoid(child, gGridDataParamBlock.voxelSize, face, gFacePenetration, gShrink, gContactOffset, child);
 }
 
 [numthreads(256, 1, 1)] void proposeGrowth(uint3 threadID

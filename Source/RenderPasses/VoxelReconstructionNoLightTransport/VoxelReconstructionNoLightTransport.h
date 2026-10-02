@@ -319,7 +319,8 @@ public:
         bool showOccupiedContext = true;
         bool collectDeletionEvidence = true;
         bool enableGrowth = true;
-        float growthScaleThreshold = ELLIPSOID_MAX_SCALE_VOXELS;
+        // Minimum outward depth into the face neighbor, in that axis's voxel widths.
+        float growthFacePenetration = 0.05f;
         float growthShrink = 0.7f;
         float growthContactOffset = 0.2f;
         float growthInitialOpacity = 0.1f;

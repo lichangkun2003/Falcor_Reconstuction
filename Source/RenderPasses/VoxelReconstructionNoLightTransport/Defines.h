@@ -23,7 +23,7 @@
 // Opacity
 #define SH_OPACITY_COUNT 9
 
-// Shared scale clamp and default neighbor-growth trigger, in voxel widths.
+// Geometry optimization scale clamp, in voxel widths; not a growth trigger.
 #define ELLIPSOID_MAX_SCALE_VOXELS 4.0f
 
 #define MAX_CANDIDATES 16
