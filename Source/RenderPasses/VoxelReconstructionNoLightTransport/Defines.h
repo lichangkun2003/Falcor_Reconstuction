@@ -26,6 +26,9 @@
 // Geometry optimization scale clamp, in voxel widths; not a growth trigger.
 #define ELLIPSOID_MAX_SCALE_VOXELS 4.0f
 
+// Shared UI/upload bound for the outward-depth growth experiment.
+#define GROWTH_MAX_FACE_PENETRATION_VOXELS 2.0f
+
 #define MAX_CANDIDATES 16
 
 // Keep the complete spatial map, but allocate attributes only for occupied cells.

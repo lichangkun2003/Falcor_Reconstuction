@@ -599,7 +599,8 @@ void VoxelReconstructionNoLightTransport::renderUITopology(Gui::Widgets& widget)
     group.checkbox("Enable Growth", mTopologySettings.enableGrowth);
     group.text(fmt::format("Starts at iteration {}; one layer per full iteration, after deletion; no count budget.",
         getDeletionEvidenceStartIteration()));
-    group.var("Growth Face Penetration (voxel widths)", mTopologySettings.growthFacePenetration, 0.0f, 1.0f, 0.01f);
+    group.var("Growth Face Penetration (voxel widths)", mTopologySettings.growthFacePenetration, 0.0f,
+        float(GROWTH_MAX_FACE_PENETRATION_VOXELS), 0.01f);
     group.text("Grow only when the ellipsoid extends beyond this depth inside the empty face neighbor; lower is more aggressive.");
     group.var("Child Scale Multiplier", mTopologySettings.growthShrink, 0.01f, 0.99f, 0.01f);
     group.var("Child Contact Offset (voxels)", mTopologySettings.growthContactOffset, 0.01f, 0.49f, 0.01f);

@@ -223,7 +223,7 @@ struct NeighborGrowthTestAccess
         sphere.ellipsoid.logScale = float3(std::log(0.6f));
         seed(pass, ctx, {origin}, {sphere});
         pass.growNeighborVoxels(ctx);
-        require(pass.mTopologySettings.lastGrowthCount == 6u, "Default depth threshold did not grow a 0.6-voxel sphere");
+        require(pass.mTopologySettings.lastGrowthCount == 6u, "A 0.05 depth threshold did not grow a 0.6-voxel sphere");
         require(pass.mGridResources.gridData.activeVoxelCount == 7u, "Depth-triggered growth cascaded within one round");
 
         seed(pass, ctx, {origin}, {sphere});
@@ -245,7 +245,7 @@ struct NeighborGrowthTestAccess
             pass.growNeighborVoxels(ctx);
             require(
                 pass.mTopologySettings.lastGrowthCount == (radius > 0.55f ? 6u : 0u),
-                "Growth did not distinguish depths just below/above the default threshold"
+                "Growth did not distinguish depths just below/above the 0.05 threshold"
             );
         }
         sphere.ellipsoid.logScale = float3(std::log(0.5f));
@@ -293,6 +293,26 @@ struct NeighborGrowthTestAccess
         pass.mTopologySettings.growthFacePenetration = 0.05f;
         pass.growNeighborVoxels(ctx);
         require(pass.mTopologySettings.lastGrowthCount == 4u, "Valid rotated finite-face penetration did not grow XY neighbors");
+
+        sphere.ellipsoid.logScale = float3(std::log(2.0f));
+        seed(pass, ctx, {origin}, {sphere});
+        pass.mTopologySettings.growthFacePenetration = 2.0f;
+        pass.growNeighborVoxels(ctx);
+        require(pass.mTopologySettings.lastGrowthCount == 0u, "Delta 2 was silently clamped to 1 during GPU upload");
+        pass.mTopologySettings.growthFacePenetration = 1.0f;
+        pass.growNeighborVoxels(ctx);
+        require(pass.mTopologySettings.lastGrowthCount == 6u, "Delta 1 and delta 2 did not produce distinct growth decisions");
+        for (float radius : {2.5f, 2.6f})
+        {
+            sphere.ellipsoid.logScale = float3(std::log(radius));
+            seed(pass, ctx, {origin}, {sphere});
+            pass.mTopologySettings.growthFacePenetration = 2.0f;
+            pass.growNeighborVoxels(ctx);
+            require(
+                pass.mTopologySettings.lastGrowthCount == (radius > 2.5f ? 6u : 0u),
+                "Delta 2 did not require strictly more than two voxel widths beyond the shared face"
+            );
+        }
     }
 
     static void checkGrowthWaiting(VoxelReconstructionNoLightTransport& pass, RenderContext* ctx)
@@ -450,6 +470,7 @@ struct NeighborGrowthTestAccess
             auto device = make_ref<Device>(desc);
             auto ctx = device->getRenderContext();
             auto pass = VoxelReconstructionNoLightTransport::create(device, {});
+            require(pass->mTopologySettings.growthFacePenetration == 2.0f, "Default growth depth is not delta 2");
             pass->mUpdatePass.init();
             pass->createTopologyPassResource(ctx);
             pass->createDeletionPassResources();

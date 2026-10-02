@@ -320,7 +320,7 @@ public:
         bool collectDeletionEvidence = true;
         bool enableGrowth = true;
         // Minimum outward depth into the face neighbor, in that axis's voxel widths.
-        float growthFacePenetration = 0.05f;
+        float growthFacePenetration = 2.0f;
         float growthShrink = 0.7f;
         float growthContactOffset = 0.2f;
         float growthInitialOpacity = 0.1f;

@@ -99,7 +99,7 @@ void VoxelReconstructionNoLightTransport::growNeighborVoxels(RenderContext* pRen
             cb["gEligibleIteration"] = uint32_t(std::min<uint64_t>(
                 kMaximumTopologyIteration, uint64_t(mOptimizerParams.currentIteration) + mTopologySettings.growthProtectionIterations
             ));
-            cb["gFacePenetration"] = std::clamp(mTopologySettings.growthFacePenetration, 0.0f, 1.0f);
+            cb["gFacePenetration"] = std::clamp(mTopologySettings.growthFacePenetration, 0.0f, float(GROWTH_MAX_FACE_PENETRATION_VOXELS));
             cb["gShrink"] = std::clamp(mTopologySettings.growthShrink, 0.01f, 0.99f);
             cb["gContactOffset"] = std::clamp(mTopologySettings.growthContactOffset, 0.01f, 0.49f);
             cb["gInitialOpacity"] = std::clamp(mTopologySettings.growthInitialOpacity, 0.01f, 0.49f);
