@@ -15,6 +15,7 @@ cbuffer CB
     uint gListCapacity;
     uint gPairOffset;
     uint gPairCount;
+    uint gCooldownUntilIteration;
 }
 
 [numthreads(256, 1, 1)]
@@ -52,7 +53,14 @@ void clearDeletionIndices(uint3 dispatchThreadId : SV_DispatchThreadID)
     if (voxelID >= gOldActiveCount || !isDeletionCandidate(voxelID))
         return;
 
-    clearVoxelID(uint3(getVoxelCell(voxelID)));
+    uint3 cell = uint3(getVoxelCell(voxelID));
+    // This negative value remains empty to lookupVoxelID(), but inhibits growth
+    // until its absolute training-iteration expiry, independent of compact IDs.
+    uint3 page = cell / SPARSE_INDEX_PAGE_EDGE;
+    uint pageID = page.x + page.y * gGridDataParamBlock.indexPageCount.x +
+        page.z * gGridDataParamBlock.indexPageCount.x * gGridDataParamBlock.indexPageCount.y;
+    gGridDataParamBlock.indexPages[NonUniformResourceIndex(pageID)][cell % SPARSE_INDEX_PAGE_EDGE] =
+        -2 - int(gCooldownUntilIteration);
 }
 
 [numthreads(256, 1, 1)]
@@ -70,6 +78,7 @@ void moveDeletionSurvivors(uint3 dispatchThreadId : SV_DispatchThreadID)
     uint sourceOffset = source % SPARSE_POOL_PAGE_SIZE;
 
     VOXEL_DATA(destination) = VOXEL_DATA(source);
+    TOPOLOGY_DATA(destination) = TOPOLOGY_DATA(source);
     gGeometryAdamPages[NonUniformResourceIndex(destinationPage)][destinationOffset] =
         gGeometryAdamPages[NonUniformResourceIndex(sourcePage)][sourceOffset];
     uint cellIndex = gGridDataParamBlock.cellIndexPages[NonUniformResourceIndex(sourcePage)][sourceOffset];

@@ -25,6 +25,7 @@ cbuffer CB {
     float gBinaryOpacityWeight;
     bool gCollectDeletionEvidence;
     uint gEvidenceViewID;
+    uint gCurrentIteration;
     float gMinRemovalLossDelta;
     float gMinEvidenceTransmittance;
     float gAlphaLossWeight;
@@ -405,6 +406,7 @@ void collectDeletionEvidence(
     float transmittanceAfter)
 {
     if (!gCollectDeletionEvidence ||
+        gCurrentIteration < TOPOLOGY_DATA(voxelIndex).deletionEligibleIteration ||
         transmittanceBefore < gMinEvidenceTransmittance ||
         (referenceClass != 1u && referenceClass != 2u))
         return;

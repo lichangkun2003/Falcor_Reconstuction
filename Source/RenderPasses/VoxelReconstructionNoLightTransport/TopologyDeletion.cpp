@@ -90,6 +90,8 @@ void VoxelReconstructionNoLightTransport::deleteAndCompactCandidates(RenderConte
     clearIndexVar["gGridDataParamBlock"] = mpGridBlock;
     auto clearIndexCB = clearIndexVar["CB"];
     clearIndexCB["gOldActiveCount"] = oldActiveCount;
+    clearIndexCB["gCooldownUntilIteration"] = uint32_t(std::min<uint64_t>(kMaximumTopologyIteration,
+        uint64_t(mOptimizerParams.currentIteration) + mTopologySettings.deletionCooldownIterations));
     for (uint32_t offset = 0; offset < oldActiveCount; )
     {
         const uint32_t count = std::min(kMaximumDispatchItems, oldActiveCount - offset);
@@ -98,6 +100,7 @@ void VoxelReconstructionNoLightTransport::deleteAndCompactCandidates(RenderConte
         offset += count;
     }
     for (const auto& page : mGridResources.indexPages) pRenderContext->uavBarrier(page.get());
+    mGrowthCooldownPresent = true;
 
     if (moveCount > 0u)
     {
@@ -175,7 +178,7 @@ void VoxelReconstructionNoLightTransport::deleteAndCompactCandidates(RenderConte
         pRenderContext->clearUAV(page->getUAV().get(), uint4(0));
     pRenderContext->clearUAV(mGridResources.radianceAdamCounter->getUAV().get(), uint4(0));
     clearSparseGradients(pRenderContext);
-    resetDeletionEvidence(pRenderContext);
+    resetDeletionEvidence(pRenderContext, true);
     if (mpPathRecordBuffer) pRenderContext->clearUAV(mpPathRecordBuffer->getUAV().get(), uint4(0));
     pRenderContext->submit(true);
 

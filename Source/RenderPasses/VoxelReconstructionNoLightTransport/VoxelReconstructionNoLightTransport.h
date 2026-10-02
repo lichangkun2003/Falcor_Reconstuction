@@ -55,7 +55,7 @@ using namespace Falcor;
 static_assert(sizeof(GaussianEllipsoid) == 40, "GaussianEllipsoid host/device layout changed.");
 static_assert(sizeof(VoxelData) == 44 + 12 * SH_COUNT + 4 * SH_OPACITY_COUNT, "VoxelData host/device layout changed.");
 static_assert(sizeof(GradRecord) == 48 + 12 * SH_COUNT + 4 * SH_OPACITY_COUNT, "GradRecord host/device layout changed.");
-static_assert(sizeof(TopologyEvidence) == 12, "TopologyEvidence host/device layout changed.");
+static_assert(sizeof(TopologyEvidence) == 16, "TopologyEvidence host/device layout changed.");
 
 namespace
 {
@@ -66,6 +66,7 @@ const std::string GradientPassShaderFilePath = "RenderPasses/VoxelReconstruction
 const std::string UpdatePassShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/UpdatePass.cs.slang";
 const std::string TopologyPassShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/TopologyPass.cs.slang";
 const std::string DeleteCompactPassShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/DeleteCompactPass.cs.slang";
+const std::string GrowthPassShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/GrowthPass.cs.slang";
 const std::string ReduceTexturePassShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/ReduceTexturePass.cs.slang";
 const std::string ReduceBufferPassShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/ReduceBufferPass.cs.slang";
 
@@ -90,6 +91,7 @@ inline std::filesystem::path resolveReconstructionPath(const std::filesystem::pa
 
 class VoxelReconstructionNoLightTransport : public RenderPass
 {
+    friend struct NeighborGrowthTestAccess;
 public:
     FALCOR_PLUGIN_CLASS(VoxelReconstructionNoLightTransport, "VoxelReconstructionNoLightTransport", "Insert pass description here.");
 
@@ -133,7 +135,7 @@ public:
     float getEffectiveOpacityLearningRate() const;
     void createTopologyPassResource(RenderContext* pRenderContext);
     void evaluateDeletionEvidence(RenderContext* pRenderContext);
-    void resetDeletionEvidence(RenderContext* pRenderContext);
+    void resetDeletionEvidence(RenderContext* pRenderContext, bool preserveGrowthProtection = false);
     uint32_t getDeletionEvidenceStartIteration() const;
     bool shouldCollectDeletionEvidence() const;
     void createDeletionPassResources();
@@ -316,16 +318,22 @@ public:
         uint32_t debugLayer = uint32_t(TopologyDebugLayer::Occupied);
         bool showOccupiedContext = true;
         bool collectDeletionEvidence = true;
-        bool enableGrowth = false;
-        bool enableSplit = false;
+        bool enableGrowth = true;
+        float growthScaleThreshold = ELLIPSOID_MAX_SCALE_VOXELS;
+        float growthShrink = 0.7f;
+        float growthContactOffset = 0.2f;
+        float growthInitialOpacity = 0.1f;
+        uint32_t growthProtectionIterations = 5;
+        uint32_t deletionCooldownIterations = 5;
+        uint32_t lastGrowthCount = 0;
+        uint32_t lastGrowthPages = 0;
+        std::string growthStatus = "Waiting for opacity warm-up + ramp";
         float foregroundAlphaMin = 0.95f;
         float backgroundAlphaMax = 1e-4f;
         float minRemovalLossDelta = 1e-4f;
         float minEvidenceTransmittance = 0.05f;
         uint32_t minDeletionConflictViews = 3;
         uint32_t maxDeletionSupportViews = 0;
-        float minAlphaDeficit = 0.1f;
-        uint32_t minGrowthViews = 3;
         uint32_t evidenceInterval = 5;
         uint32_t deletionInterval = 10;
         uint32_t candidateCount = 0;
@@ -379,11 +387,22 @@ private:
     ref<ComputePass> mpInitializePointCloudPass;
     ref<ComputePass> mpBuildSparseIndexPass;
     ref<ComputePass> mpTopologyPass;
+    ref<ComputePass> mpResetTopologyEvidencePass;
     ref<Buffer> mpTopologySummary;
     ref<ComputePass> mpBuildDeletionListsPass;
     ref<ComputePass> mpClearDeletionIndicesPass;
     ref<ComputePass> mpMoveDeletionSurvivorsPass;
     ref<ComputePass> mpClearDeletionTailPass;
+    ref<ComputePass> mpProposeGrowthPass;
+    ref<ComputePass> mpInitializeGrowthPass;
+    ref<ComputePass> mpCommitGrowthPass;
+    ref<ComputePass> mpClearGrowthClaimsPass;
+    ref<ComputePass> mpRollbackGrowthPass;
+    ref<ComputePass> mpClearGrowthCooldownPass;
+    bool mGrowthCooldownPresent = false;
+    void createGrowthPassResources();
+    void resetGrowthCooldown(RenderContext* pRenderContext);
+    void growNeighborVoxels(RenderContext* pRenderContext);
     bool initializePointCloudVoxelData(RenderContext* pRenderContext);
     void resetPointCloudOptimization(RenderContext* pRenderContext);
     GridResources allocateSparseGrid(RenderContext* pRenderContext, const GridData& grid, uint32_t capacity);

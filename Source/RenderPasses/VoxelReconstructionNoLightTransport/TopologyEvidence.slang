@@ -11,7 +11,19 @@ struct TopologyEvidence
     uint lastForegroundView;
     uint lastBackgroundView;
     uint packedCountsAndFlags;
+    // Full training rounds must finish before a newborn can collect deletion votes.
+    uint deletionEligibleIteration;
 };
+
+// Negative spatial-index values are empty cells. Cooldown is -(expiry + 2),
+// while temporary growth claims occupy a disjoint, much more negative range.
+static const int kGrowthClaimBase = -1073741824;
+static const uint kMaximumTopologyIteration = 1000000000u;
+
+#if defined(HOST_CODE)
+static_assert(uint64_t(SPARSE_POOL_PAGE_SIZE) * SPARSE_POOL_MAX_PAGES * 6u < (uint64_t(1) << 30u),
+    "Growth claim encoding cannot represent this sparse-pool capacity.");
+#endif
 
 static const uint kTopologyEvidenceCountBits = 15u;
 static const uint kTopologyEvidenceCountMask = (1u << kTopologyEvidenceCountBits) - 1u;

@@ -108,7 +108,7 @@ void updateEllipsoidLogScaleAdam(
     gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].logScaleSteps = steps;
     ellipsoid.logScale -= clamp(step, float3(-0.02f), float3(0.02f));
     float3 minScale = max(voxelSize * 1e-4f, float3(1e-8f));
-    float3 maxScale = max(voxelSize * 4.0f, minScale);
+    float3 maxScale = max(voxelSize * ELLIPSOID_MAX_SCALE_VOXELS, minScale);
     ellipsoid.logScale = clamp(sanitizeFloat3(ellipsoid.logScale), log(minScale), log(maxScale));
 }
 

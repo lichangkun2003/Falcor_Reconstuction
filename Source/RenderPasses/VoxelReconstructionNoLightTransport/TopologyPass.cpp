@@ -25,6 +25,9 @@ void VoxelReconstructionNoLightTransport::createTopologyPassResource(RenderConte
     ProgramDesc desc;
     desc.addShaderLibrary(TopologyPassShaderFilePath).csEntry("main");
     mpTopologyPass = ComputePass::create(mpDevice, desc, getReconstructionDefines(), true);
+    ProgramDesc resetDesc;
+    resetDesc.addShaderLibrary(TopologyPassShaderFilePath).csEntry("resetEvidence");
+    mpResetTopologyEvidencePass = ComputePass::create(mpDevice, resetDesc, getReconstructionDefines(), true);
     mpTopologySummary = mpDevice->createStructuredBuffer(
         sizeof(uint32_t),
         4u,
@@ -33,10 +36,27 @@ void VoxelReconstructionNoLightTransport::createTopologyPassResource(RenderConte
     pRenderContext->clearUAV(mpTopologySummary->getUAV().get(), uint4(0));
 }
 
-void VoxelReconstructionNoLightTransport::resetDeletionEvidence(RenderContext* pRenderContext)
+void VoxelReconstructionNoLightTransport::resetDeletionEvidence(RenderContext* pRenderContext, bool preserveGrowthProtection)
 {
-    for (const auto& page : mGridResources.topologyEvidencePages)
-        pRenderContext->clearUAV(page->getUAV().get(), uint4(0));
+    if (preserveGrowthProtection && mpResetTopologyEvidencePass)
+    {
+        auto var = mpResetTopologyEvidencePass->getRootVar();
+        var["gGridDataParamBlock"] = mpGridBlock;
+        constexpr uint32_t batchSize = 65535u * 256u;
+        for (uint32_t offset = 0; offset < mGridResources.gridData.activeVoxelCount; )
+        {
+            const uint32_t count = std::min(batchSize, mGridResources.gridData.activeVoxelCount - offset);
+            var["CB"]["gSparseOffset"] = offset;
+            mpResetTopologyEvidencePass->execute(pRenderContext, uint3(count, 1, 1));
+            offset += count;
+        }
+        barrierTopologyEvidence(pRenderContext);
+    }
+    else
+    {
+        for (const auto& page : mGridResources.topologyEvidencePages)
+            pRenderContext->clearUAV(page->getUAV().get(), uint4(0));
+    }
     if (mpTopologySummary)
         pRenderContext->clearUAV(mpTopologySummary->getUAV().get(), uint4(0));
 
@@ -68,6 +88,7 @@ void VoxelReconstructionNoLightTransport::evaluateDeletionEvidence(RenderContext
     auto cb = var["CB"];
     cb["gMinConflictViews"] = mTopologySettings.minDeletionConflictViews;
     cb["gMaxSupportViews"] = mTopologySettings.maxDeletionSupportViews;
+    cb["gCurrentIteration"] = mOptimizerParams.currentIteration;
 
     constexpr uint32_t batchSize = 65535u * 256u;
     for (uint32_t offset = 0; offset < mGridResources.gridData.activeVoxelCount; )

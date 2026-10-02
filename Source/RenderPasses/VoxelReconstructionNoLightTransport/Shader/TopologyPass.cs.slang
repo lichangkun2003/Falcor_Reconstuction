@@ -7,6 +7,17 @@ cbuffer CB
     uint gSparseOffset;
     uint gMinConflictViews;
     uint gMaxSupportViews;
+    uint gCurrentIteration;
+}
+
+[numthreads(256, 1, 1)]
+void resetEvidence(uint3 dispatchThreadId : SV_DispatchThreadID)
+{
+    uint voxelID = gSparseOffset + dispatchThreadId.x;
+    if (voxelID >= gGridDataParamBlock.activeVoxelCount) return;
+    TOPOLOGY_DATA(voxelID).lastForegroundView = 0u;
+    TOPOLOGY_DATA(voxelID).lastBackgroundView = 0u;
+    TOPOLOGY_DATA(voxelID).packedCountsAndFlags = 0u;
 }
 
 [numthreads(256, 1, 1)]
@@ -17,6 +28,14 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         return;
 
     TopologyEvidence evidence = TOPOLOGY_DATA(voxelID);
+    if (gCurrentIteration < evidence.deletionEligibleIteration)
+    {
+        evidence.lastForegroundView = 0u;
+        evidence.lastBackgroundView = 0u;
+        evidence.packedCountsAndFlags = 0u;
+        TOPOLOGY_DATA(voxelID) = evidence;
+        return;
+    }
     uint packed = evidence.packedCountsAndFlags;
     uint foregroundViews = topologyForegroundViews(packed);
     uint backgroundViews = topologyBackgroundViews(packed);

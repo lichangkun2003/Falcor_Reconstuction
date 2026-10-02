@@ -117,6 +117,31 @@ void VoxelReconstructionNoLightTransport::commitSparseGrid(
     bind(mGradientPass.mpComputePass);
     bind(mUpdatePass.mpComputePass);
     bind(mpTopologyPass);
+    bind(mpResetTopologyEvidencePass);
+    bind(mpProposeGrowthPass);
+    bind(mpInitializeGrowthPass);
+    bind(mpCommitGrowthPass);
+    bind(mpClearGrowthClaimsPass);
+    bind(mpRollbackGrowthPass);
+    bind(mpClearGrowthCooldownPass);
+    if (mpInitializeGrowthPass && mpInitializeGrowthPass->getVars())
+    {
+        auto var = mpInitializeGrowthPass->getRootVar();
+        const size_t pages = std::max(mGridResources.adamPages.size(), resources.adamPages.size());
+        for (size_t page = 0; page < pages; ++page)
+        {
+            if (page < resources.adamPages.size())
+            {
+                var["gGeometryAdamPages"][uint32_t(page)] = resources.adamPages[page];
+                var["gRadianceAdamIndexPages"][uint32_t(page)] = resources.radianceAdamIndexPages[page];
+            }
+            else
+            {
+                var["gGeometryAdamPages"][uint32_t(page)].setBuffer(nullptr);
+                var["gRadianceAdamIndexPages"][uint32_t(page)].setBuffer(nullptr);
+            }
+        }
+    }
     if (mUpdatePass.mpComputePass && mUpdatePass.mpComputePass->getVars())
     {
         auto var = mUpdatePass.mpComputePass->getRootVar()["gGeometryAdamPages"];
@@ -263,6 +288,10 @@ void VoxelReconstructionNoLightTransport::uploadSparseBatch(
 
 void VoxelReconstructionNoLightTransport::resetPointCloudOptimization(RenderContext* pRenderContext)
 {
+    resetGrowthCooldown(pRenderContext);
+    mTopologySettings.lastGrowthCount = 0;
+    mTopologySettings.lastGrowthPages = 0;
+    mTopologySettings.growthStatus = "Waiting for opacity warm-up + ramp";
     mEnableReconstruction = false;
     mOptimizerParams.reset();
     mPointCloud.startRequested = false;

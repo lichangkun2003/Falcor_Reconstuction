@@ -23,12 +23,19 @@
 // Opacity
 #define SH_OPACITY_COUNT 9
 
+// Shared scale clamp and default neighbor-growth trigger, in voxel widths.
+#define ELLIPSOID_MAX_SCALE_VOXELS 4.0f
+
 #define MAX_CANDIDATES 16
 
 // Keep the complete spatial map, but allocate attributes only for occupied cells.
 // Each pool page stays below Falcor's 4 GiB buffer limit, including SH counts up to 16.
+#ifndef SPARSE_POOL_PAGE_SIZE
 #define SPARSE_POOL_PAGE_SIZE (1u << 18)
+#endif
+#ifndef SPARSE_POOL_MAX_PAGES
 #define SPARSE_POOL_MAX_PAGES 256
+#endif
 #define SPARSE_INDEX_PAGE_EDGE 512
 #define SPARSE_INDEX_MAX_PAGES 8
 

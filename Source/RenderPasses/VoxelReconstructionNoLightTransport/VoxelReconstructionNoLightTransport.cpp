@@ -294,6 +294,10 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
                     }
                 }
 
+                // Do not save a final layer that has never been optimized.
+                if (!reachedMaximumIteration && mOptimizerParams.isRunning)
+                    growNeighborVoxels(pRenderContext);
+
                 if (reachedMaximumIteration)
                 {
                     stopReconstruction();
@@ -582,13 +586,20 @@ void VoxelReconstructionNoLightTransport::renderUITopology(Gui::Widgets& widget)
         mTopologySettings.lastReleasedPoolPages,
         mTopologySettings.lastReleasedRadiancePages));
 
-    group.text("Reserved topology switches");
-    group.checkbox("Enable Growth (inactive)", mTopologySettings.enableGrowth);
-    group.checkbox("Enable Split (inactive)", mTopologySettings.enableSplit);
-
-    group.text("Reserved growth thresholds");
-    group.var("Min Alpha Deficit", mTopologySettings.minAlphaDeficit, 0.0f, 1.0f, 0.01f);
-    group.var("Min Growth Views", mTopologySettings.minGrowthViews, 1u, 100u, 1u);
+    group.text("Ellipsoid neighbor growth (parent retained)");
+    group.checkbox("Enable Growth", mTopologySettings.enableGrowth);
+    group.text(fmt::format("Starts at iteration {}; one layer per full iteration, after deletion; no count budget.",
+        getDeletionEvidenceStartIteration()));
+    group.var("Growth Axis Threshold (voxel widths)", mTopologySettings.growthScaleThreshold, 0.01f,
+        float(ELLIPSOID_MAX_SCALE_VOXELS), 0.05f);
+    group.var("Child Scale Multiplier", mTopologySettings.growthShrink, 0.01f, 0.99f, 0.01f);
+    group.var("Child Contact Offset (voxels)", mTopologySettings.growthContactOffset, 0.01f, 0.49f, 0.01f);
+    group.var("Child Max Initial Opacity", mTopologySettings.growthInitialOpacity, 0.01f, 0.49f, 0.01f);
+    group.var("Newborn Protection (iterations)", mTopologySettings.growthProtectionIterations, 1u, 100u, 1u);
+    group.var("Deleted Cell Cooldown (iterations)", mTopologySettings.deletionCooldownIterations, 0u, 100u, 1u);
+    group.text(mTopologySettings.growthStatus);
+    group.text(fmt::format("Last growth: {} voxels; {} pool pages added",
+        mTopologySettings.lastGrowthCount, mTopologySettings.lastGrowthPages));
 }
 
 void VoxelReconstructionNoLightTransport::setScene(RenderContext* pRenderContext, const ref<Scene>& pScene)

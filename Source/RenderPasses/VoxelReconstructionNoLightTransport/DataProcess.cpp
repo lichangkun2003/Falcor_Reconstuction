@@ -112,12 +112,18 @@ void VoxelReconstructionNoLightTransport::resetLoadedReconstruction(RenderContex
     mPointCloud.initialized = true;
     mPointCloud.clearAccumulation = true;
     mPointCloud.status = "Loaded voxel reconstruction; PLY initialization is not required.";
+    mGrowthCooldownPresent = false;
+    mTopologySettings.lastGrowthCount = 0u;
+    mTopologySettings.lastGrowthPages = 0u;
+    mTopologySettings.growthStatus = "Loaded for viewing; growth runs only during training";
 }
 
 DefineList VoxelReconstructionNoLightTransport::getReconstructionDefines()
 {
     DefineList defines;
     defines.add("GRID_RESOLUTION", std::to_string(GRID_RESOLUTION));
+    defines.add("SPARSE_POOL_PAGE_SIZE", std::to_string(uint32_t(SPARSE_POOL_PAGE_SIZE)));
+    defines.add("SPARSE_POOL_MAX_PAGES", std::to_string(SPARSE_POOL_MAX_PAGES));
     return defines;
 }
 

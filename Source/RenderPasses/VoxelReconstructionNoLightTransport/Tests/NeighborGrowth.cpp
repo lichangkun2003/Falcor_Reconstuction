@@ -1,0 +1,389 @@
+// Headless regression test. Build with VOXEL_RECONSTRUCTION_BUILD_GROWTH_TESTS=ON.
+#include "Falcor.h"
+#include "RenderGraph/RenderPass.h"
+#include "Utils/Debug/PixelDebug.h"
+#include "Core/Pass/FullScreenPass.h"
+#include "RenderGraph/RenderPassStandardFlags.h"
+#include <nlohmann/json.hpp>
+#include <fstream>
+#include <filesystem>
+#include <iomanip>
+#include <sstream>
+#include <iostream>
+#include <cstring>
+#include <cmath>
+#include <set>
+#include "../VoxelReconstructionNoLightTransport.h"
+
+struct NeighborGrowthTestAccess
+{
+    static void require(bool condition, const char* message)
+    {
+        if (!condition)
+            throw std::runtime_error(message);
+    }
+
+    static uint32_t cell(uint32_t x, uint32_t y, uint32_t z) { return x + 8u * y + 64u * z; }
+    static int3 cellCoordinates(uint32_t index) { return int3(index % 8u, (index / 8u) % 8u, index / 64u); }
+
+    static VoxelData parentVoxel()
+    {
+        VoxelData result = {};
+        result.occupied = 1u;
+        result.ellipsoid.center = float3(0.5f);
+        result.ellipsoid.logScale = float3(std::log(4.0f), std::log(2.0f), std::log(0.8f));
+        result.ellipsoid.rotation = float4(std::cos(0.3f), 0, 0, std::sin(0.3f));
+        result.radiance.coefficients[0] = float3(0.3f, 0.5f, 0.7f);
+        result.opacity.coefficients[1] = 0.03f;
+        return result;
+    }
+
+    static void seed(
+        VoxelReconstructionNoLightTransport& pass,
+        RenderContext* ctx,
+        const std::vector<uint32_t>& cells,
+        const std::vector<VoxelData>& voxels
+    )
+    {
+        GridData grid = {};
+        grid.voxelCount = uint3(8u);
+        grid.voxelSize = float3(1.0f);
+        grid.activeVoxelCount = grid.solidVoxelCount = uint32_t(cells.size());
+        auto resources = pass.allocateSparseGrid(ctx, grid, grid.activeVoxelCount);
+        auto block = pass.createSparseGridBlock(resources);
+        pass.commitSparseGrid(std::move(resources), block, 8u);
+        pass.uploadSparseBatch(ctx, block, 0, cells.data(), uint32_t(cells.size()), voxels.data());
+        pass.barrierSparseVoxels(ctx);
+        for (const auto& page : pass.mGridResources.indexPages)
+            ctx->uavBarrier(page.get());
+        ctx->submit(true);
+        pass.mOptimizerParams.currentIteration = 50u;
+        pass.mTopologySettings.enableGrowth = true;
+        pass.mTopologySettings.growthScaleThreshold = ELLIPSOID_MAX_SCALE_VOXELS;
+        pass.mGrowthCooldownPresent = false;
+        pass.resetDeletionEvidence(ctx);
+    }
+
+    template<typename T>
+    static T read(const std::vector<ref<Buffer>>& pages, uint32_t id)
+    {
+        T value;
+        pages[id / SPARSE_POOL_PAGE_SIZE]->getBlob(&value, size_t(id % SPARSE_POOL_PAGE_SIZE) * sizeof(T), sizeof(T));
+        return value;
+    }
+
+    template<typename T>
+    static void write(const std::vector<ref<Buffer>>& pages, uint32_t id, const T& value)
+    {
+        pages[id / SPARSE_POOL_PAGE_SIZE]->setBlob(&value, size_t(id % SPARSE_POOL_PAGE_SIZE) * sizeof(T), sizeof(T));
+    }
+
+    static std::vector<int32_t> indices(VoxelReconstructionNoLightTransport& pass, RenderContext* ctx)
+    {
+        auto bytes = ctx->readTextureSubresource(pass.mGridResources.indexPages[0].get(), 0);
+        std::vector<int32_t> result(512);
+        require(bytes.size() == result.size() * sizeof(int32_t), "Unexpected index texture readback layout");
+        std::memcpy(result.data(), bytes.data(), bytes.size());
+        return result;
+    }
+
+    static float3 extents(const GaussianEllipsoid& e)
+    {
+        const float w = e.rotation.x, x = e.rotation.y, y = e.rotation.z, z = e.rotation.w;
+        const float r[3][3] = {
+            {1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)},
+            {2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)},
+            {2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)}};
+        float3 a(std::exp(e.logScale.x), std::exp(e.logScale.y), std::exp(e.logScale.z));
+        float3 extent;
+        for (uint32_t i = 0; i < 3; ++i)
+            extent[i] = std::sqrt(r[i][0] * r[i][0] * a.x * a.x + r[i][1] * r[i][1] * a.y * a.y + r[i][2] * r[i][2] * a.z * a.z);
+        return extent;
+    }
+
+    static void checkChild(const VoxelData& parent, const VoxelData& child, uint32_t childCell, uint32_t parentCell)
+    {
+        require(child.occupied == 1u, "Child is not occupied");
+        require(std::memcmp(&parent.radiance, &child.radiance, sizeof(parent.radiance)) == 0, "Radiance was not inherited");
+        for (uint32_t i = 0; i < 4; ++i)
+            require(std::abs(parent.ellipsoid.rotation[i] - child.ellipsoid.rotation[i]) < 1e-6f, "Parent rotation changed");
+        float3 ratios = child.ellipsoid.logScale - parent.ellipsoid.logScale;
+        require(
+            std::abs(ratios.x - ratios.y) < 2e-5f && std::abs(ratios.x - ratios.z) < 2e-5f, "Child did not preserve three-axis proportions"
+        );
+        require(ratios.x < 0, "Child did not shrink");
+        const int3 delta = cellCoordinates(childCell) - cellCoordinates(parentCell);
+        require(std::abs(delta.x) + std::abs(delta.y) + std::abs(delta.z) == 1, "More than one layer grew");
+        const float3 extent = extents(child.ellipsoid);
+        for (uint32_t axis = 0; axis < 3; ++axis)
+        {
+            if (delta[axis] <= 0)
+                require(child.ellipsoid.center[axis] - extent[axis] >= -2e-5f, "Child crossed a non-contact lower face");
+            if (delta[axis] >= 0)
+                require(child.ellipsoid.center[axis] + extent[axis] <= 1.0f + 2e-5f, "Child crossed a non-contact upper face");
+        }
+        for (uint32_t sample = 0; sample < 128; ++sample)
+        {
+            const float z = 1.0f - 2.0f * (float(sample) + 0.5f) / 128.0f;
+            const float phi = 2.39996323f * float(sample);
+            const float radius = std::sqrt(1.0f - z * z);
+            auto opacity = child.opacity;
+            const float alpha = opacity.calcOpacity(float3(radius * std::cos(phi), radius * std::sin(phi), z));
+            require(alpha >= 0.01f - 1e-6f && alpha <= 0.1f + 1e-6f, "Initial opacity is not low and trainable");
+        }
+    }
+
+    static void checkDeletionProtection(VoxelReconstructionNoLightTransport& pass, RenderContext* ctx)
+    {
+        ProgramDesc desc;
+        desc.addShaderLibrary(GradientPassShaderFilePath).csEntry("main");
+        auto gradientPass = ComputePass::create(pass.mpDevice, desc, pass.getReconstructionDefines(), true);
+        auto var = gradientPass->getRootVar();
+        var["gGridDataParamBlock"] = pass.mpGridBlock;
+        PathRecord path = {};
+        path.valid = 1u;
+        path.contributingVoxelCount = 1u;
+        path.viewDir = float3(0, 0, 1);
+        path.voxels[0].voxelID = 1u;
+        path.voxels[0].opacity = 0.1f;
+        path.voxels[0].transmittanceBefore = 1.0f;
+        path.voxels[0].gmin = -1.0f;
+        auto voxel = read<VoxelData>(pass.mGridResources.voxelPages, 1);
+        path.voxels[0].xStar = float3(cellCoordinates(read<uint32_t>(pass.mGridResources.cellIndexPages, 1))) + voxel.ellipsoid.center;
+        var["gPathRecordBuffer"] = pass.mpDevice->createStructuredBuffer(
+            sizeof(PathRecord), 1u, ResourceBindFlags::ShaderResource, MemoryType::DeviceLocal, &path
+        );
+        const float4 derivative(0, 0, 0, 1);
+        const uint32_t background = 1u;
+        var["gDL_dColorBuffer"] = pass.mpDevice->createTexture2D(1, 1, ResourceFormat::RGBA32Float, 1, 1, &derivative);
+        var["gBackgroundMaskBuffer"] = pass.mpDevice->createTexture2D(1, 1, ResourceFormat::R32Uint, 1, 1, &background);
+        var["dummy"] = pass.mpDevice->createTexture2D(1, 1, ResourceFormat::RGBA32Float, 1, 1, nullptr, ResourceBindFlags::UnorderedAccess);
+        auto cb = var["CB"];
+        cb["gResolution"] = uint2(1);
+        cb["gVoxelCount"] = uint3(8);
+        cb["gGeometryTauWorld"] = 0.12f;
+        cb["gGeometryGradClamp"] = 5.0f;
+        cb["gAlphaGeometryWeight"] = 1.0f;
+        cb["gBackgroundCarveWeight"] = 0.01f;
+        cb["gBinaryOpacityWeight"] = 0.0f;
+        cb["gCollectDeletionEvidence"] = true;
+        cb["gEvidenceViewID"] = 1u;
+        cb["gMinRemovalLossDelta"] = 0.0f;
+        cb["gMinEvidenceTransmittance"] = 0.0f;
+        cb["gAlphaLossWeight"] = 1.0f;
+        pass.clearSparseGradients(ctx);
+        cb["gCurrentIteration"] = 54u;
+        gradientPass->execute(ctx, uint3(1));
+        pass.barrierSparseGradients(ctx);
+        pass.barrierTopologyEvidence(ctx);
+        ctx->submit(true);
+        require(
+            topologyBackgroundViews(read<TopologyEvidence>(pass.mGridResources.topologyEvidencePages, 1).packedCountsAndFlags) == 0u,
+            "Protected newborn collected deletion evidence"
+        );
+        require(
+            read<GradRecord>(pass.mGridResources.gradPages, 1).appearanceValid > 0u, "Protection blocked normal appearance optimization"
+        );
+        cb["gCurrentIteration"] = 55u;
+        for (uint32_t sample = 0; sample < 4; ++sample)
+        {
+            gradientPass->execute(ctx, uint3(1));
+            pass.barrierSparseGradients(ctx);
+            pass.barrierTopologyEvidence(ctx);
+        }
+        ctx->submit(true);
+        require(
+            topologyBackgroundViews(read<TopologyEvidence>(pass.mGridResources.topologyEvidencePages, 1).packedCountsAndFlags) == 1u,
+            "Expired protection did not permit one unique view vote"
+        );
+        // A protected voxel also cannot retain a stale/fabricated candidate flag.
+        auto evidence = read<TopologyEvidence>(pass.mGridResources.topologyEvidencePages, 1);
+        evidence.packedCountsAndFlags = kTopologyEvidenceDeletionCandidate;
+        write(pass.mGridResources.topologyEvidencePages, 1, evidence);
+        const uint32_t interval = pass.mTopologySettings.evidenceInterval;
+        pass.mTopologySettings.evidenceInterval = 1u;
+        pass.mOptimizerParams.currentIteration = 54u;
+        pass.evaluateDeletionEvidence(ctx);
+        evidence = read<TopologyEvidence>(pass.mGridResources.topologyEvidencePages, 1);
+        require(
+            evidence.packedCountsAndFlags == 0u && evidence.deletionEligibleIteration == 55u,
+            "Protected newborn qualified for deletion or lost its expiry"
+        );
+        pass.mTopologySettings.evidenceInterval = interval;
+        pass.mOptimizerParams.currentIteration = 50u;
+    }
+    static int run()
+    {
+        try
+        {
+            setErrorDiagnosticFlags(ErrorDiagnosticFlags::None);
+            Device::Desc desc;
+            desc.type = Device::Type::D3D12;
+            desc.enableDebugLayer = true;
+            auto device = make_ref<Device>(desc);
+            auto ctx = device->getRenderContext();
+            auto pass = VoxelReconstructionNoLightTransport::create(device, {});
+            pass->mUpdatePass.init();
+            pass->createTopologyPassResource(ctx);
+            pass->createDeletionPassResources();
+            const auto parent = parentVoxel();
+            const uint32_t origin = cell(3, 3, 3);
+            seed(*pass, ctx, {origin}, {parent});
+            GeometryAdamState parentAdam = {};
+            parentAdam.centerSteps = 17;
+            parentAdam.centerMean = float3(0.3f);
+            write(pass->mGridResources.adamPages, 0, parentAdam);
+            pass->mOptimizerParams.currentIteration = 49;
+            pass->growNeighborVoxels(ctx);
+            require(pass->mGridResources.gridData.activeVoxelCount == 1, "Growth started before opacity ramp ended");
+            pass->mOptimizerParams.currentIteration = 50;
+            pass->growNeighborVoxels(ctx);
+            require(pass->mTopologySettings.lastGrowthCount == 6u, "One parent should produce exactly six face neighbors");
+            auto retained = read<VoxelData>(pass->mGridResources.voxelPages, 0);
+            require(std::memcmp(&retained, &parent, sizeof(parent)) == 0, "Growth modified parent data");
+            auto retainedAdam = read<GeometryAdamState>(pass->mGridResources.adamPages, 0);
+            require(std::memcmp(&retainedAdam, &parentAdam, sizeof(parentAdam)) == 0, "Growth reset parent Adam");
+            for (uint32_t id = 1; id < 7; ++id)
+            {
+                checkChild(
+                    parent,
+                    read<VoxelData>(pass->mGridResources.voxelPages, id),
+                    read<uint32_t>(pass->mGridResources.cellIndexPages, id),
+                    origin
+                );
+                auto adam = read<GeometryAdamState>(pass->mGridResources.adamPages, id);
+                const GeometryAdamState zero = {};
+                require(std::memcmp(&adam, &zero, sizeof(adam)) == 0, "Newborn Adam was not zeroed");
+                require(
+                    read<uint32_t>(pass->mGridResources.radianceAdamIndexPages, id) == 0xffffffffu, "Newborn inherited a radiance Adam slot"
+                );
+                require(
+                    read<TopologyEvidence>(pass->mGridResources.topologyEvidencePages, id).deletionEligibleIteration == 55u,
+                    "Newborn protection expiry is incorrect"
+                );
+            }
+            std::cout << "PASS: trigger timing, single layer, rotated five-face bounds, inheritance, low opacity, fresh Adam\n";
+            checkDeletionProtection(*pass, ctx);
+            std::cout << "PASS: newborn evidence gate preserves gradients; expiry restores unique-view votes\n";
+
+            TopologyEvidence deletion = {};
+            deletion.packedCountsAndFlags = kTopologyEvidenceDeletionCandidate;
+            write(pass->mGridResources.topologyEvidencePages, 0, deletion);
+            pass->mOptimizerParams.currentIteration = 51;
+            pass->mTopologySettings.candidateCount = 1;
+            pass->deleteAndCompactCandidates(ctx);
+            require(pass->mGridResources.gridData.activeVoxelCount == 6u, "Compaction did not delete the parent");
+            require(
+                read<TopologyEvidence>(pass->mGridResources.topologyEvidencePages, 0).deletionEligibleIteration == 55u,
+                "Compaction lost newborn protection"
+            );
+            auto map = indices(*pass, ctx);
+            require(map[origin] == -58, "Cooldown is not bound to the deleted spatial cell");
+            pass->mTopologySettings.growthScaleThreshold = 0.01f;
+            pass->growNeighborVoxels(ctx);
+            require(indices(*pass, ctx)[origin] < 0, "Deleted cell grew back during cooldown");
+            pass->mOptimizerParams.currentIteration = 55;
+            pass->growNeighborVoxels(ctx);
+            require(indices(*pass, ctx)[origin] < 0, "Cooldown expired early");
+            pass->mOptimizerParams.currentIteration = 56;
+            pass->growNeighborVoxels(ctx);
+            require(indices(*pass, ctx)[origin] >= 0, "Cell did not become available after cooldown");
+            std::cout << "PASS: deletion compaction preserves protection, spatial cooldown blocks and expires\n";
+
+            seed(*pass, ctx, {cell(2, 3, 3), cell(4, 3, 3)}, {parent, parent});
+            pass->growNeighborVoxels(ctx);
+            require(pass->mTopologySettings.lastGrowthCount == 11u, "Shared neighbor was not deduplicated");
+            std::cout << "PASS: two parents create their shared neighbor only once\n";
+
+            auto diagonal = parent;
+            diagonal.ellipsoid.center = float3(0.05f, 0.95f, 0.5f);
+            diagonal.ellipsoid.logScale = float3(std::log(4.0f), std::log(0.01f), std::log(0.01f));
+            diagonal.ellipsoid.rotation = float4(std::cos(3.14159265359f / 8.0f), 0, 0, std::sin(3.14159265359f / 8.0f));
+            seed(*pass, ctx, {origin}, {diagonal});
+            pass->growNeighborVoxels(ctx);
+            require(
+                pass->mTopologySettings.lastGrowthCount == 2u && indices(*pass, ctx)[cell(4, 3, 3)] == -1,
+                "Bounding-box face crossing was mistaken for a finite-face intersection"
+            );
+            std::cout << "PASS: finite-face test rejects a rotated bounding-box false positive\n";
+
+            std::vector<uint32_t> cells;
+            std::vector<VoxelData> voxels;
+            auto small = parent;
+            small.ellipsoid.logScale = float3(std::log(0.1f));
+            for (uint32_t i = 0; i < 29; ++i)
+            {
+                cells.push_back(i);
+                voxels.push_back(small);
+            }
+            cells.push_back(cell(5, 5, 5));
+            voxels.push_back(parent);
+            seed(*pass, ctx, cells, voxels);
+            auto oldPage = pass->mGridResources.voxelPages[0];
+            pass->growNeighborVoxels(ctx);
+            require(
+                pass->mGridResources.gridData.activeVoxelCount == 36u && pass->mGridResources.voxelPages.size() == 2u,
+                "Growth did not expand across the page boundary"
+            );
+            require(pass->mGridResources.voxelPages[0] == oldPage, "Expansion replaced the old parameter page");
+            std::cout << "PASS: on-demand page extension retains existing pages\n";
+
+            cells.clear();
+            voxels.clear();
+            for (uint32_t i = 0; i < 62; ++i)
+            {
+                cells.push_back(i);
+                voxels.push_back(small);
+            }
+            cells.push_back(cell(5, 5, 5));
+            voxels.push_back(parent);
+            seed(*pass, ctx, cells, voxels);
+            pass->growNeighborVoxels(ctx);
+            require(
+                !pass->mTopologySettings.enableGrowth && pass->mGridResources.gridData.activeVoxelCount == 63u,
+                "Pool overflow did not pause growth and retain existing voxels"
+            );
+            map = indices(*pass, ctx);
+            std::set<int32_t> ids;
+            for (int32_t id : map)
+            {
+                require(id > kGrowthClaimBase, "Failed growth left a temporary claim");
+                if (id >= 0)
+                    ids.insert(id);
+            }
+            require(ids.size() == 63u && *ids.rbegin() == 62, "Failed growth damaged the spatial index");
+            std::cout << "PASS: capacity overflow rolls back all claims without partial growth\n";
+
+            seed(*pass, ctx, {origin}, {parent});
+            pass->growNeighborVoxels(ctx);
+            write(pass->mGridResources.topologyEvidencePages, 0, deletion);
+            pass->mOptimizerParams.currentIteration = 51;
+            pass->mTopologySettings.candidateCount = 1;
+            pass->deleteAndCompactCandidates(ctx);
+            const auto beforeRestart = read<VoxelData>(pass->mGridResources.voxelPages, 0);
+            pass->resetPointCloudOptimization(ctx);
+            ctx->submit(true);
+            require(indices(*pass, ctx)[origin] == -1, "Optimization restart retained old cooldown");
+            require(
+                read<TopologyEvidence>(pass->mGridResources.topologyEvidencePages, 0).deletionEligibleIteration == 0u,
+                "Optimization restart retained old protection expiry"
+            );
+            const auto afterRestart = read<VoxelData>(pass->mGridResources.voxelPages, 0);
+            require(std::memcmp(&beforeRestart, &afterRestart, sizeof(beforeRestart)) == 0, "Restart changed voxel parameters");
+            std::cout << "PASS: restart clears transient protection/cooldown without changing geometry\n";
+            device->wait();
+            std::cout << "All neighbor-growth GPU regression tests passed.\n";
+            return 0;
+        }
+        catch (const std::exception& error)
+        {
+            std::cerr << "FAIL: " << error.what() << '\n';
+            return 1;
+        }
+    }
+};
+
+int main()
+{
+    return NeighborGrowthTestAccess::run();
+}
