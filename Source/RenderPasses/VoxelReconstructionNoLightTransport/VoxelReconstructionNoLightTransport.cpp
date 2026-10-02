@@ -353,7 +353,7 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget) {
     else if (!mReferenceCameras.empty() && mReferenceImages.size() < mReferenceCameras.size())
         widget.text(fmt::format("Loading reference images: {} / {}", mReferenceImages.size(), mReferenceCameras.size()));
     widget.text("Point-cloud initialization");
-    widget.text("PLY: " + (resolveReconstructionPath(ReferenceImageDir) / "point_cloud.ply").string());
+    widget.text("PLY: " + (resolveReconstructionPath(ReferenceImageDir) / InitializationPointCloudFile).string());
     widget.text("Gaussian Opacity Threshold applies only to PLY files with Gaussian attributes.");
     // 高斯占位阈值，改动在下次 Init / Reset from PLY 时生效.
     widget.var("Gaussian Opacity Threshold", mPointCloud.opacityThreshold, 0.001f, 1.0f, 0.005f);
