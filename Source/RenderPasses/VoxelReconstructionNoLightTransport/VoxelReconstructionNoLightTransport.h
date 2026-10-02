@@ -37,7 +37,6 @@
 #include <filesystem>
 #include <iomanip>
 #include <sstream>
-#include "DiffRendering/SceneGradients.h"
 #include <nlohmann/json.hpp>
 
 
@@ -436,10 +435,6 @@ private:
     std::vector<ref<Camera>> mReferenceCameras;
     std::vector<std::filesystem::path> mReferenceImagePaths;
     ref<Buffer> mpPathRecordBuffer;
-
-    // Auto Diff
-    //ref<SceneGradients> mpSceneGradients;
-    //uint32_t mVoxelSHGradDim = 0;
 
     // UI
     bool mOptionsChanged = false;

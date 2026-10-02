@@ -20,6 +20,8 @@ The initialization error reports when the Gaussian coverage exceeds the pool lim
 
 ## Optimization
 
+Gradients are computed explicitly in `Shader/GradientPass.cs.slang` and accumulated in the sparse `GradRecord` buffers; this pass does not use Slang automatic differentiation or Falcor's `SceneGradients` interfaces.
+
 Forward rendering uses hard ellipsoid intersections within each voxel. Geometry backward uses a continuous world-distance proxy for the hit/miss boundary, with **Geometry Tau (voxels)** converted to world units using the current voxel width. RGB and alpha losses can contribute to geometry gradients; **Alpha Geometry Weight** controls the extra alpha-to-geometry term, while **Alpha Loss Weight** controls the alpha image loss and its derivative. Center, log-scale, rotation, radiance, and opacity use separate Adam state and UI learning rates. Opacity has a warm-up and ramp. Training updates after each view's SPP batch, then advances to the next view. **Max Iteration** counts complete passes over the reference views.
 
 ## Deletion-candidate evidence

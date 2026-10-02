@@ -170,7 +170,6 @@ void updateRadianceSHAdam(
         // Never address an unallocated page. Overflow is rare; the host grows
         // this pool at the next iteration boundary. Keep this view's radiance
         // update with the old SGD rule until moments can be allocated.
-        SH_MAX_ITERS(SH_COUNT)
         for (uint i = 0; i < SH_COUNT; ++i)
         {
             float3 gradient = GRAD_DATA(voxelIndex).radianceGrad.coefficients[i] * gradScale;
@@ -186,7 +185,6 @@ void updateRadianceSHAdam(
     gRadianceAdamPages[NonUniformResourceIndex(radiancePage)][radianceOffset].steps = steps;
     float bias1 = max(1.0f - pow(kAdamBeta1, float(steps)), 1e-8f);
     float bias2 = max(1.0f - pow(kAdamBeta2, float(steps)), 1e-8f);
-    SH_MAX_ITERS(SH_COUNT)
     for (uint i = 0; i < SH_COUNT; ++i)
     {
         float3 gradient = GRAD_DATA(voxelIndex).radianceGrad.coefficients[i] * gradScale;
@@ -211,7 +209,6 @@ void updateOpacitySHAdam(
     gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].opacitySteps = steps;
     float bias1 = max(1.0f - pow(kAdamBeta1, float(steps)), 1e-8f);
     float bias2 = max(1.0f - pow(kAdamBeta2, float(steps)), 1e-8f);
-    SH_MAX_ITERS(SH_OPACITY_COUNT)
     for (uint i = 0; i < SH_OPACITY_COUNT; ++i)
     {
         float gradient = GRAD_DATA(voxelIndex).opacityGrad.coefficients[i] * gradScale;

@@ -2,10 +2,8 @@
 #include "../PathRecord.slang"
 //#include "../Voxel/Shading.slang"
 #include "../Voxel/VoxelGrid.slang"
-#include "DiffShading.slang"
 
 import Utils.Debug.PixelDebug;
-import DiffRendering.SceneGradientInfo;
 
 
 // Input
@@ -330,7 +328,6 @@ void accumulateAppearanceGrad(
         1
     );
 
-    SH_MAX_ITERS(SH_COUNT)
     for (uint i = 0; i < SH_COUNT; ++i)
     {
         INTERLOCKED_ADD_FLOAT(
@@ -349,7 +346,6 @@ void accumulateAppearanceGrad(
         );
     }
 
-    SH_MAX_ITERS(SH_OPACITY_COUNT)
     for (uint i = 0; i < SH_OPACITY_COUNT; ++i)
     {
         INTERLOCKED_ADD_FLOAT(

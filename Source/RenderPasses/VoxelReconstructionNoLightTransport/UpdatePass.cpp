@@ -75,8 +75,6 @@ void VoxelReconstructionNoLightTransport::runUpdatePass(RenderContext* pRenderCo
     var["gGridDataParamBlock"] = mpGridBlock;
     // Sparse Adam pages are bound when a grid is committed or extended.
 
-    //var["gVoxelSHGrads"] = mpSceneGradients->getGradsBuffer(GradientType::VoxelSH);
-
     auto cb = var["CB"];
     cb["gUseGradCountNormalize"] = mUpdatePass.mUseGradCountNormalize;
     cb["gGradScale"] = mUpdatePass.mGradScale;
@@ -87,7 +85,6 @@ void VoxelReconstructionNoLightTransport::runUpdatePass(RenderContext* pRenderCo
     cb["gRadianceAdamCapacity"] = uint32_t(mGridResources.radianceAdamPages.size()) * SPARSE_POOL_PAGE_SIZE;
     cb["gLrOpacity"] = getEffectiveOpacityLearningRate();
     cb["gBackgroundCarveAdamMultiplier"] = mUpdatePass.mBackgroundCarveAdamMultiplier;
-    //cb["gVoxelSHGradDim"] = mVoxelSHGradDim;
     cb["gEllipsoidPruneThreshold"] = mUpdatePass.mEllipsoidPruneThreshold;
     cb["gEnableEllipsoidPruning"] = mUpdatePass.mEnableEllipsoidPruning;
 

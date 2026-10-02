@@ -56,10 +56,6 @@ target_sources(VoxelReconstructionNoLightTransport PRIVATE
     Shader/UpdatePass.cs.slang
     Shader/TopologyPass.cs.slang
     Shader/DeleteCompactPass.cs.slang
-    Shader/DiffVoxelIO.slang
-    Shader/DiffTools.slang
-    Shader/DiffShading.slang
-
 )
 
 # Keep this pass's C++ dependencies explicit: localized MSVC /showIncludes output

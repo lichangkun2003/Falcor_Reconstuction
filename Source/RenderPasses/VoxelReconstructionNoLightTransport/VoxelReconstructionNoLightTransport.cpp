@@ -606,16 +606,6 @@ void VoxelReconstructionNoLightTransport::setScene(RenderContext* pRenderContext
 
 
 
-    // Auto Diff
-    //mVoxelSHGradDim = mGridResources.gridData.totalVoxelCount() * SH_COUNT * 3;
-    //std::vector<SceneGradients::GradConfig> gradConfigs;
-    //gradConfigs.push_back(SceneGradients::GradConfig(
-    //    GradientType::VoxelSH,
-    //    mVoxelSHGradDim,
-    //    1 // hashSize，第一版建议先用 1
-    //));
-    //mpSceneGradients = make_ref<SceneGradients>(mpDevice, gradConfigs, GradientAggregateMode::Direct);
-
     // RayMarching
     createRayMarchingPassResource(pRenderContext);
     updateOutputResolution();

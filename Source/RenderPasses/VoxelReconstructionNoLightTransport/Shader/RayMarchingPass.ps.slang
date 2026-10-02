@@ -6,8 +6,6 @@ import Scene.Scene;
 import Utils.Debug.PixelDebug;
 
 
-#include "DiffShading.slang"
-
 #include "../Math/AABB.slang"
 #include "../Math/Random.slang"
 //#include "../Voxel/Shading.slang"

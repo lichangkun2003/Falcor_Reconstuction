@@ -1,29 +1,12 @@
 #pragma once
 #include "../HostDeviceShared.slang"
 
-#ifndef DIFF_MODE
-#define DIFF_MODE 0
-#endif
-
-#if !defined(HOST_CODE) && DIFF_MODE
-#define SH_AD_ATTR [Differentiable]
-#define SH_NO_DIFF no_diff
-#define SH_MAX_ITERS(N) [MaxIters(N)]
-#else
-#define SH_AD_ATTR
-#define SH_NO_DIFF
-#define SH_MAX_ITERS(N)
-#endif
-
-
 BEGIN_NAMESPACE_FALCOR
 
 #define SQRTPI 1.7724538509055160273f
 
 #define EVEN_SH_COUNT 6
 
-// SH_AD_ATTR
-// inline float calcSH(SH_NO_DIFF uint idx, SH_NO_DIFF float3 p)
 inline float calcSH(uint idx, float3 p)
 {
     switch (idx)
@@ -216,7 +199,6 @@ struct SphericalHarmonicsRGB
     {
         float3 sum = float3(0.f);
 
-        SH_MAX_ITERS(SH_COUNT)
         for (uint i = 0; i < SH_COUNT; i++)
         {
             float basis = calcSH(i, direction);
@@ -270,7 +252,6 @@ struct SphericalHarmonicsOpacity
     {
         float logit = 0.0f;
 
-        SH_MAX_ITERS(SH_OPACITY_COUNT)
         for (uint i = 0; i < SH_OPACITY_COUNT; ++i)
         {
             logit += coefficients[i] * calcSH(i, direction);
@@ -300,7 +281,6 @@ struct SphericalHarmonicsOpacity
         float dL_dLogit =dL_dOpacity *opacity *(1.0f - opacity);
 
 
-        SH_MAX_ITERS(SH_OPACITY_COUNT)
         for (uint i = 0; i < SH_OPACITY_COUNT; ++i)
         {
             float Y = calcSH(i, viewDir);
