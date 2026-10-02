@@ -295,7 +295,11 @@ HitResult rayMarchingDDA(
                     topologyDebugLayer == uint(TopologyDebugLayer::Deletion) &&
                     topologyVoxelID >= 0 &&
                     isDeletionCandidate(uint(topologyVoxelID));
-                if (deletionCandidate)
+                bool grownVoxel =
+                    topologyDebugLayer == uint(TopologyDebugLayer::Growth) &&
+                    topologyVoxelID >= 0 &&
+                    TOPOLOGY_DATA(uint(topologyVoxelID)).growthBirthIterationPlusOne != 0u;
+                if (deletionCandidate || grownVoxel)
                 {
                     occupied.gmin = 1.0f; // Marker used only by the debug color path.
                     return occupied;
@@ -604,6 +608,8 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
                 psOut.color = float4(0.15f, 0.65f, 1.0f, 1.0f);
             else if (topologyDebugLayer == uint(TopologyDebugLayer::Deletion) && hit.gmin > 0.0f)
                 psOut.color = float4(1.0f, 0.12f, 0.04f, 1.0f);
+            else if (topologyDebugLayer == uint(TopologyDebugLayer::Growth) && hit.gmin > 0.0f)
+                psOut.color = float4(0.1f, 1.0f, 0.25f, 1.0f);
             else if (showOccupiedContext)
                 psOut.color = float4(0.18f, 0.2f, 0.23f, 1.0f);
         }

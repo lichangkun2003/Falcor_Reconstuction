@@ -8,6 +8,7 @@ cbuffer CB
     uint gMinConflictViews;
     uint gMaxSupportViews;
     uint gCurrentIteration;
+    bool gPreserveGrowthProtection;
 }
 
 [numthreads(256, 1, 1)]
@@ -18,6 +19,9 @@ void resetEvidence(uint3 dispatchThreadId : SV_DispatchThreadID)
     TOPOLOGY_DATA(voxelID).lastForegroundView = 0u;
     TOPOLOGY_DATA(voxelID).lastBackgroundView = 0u;
     TOPOLOGY_DATA(voxelID).packedCountsAndFlags = 0u;
+    if (!gPreserveGrowthProtection)
+        TOPOLOGY_DATA(voxelID).deletionEligibleIteration = 0u;
+    // growthBirthIterationPlusOne is lineage, not deletion evidence.
 }
 
 [numthreads(256, 1, 1)]

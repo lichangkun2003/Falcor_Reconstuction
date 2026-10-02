@@ -13,6 +13,9 @@ struct TopologyEvidence
     uint packedCountsAndFlags;
     // Full training rounds must finish before a newborn can collect deletion votes.
     uint deletionEligibleIteration;
+    // Persistent lineage: zero for initialized voxels, birth round + 1 for growth.
+    // Unlike deletion evidence/protection, this survives optimization restarts.
+    uint growthBirthIterationPlusOne;
 };
 
 // Negative spatial-index values are empty cells. Cooldown is -(expiry + 2),

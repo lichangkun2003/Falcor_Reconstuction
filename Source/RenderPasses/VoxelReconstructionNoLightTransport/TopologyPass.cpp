@@ -38,25 +38,26 @@ void VoxelReconstructionNoLightTransport::createTopologyPassResource(RenderConte
 
 void VoxelReconstructionNoLightTransport::resetDeletionEvidence(RenderContext* pRenderContext, bool preserveGrowthProtection)
 {
-    if (preserveGrowthProtection && mpResetTopologyEvidencePass)
+    // Reset only transient evidence, never the persistent growth lineage. Fresh
+    // PLY/load allocations already zero all records, including lineage.
+    if (!mpResetTopologyEvidencePass)
     {
-        auto var = mpResetTopologyEvidencePass->getRootVar();
-        var["gGridDataParamBlock"] = mpGridBlock;
-        constexpr uint32_t batchSize = 65535u * 256u;
-        for (uint32_t offset = 0; offset < mGridResources.gridData.activeVoxelCount; )
-        {
-            const uint32_t count = std::min(batchSize, mGridResources.gridData.activeVoxelCount - offset);
-            var["CB"]["gSparseOffset"] = offset;
-            mpResetTopologyEvidencePass->execute(pRenderContext, uint3(count, 1, 1));
-            offset += count;
-        }
-        barrierTopologyEvidence(pRenderContext);
+        ProgramDesc desc;
+        desc.addShaderLibrary(TopologyPassShaderFilePath).csEntry("resetEvidence");
+        mpResetTopologyEvidencePass = ComputePass::create(mpDevice, desc, getReconstructionDefines(), true);
     }
-    else
+    auto var = mpResetTopologyEvidencePass->getRootVar();
+    var["gGridDataParamBlock"] = mpGridBlock;
+    var["CB"]["gPreserveGrowthProtection"] = preserveGrowthProtection;
+    constexpr uint32_t batchSize = 65535u * 256u;
+    for (uint32_t offset = 0; offset < mGridResources.gridData.activeVoxelCount; )
     {
-        for (const auto& page : mGridResources.topologyEvidencePages)
-            pRenderContext->clearUAV(page->getUAV().get(), uint4(0));
+        const uint32_t count = std::min(batchSize, mGridResources.gridData.activeVoxelCount - offset);
+        var["CB"]["gSparseOffset"] = offset;
+        mpResetTopologyEvidencePass->execute(pRenderContext, uint3(count, 1, 1));
+        offset += count;
     }
+    barrierTopologyEvidence(pRenderContext);
     if (mpTopologySummary)
         pRenderContext->clearUAV(mpTopologySummary->getUAV().get(), uint4(0));
 

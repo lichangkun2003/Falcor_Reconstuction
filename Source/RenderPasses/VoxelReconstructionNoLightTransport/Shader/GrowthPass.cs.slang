@@ -125,6 +125,7 @@ bool growthChild(uint parentID, uint face, out uint3 cell, out GaussianEllipsoid
         GRAD_DATA(id) = gradient;
         TopologyEvidence evidence = {};
         evidence.deletionEligibleIteration = gEligibleIteration;
+        evidence.growthBirthIterationPlusOne = gCurrentIteration + 1u;
         TOPOLOGY_DATA(id) = evidence;
         uint page = id / SPARSE_POOL_PAGE_SIZE;
         uint offset = id % SPARSE_POOL_PAGE_SIZE;

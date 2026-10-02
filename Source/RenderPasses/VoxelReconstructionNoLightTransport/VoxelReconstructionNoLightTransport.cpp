@@ -544,10 +544,19 @@ void VoxelReconstructionNoLightTransport::renderUITopology(Gui::Widgets& widget)
         mRayMarchingPass.mDrawMode = uint32_t(ABSDFDrawMode::TopologyDebug);
         mRayMarchingPass.mOptionsChanged = true;
     }
+    if (group.button(mEnableReconstruction ? "Stop and Show Grown Voxels" : "Show Grown Voxels"))
+    {
+        if (mEnableReconstruction) stopReconstruction();
+        mTopologySettings.debugLayer = uint32_t(TopologyDebugLayer::Growth);
+        mRayMarchingPass.mDrawMode = uint32_t(ABSDFDrawMode::TopologyDebug);
+        mRayMarchingPass.mOptionsChanged = true;
+    }
 
     if (group.dropdown("Debug Layer", reinterpret_cast<TopologyDebugLayer&>(mTopologySettings.debugLayer)))
         mRayMarchingPass.mOptionsChanged = true;
-    group.text("Occupied: blue; deletion candidates: red; optional context: gray.");
+    group.text("Occupied: blue; grown voxels: green; deletion candidates: red; optional context: gray.");
+    if (mTopologySettings.debugLayer == uint32_t(TopologyDebugLayer::Growth))
+        group.text("Shows surviving grown cells across all growth rounds, independent of opacity. Markers are not saved in v3 bins.");
     if (mTopologySettings.debugLayer != uint32_t(TopologyDebugLayer::Occupied))
     {
         if (group.checkbox("Show Occupied Context", mTopologySettings.showOccupiedContext))

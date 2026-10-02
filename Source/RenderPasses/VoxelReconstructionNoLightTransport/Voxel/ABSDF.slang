@@ -173,7 +173,7 @@ FALCOR_ENUM_INFO(
     TopologyDebugLayer,
     {
     { TopologyDebugLayer::Occupied, "Occupied grid cells" },
-    { TopologyDebugLayer::Growth, "Growth candidates" },
+    { TopologyDebugLayer::Growth, "Grown voxels" },
     { TopologyDebugLayer::Split, "Split candidates" },
     { TopologyDebugLayer::Deletion, "Deletion candidates" },
 }

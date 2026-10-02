@@ -4,6 +4,7 @@
 #include "Utils/Debug/PixelDebug.h"
 #include "Core/Pass/FullScreenPass.h"
 #include "RenderGraph/RenderPassStandardFlags.h"
+#include "Scene/SceneBuilder.h"
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <filesystem>
@@ -212,6 +213,84 @@ struct NeighborGrowthTestAccess
         pass.mTopologySettings.evidenceInterval = interval;
         pass.mOptimizerParams.currentIteration = 50u;
     }
+    static void checkGrowthPreview(VoxelReconstructionNoLightTransport& pass, RenderContext* ctx)
+    {
+        auto voxel = parentVoxel();
+        voxel.ellipsoid.center = float3(0.01f);
+        voxel.ellipsoid.logScale = float3(std::log(0.001f));
+        voxel.opacity.coefficients[0] = -100.0f;
+        seed(pass, ctx, {cell(3, 3, 2), cell(3, 3, 4), cell(2, 3, 2)}, {voxel, voxel, voxel});
+        TopologyEvidence grown = {};
+        grown.growthBirthIterationPlusOne = 51u;
+        write(pass.mGridResources.topologyEvidencePages, 1, grown);
+
+        // Compile and execute the production forward shader, not a test-only
+        // approximation. The dummy scene supplies its required scene defines.
+        auto scene = SceneBuilder(pass.mpDevice, Settings()).getScene();
+        ProgramDesc desc;
+        desc.addShaderLibrary(RayMarchingShaderFilePath).psEntry("main");
+        desc.setShaderModel(ShaderModel::SM6_5);
+        desc.addTypeConformances(scene->getTypeConformances());
+        auto defines = scene->getSceneDefines();
+        defines.add(pass.getReconstructionDefines());
+        defines.add("CHECK_PRIMITIVE", "1");
+        defines.add("USE_ENV_MAP", "0");
+        auto preview = FullScreenPass::create(pass.mpDevice, desc, defines);
+        auto var = preview->getRootVar();
+        scene->bindShaderData(var["gScene"]);
+        var["gGridDataParamBlock"] = pass.mpGridBlock;
+        var["gPathRecordBuffer"] = pass.mpDevice->createStructuredBuffer(
+            sizeof(PathRecord), 1u, ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess
+        );
+        auto accumulation = pass.mpDevice->createTexture2D(
+            1, 1, ResourceFormat::RGBA32Float, 1, 1, nullptr, ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess
+        );
+        var["gAccuColor"] = accumulation;
+        var["GridData"]["gridMin"] = float3(0);
+        var["GridData"]["voxelSize"] = float3(1);
+        var["GridData"]["voxelCount"] = uint3(8);
+        var["GridData"]["solidVoxelCount"] = 3u;
+        auto cb = var["CB"];
+        cb["pixelCount"] = uint2(1);
+        cb["drawMode"] = uint32_t(ABSDFDrawMode::TopologyDebug);
+        cb["enableReconstruction"] = false;
+        cb["renderBackGround"] = false;
+        cb["invSpp"] = 1.0f;
+        cb["frameIndex"] = 0u;
+        auto output = pass.mpDevice->createTexture2D(
+            1, 1, ResourceFormat::RGBA32Float, 1, 1, nullptr, ResourceBindFlags::ShaderResource | ResourceBindFlags::RenderTarget
+        );
+        auto fbo = Fbo::create(pass.mpDevice);
+        fbo->attachColorTarget(output, 0);
+        const auto render = [&](float x, TopologyDebugLayer layer, bool context, const float3& expected)
+        {
+            auto invVP = float4x4::identity();
+            invVP[0][0] = invVP[1][1] = 0.001f;
+            invVP[2][2] = 10.0f;
+            invVP[0][3] = x;
+            invVP[1][3] = 3.5f;
+            invVP[2][3] = -1.0f;
+            cb["invVP"] = invVP;
+            cb["topologyDebugLayer"] = uint32_t(layer);
+            cb["showOccupiedContext"] = context;
+            ctx->clearUAV(accumulation->getUAV().get(), float4(0));
+            preview->execute(ctx, fbo);
+            auto bytes = ctx->readTextureSubresource(output.get(), 0);
+            float4 pixel;
+            require(bytes.size() == sizeof(pixel), "Unexpected preview readback layout");
+            std::memcpy(&pixel, bytes.data(), sizeof(pixel));
+            require(length(float3(pixel.x, pixel.y, pixel.z) - expected) < 1e-5f, "Topology preview color/filter is incorrect");
+        };
+        render(3.5f, TopologyDebugLayer::Growth, false, float3(0.1f, 1.0f, 0.25f));
+        render(3.5f, TopologyDebugLayer::Growth, true, float3(0.1f, 1.0f, 0.25f));
+        render(2.5f, TopologyDebugLayer::Growth, true, float3(0.18f, 0.2f, 0.23f));
+        render(2.5f, TopologyDebugLayer::Growth, false, float3(0.02f, 0.02f, 0.025f));
+        render(3.5f, TopologyDebugLayer::Occupied, false, float3(0.15f, 0.65f, 1.0f));
+        grown.packedCountsAndFlags = kTopologyEvidenceDeletionCandidate;
+        write(pass.mGridResources.topologyEvidencePages, 1, grown);
+        render(3.5f, TopologyDebugLayer::Deletion, false, float3(1.0f, 0.12f, 0.04f));
+    }
+
     static int run()
     {
         try
@@ -243,6 +322,10 @@ struct NeighborGrowthTestAccess
             require(std::memcmp(&retained, &parent, sizeof(parent)) == 0, "Growth modified parent data");
             auto retainedAdam = read<GeometryAdamState>(pass->mGridResources.adamPages, 0);
             require(std::memcmp(&retainedAdam, &parentAdam, sizeof(parentAdam)) == 0, "Growth reset parent Adam");
+            require(
+                read<TopologyEvidence>(pass->mGridResources.topologyEvidencePages, 0).growthBirthIterationPlusOne == 0u,
+                "Growth marked the original parent as grown"
+            );
             for (uint32_t id = 1; id < 7; ++id)
             {
                 checkChild(
@@ -261,6 +344,10 @@ struct NeighborGrowthTestAccess
                     read<TopologyEvidence>(pass->mGridResources.topologyEvidencePages, id).deletionEligibleIteration == 55u,
                     "Newborn protection expiry is incorrect"
                 );
+                require(
+                    read<TopologyEvidence>(pass->mGridResources.topologyEvidencePages, id).growthBirthIterationPlusOne == 51u,
+                    "Newborn did not retain its growth birth round"
+                );
             }
             std::cout << "PASS: trigger timing, single layer, rotated five-face bounds, inheritance, low opacity, fresh Adam\n";
             checkDeletionProtection(*pass, ctx);
@@ -276,6 +363,10 @@ struct NeighborGrowthTestAccess
             require(
                 read<TopologyEvidence>(pass->mGridResources.topologyEvidencePages, 0).deletionEligibleIteration == 55u,
                 "Compaction lost newborn protection"
+            );
+            require(
+                read<TopologyEvidence>(pass->mGridResources.topologyEvidencePages, 0).growthBirthIterationPlusOne == 51u,
+                "Compaction/evidence reset lost the moved newborn's growth marker"
             );
             auto map = indices(*pass, ctx);
             require(map[origin] == -58, "Cooldown is not bound to the deleted spatial cell");
@@ -361,6 +452,14 @@ struct NeighborGrowthTestAccess
             pass->mTopologySettings.candidateCount = 1;
             pass->deleteAndCompactCandidates(ctx);
             const auto beforeRestart = read<VoxelData>(pass->mGridResources.voxelPages, 0);
+            pass->mEnableReconstruction = true;
+            pass->mOptimizerParams.isRunning = true;
+            pass->stopReconstruction();
+            require(
+                !pass->mEnableReconstruction && !pass->mOptimizerParams.isRunning &&
+                    read<TopologyEvidence>(pass->mGridResources.topologyEvidencePages, 0).growthBirthIterationPlusOne == 51u,
+                "Stopping optimization lost the growth marker"
+            );
             pass->resetPointCloudOptimization(ctx);
             ctx->submit(true);
             require(indices(*pass, ctx)[origin] == -1, "Optimization restart retained old cooldown");
@@ -371,6 +470,19 @@ struct NeighborGrowthTestAccess
             const auto afterRestart = read<VoxelData>(pass->mGridResources.voxelPages, 0);
             require(std::memcmp(&beforeRestart, &afterRestart, sizeof(beforeRestart)) == 0, "Restart changed voxel parameters");
             std::cout << "PASS: restart clears transient protection/cooldown without changing geometry\n";
+            require(
+                read<TopologyEvidence>(pass->mGridResources.topologyEvidencePages, 0).growthBirthIterationPlusOne == 51u,
+                "Optimization restart lost persistent growth lineage"
+            );
+            seed(*pass, ctx, {origin}, {parent});
+            require(
+                read<TopologyEvidence>(pass->mGridResources.topologyEvidencePages, 0).growthBirthIterationPlusOne == 0u,
+                "Fresh initialization retained an old growth marker"
+            );
+            std::cout << "PASS: growth lineage survives stop/restart/compaction and clears on fresh initialization\n";
+            checkGrowthPreview(*pass, ctx);
+            std::cout << "PASS: production preview highlights low-opacity grown cells, filters originals, retains "
+                         "context/deletion/occupied layers\n";
             device->wait();
             std::cout << "All neighbor-growth GPU regression tests passed.\n";
             return 0;
