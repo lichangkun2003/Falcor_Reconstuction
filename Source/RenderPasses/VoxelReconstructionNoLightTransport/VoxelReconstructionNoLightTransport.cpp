@@ -604,6 +604,8 @@ void VoxelReconstructionNoLightTransport::renderUITopology(Gui::Widgets& widget)
     group.var("Child Scale Multiplier", mTopologySettings.growthShrink, 0.01f, 0.99f, 0.01f);
     group.var("Child Contact Offset (voxels)", mTopologySettings.growthContactOffset, 0.01f, 0.49f, 0.01f);
     group.var("Child Max Initial Opacity", mTopologySettings.growthInitialOpacity, 0.01f, 0.49f, 0.01f);
+    group.var("Newborn Growth Wait (iterations)", mTopologySettings.growthWaitIterations, 0u, 100u, 1u);
+    group.text("Newborns keep optimizing but cannot grow until this many full rounds finish; independent of deletion protection.");
     group.var("Newborn Protection (iterations)", mTopologySettings.growthProtectionIterations, 1u, 100u, 1u);
     group.var("Deleted Cell Cooldown (iterations)", mTopologySettings.deletionCooldownIterations, 0u, 100u, 1u);
     group.text(mTopologySettings.growthStatus);

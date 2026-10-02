@@ -62,6 +62,7 @@ struct NeighborGrowthTestAccess
         pass.mOptimizerParams.currentIteration = 50u;
         pass.mTopologySettings.enableGrowth = true;
         pass.mTopologySettings.growthFacePenetration = 0.05f;
+        pass.mTopologySettings.growthWaitIterations = 5u;
         pass.mGrowthCooldownPresent = false;
         pass.resetDeletionEvidence(ctx);
     }
@@ -294,6 +295,72 @@ struct NeighborGrowthTestAccess
         require(pass.mTopologySettings.lastGrowthCount == 4u, "Valid rotated finite-face penetration did not grow XY neighbors");
     }
 
+    static void checkGrowthWaiting(VoxelReconstructionNoLightTransport& pass, RenderContext* ctx)
+    {
+        const auto parent = parentVoxel();
+        seed(pass, ctx, {cell(3, 3, 3)}, {parent});
+        pass.growNeighborVoxels(ctx);
+        require(pass.mTopologySettings.lastGrowthCount == 6u, "Growth wait blocked an initialized parent");
+        const uint32_t firstGenerationCount = pass.mGridResources.gridData.activeVoxelCount;
+        auto newborn = read<TopologyEvidence>(pass.mGridResources.topologyEvidencePages, 1);
+        require(newborn.growthWaitStartIterationPlusOne == 51u, "Newborn growth-wait clock was not initialized");
+        // Deliberately enlarge one child as if unstable updates had pushed it
+        // through its other faces. Remove deletion protection to prove the
+        // parent waiting gate is independent of the deletion gate.
+        newborn.deletionEligibleIteration = 0u;
+        write(pass.mGridResources.topologyEvidencePages, 1, newborn);
+        write(pass.mGridResources.voxelPages, 1, parent);
+        pass.barrierSparseVoxels(ctx);
+        for (uint32_t iteration : {51u, 54u})
+        {
+            pass.mOptimizerParams.currentIteration = iteration;
+            pass.growNeighborVoxels(ctx);
+            require(pass.mTopologySettings.lastGrowthCount == 0u, "Unoptimized newborn grew before completing its wait");
+        }
+        pass.resetDeletionEvidence(ctx, true);
+        pass.mEnableReconstruction = true;
+        pass.mOptimizerParams.isRunning = true;
+        pass.stopReconstruction();
+        ctx->submit(true);
+        require(
+            read<TopologyEvidence>(pass.mGridResources.topologyEvidencePages, 1).growthWaitStartIterationPlusOne == 51u,
+            "Evidence reset or stopping training erased the newborn wait"
+        );
+
+        pass.mOptimizerParams.currentIteration = 55u;
+        pass.mTopologySettings.growthWaitIterations = 10u;
+        pass.growNeighborVoxels(ctx);
+        require(pass.mTopologySettings.lastGrowthCount == 0u, "Increasing the wait did not apply to an existing newborn");
+        pass.mTopologySettings.growthWaitIterations = 5u;
+        pass.growNeighborVoxels(ctx);
+        require(pass.mTopologySettings.lastGrowthCount > 0u, "Newborn could not grow at the exact end of its five-round wait");
+        const uint32_t secondGenerationCount = pass.mGridResources.gridData.activeVoxelCount;
+        for (uint32_t id = firstGenerationCount; id < secondGenerationCount; ++id)
+            require(
+                read<TopologyEvidence>(pass.mGridResources.topologyEvidencePages, id).growthWaitStartIterationPlusOne == 56u,
+                "Second-generation child inherited an old waiting clock"
+            );
+        write(pass.mGridResources.voxelPages, firstGenerationCount, parent);
+        pass.barrierSparseVoxels(ctx);
+        pass.mOptimizerParams.currentIteration = 56u;
+        pass.growNeighborVoxels(ctx);
+        require(pass.mTopologySettings.lastGrowthCount == 0u, "A new generation bypassed its own waiting period");
+        pass.mTopologySettings.growthWaitIterations = 0u;
+        pass.growNeighborVoxels(ctx);
+        require(pass.mTopologySettings.lastGrowthCount > 0u, "Zero waiting period did not restore next-round growth");
+
+        // Conversely, deletion protection must not block a mature growth
+        // parent. Its growth age and its deletion expiry are separate clocks.
+        seed(pass, ctx, {cell(3, 3, 3)}, {parent});
+        newborn = {};
+        newborn.growthBirthIterationPlusOne = 41u;
+        newborn.growthWaitStartIterationPlusOne = 41u;
+        newborn.deletionEligibleIteration = 100u;
+        write(pass.mGridResources.topologyEvidencePages, 0, newborn);
+        pass.growNeighborVoxels(ctx);
+        require(pass.mTopologySettings.lastGrowthCount == 6u, "Deletion protection prevented an otherwise mature parent from growing");
+    }
+
     static void checkGrowthPreview(VoxelReconstructionNoLightTransport& pass, RenderContext* ctx)
     {
         auto voxel = parentVoxel();
@@ -389,6 +456,9 @@ struct NeighborGrowthTestAccess
             checkGrowthPenetration(*pass, ctx);
             std::cout << "PASS: face-depth trigger, strict thresholds, per-face direction, occupied neighbors, non-cubic widths, rotated "
                          "footprint\n";
+            checkGrowthWaiting(*pass, ctx);
+            std::cout << "PASS: newborn wait blocks unstable children, expires after full rounds, resets per generation, supports UI "
+                         "changes, independent of deletion\n";
             const auto parent = parentVoxel();
             const uint32_t origin = cell(3, 3, 3);
             seed(*pass, ctx, {origin}, {parent});
@@ -432,6 +502,10 @@ struct NeighborGrowthTestAccess
                     read<TopologyEvidence>(pass->mGridResources.topologyEvidencePages, id).growthBirthIterationPlusOne == 51u,
                     "Newborn did not retain its growth birth round"
                 );
+                require(
+                    read<TopologyEvidence>(pass->mGridResources.topologyEvidencePages, id).growthWaitStartIterationPlusOne == 51u,
+                    "Newborn did not receive its own growth-wait clock"
+                );
             }
             std::cout << "PASS: trigger timing, single layer, rotated five-face bounds, inheritance, low opacity, fresh Adam\n";
             checkDeletionProtection(*pass, ctx);
@@ -451,6 +525,10 @@ struct NeighborGrowthTestAccess
             require(
                 read<TopologyEvidence>(pass->mGridResources.topologyEvidencePages, 0).growthBirthIterationPlusOne == 51u,
                 "Compaction/evidence reset lost the moved newborn's growth marker"
+            );
+            require(
+                read<TopologyEvidence>(pass->mGridResources.topologyEvidencePages, 0).growthWaitStartIterationPlusOne == 51u,
+                "Compaction/evidence reset lost the moved newborn's growth wait"
             );
             auto map = indices(*pass, ctx);
             require(map[origin] == -58, "Cooldown is not bound to the deleted spatial cell");
@@ -550,6 +628,10 @@ struct NeighborGrowthTestAccess
             require(
                 read<TopologyEvidence>(pass->mGridResources.topologyEvidencePages, 0).deletionEligibleIteration == 0u,
                 "Optimization restart retained old protection expiry"
+            );
+            require(
+                read<TopologyEvidence>(pass->mGridResources.topologyEvidencePages, 0).growthWaitStartIterationPlusOne == 0u,
+                "Optimization restart retained a waiting clock from the previous training timeline"
             );
             const auto afterRestart = read<VoxelData>(pass->mGridResources.voxelPages, 0);
             require(std::memcmp(&beforeRestart, &afterRestart, sizeof(beforeRestart)) == 0, "Restart changed voxel parameters");

@@ -38,7 +38,8 @@ void VoxelReconstructionNoLightTransport::createTopologyPassResource(RenderConte
 
 void VoxelReconstructionNoLightTransport::resetDeletionEvidence(RenderContext* pRenderContext, bool preserveGrowthProtection)
 {
-    // Reset only transient evidence, never the persistent growth lineage. Fresh
+    // Compaction preserves newborn protection/waiting clocks. Restart clears
+    // both transient clocks, never the persistent growth lineage. Fresh
     // PLY/load allocations already zero all records, including lineage.
     if (!mpResetTopologyEvidencePass)
     {

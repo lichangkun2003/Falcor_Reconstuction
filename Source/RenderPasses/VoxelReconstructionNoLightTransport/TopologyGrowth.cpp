@@ -95,6 +95,7 @@ void VoxelReconstructionNoLightTransport::growNeighborVoxels(RenderContext* pRen
             var["gGrowthCounter"] = counter;
             auto cb = var["CB"];
             cb["gCurrentIteration"] = std::min(mOptimizerParams.currentIteration, kMaximumTopologyIteration);
+            cb["gGrowthWaitIterations"] = mTopologySettings.growthWaitIterations;
             cb["gEligibleIteration"] = uint32_t(std::min<uint64_t>(
                 kMaximumTopologyIteration, uint64_t(mOptimizerParams.currentIteration) + mTopologySettings.growthProtectionIterations
             ));
@@ -114,7 +115,8 @@ void VoxelReconstructionNoLightTransport::growNeighborVoxels(RenderContext* pRen
         counter->getBlob(&added, 0, sizeof(added));
         if (added == 0u)
         {
-            mTopologySettings.growthStatus = fmt::format("Iteration {}: no eligible empty neighbors", mOptimizerParams.currentIteration);
+            mTopologySettings.growthStatus = fmt::format("Iteration {}: no eligible empty neighbors (including newborn wait)",
+                mOptimizerParams.currentIteration);
             return;
         }
         const uint64_t required = uint64_t(parents) + added;

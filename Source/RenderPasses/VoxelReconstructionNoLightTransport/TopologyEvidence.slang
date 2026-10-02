@@ -16,6 +16,9 @@ struct TopologyEvidence
     // Persistent lineage: zero for initialized voxels, birth round + 1 for growth.
     // Unlike deletion evidence/protection, this survives optimization restarts.
     uint growthBirthIterationPlusOne;
+    // Birth round + 1 in the current training clock, for parent eligibility.
+    // Zero means preexisting/mature. Restart clears this, but not lineage.
+    uint growthWaitStartIterationPlusOne;
 };
 
 // Negative spatial-index values are empty cells. Cooldown is -(expiry + 2),

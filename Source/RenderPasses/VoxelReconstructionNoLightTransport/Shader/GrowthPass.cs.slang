@@ -13,6 +13,7 @@ cbuffer CB
     uint gNewCount;
     uint gCurrentIteration;
     uint gEligibleIteration;
+    uint gGrowthWaitIterations;
     float gFacePenetration;
     float gShrink;
     float gContactOffset;
@@ -41,6 +42,10 @@ bool growthChild(uint parentID, uint face, out uint3 cell, out GaussianEllipsoid
     cell = uint3(0);
     child = VOXEL_DATA(parentID).ellipsoid;
     if (VOXEL_DATA(parentID).occupied == 0u || isDeletionCandidate(parentID))
+        return false;
+    uint waitStart = TOPOLOGY_DATA(parentID).growthWaitStartIterationPlusOne;
+    if (waitStart != 0u &&
+        (gCurrentIteration < waitStart - 1u || gCurrentIteration - (waitStart - 1u) < gGrowthWaitIterations))
         return false;
     int3 neighbor = getVoxelCell(parentID);
     neighbor[face / 2u] += (face & 1u) != 0u ? 1 : -1;
@@ -123,6 +128,7 @@ bool growthChild(uint parentID, uint face, out uint3 cell, out GaussianEllipsoid
         TopologyEvidence evidence = {};
         evidence.deletionEligibleIteration = gEligibleIteration;
         evidence.growthBirthIterationPlusOne = gCurrentIteration + 1u;
+        evidence.growthWaitStartIterationPlusOne = gCurrentIteration + 1u;
         TOPOLOGY_DATA(id) = evidence;
         uint page = id / SPARSE_POOL_PAGE_SIZE;
         uint offset = id % SPARSE_POOL_PAGE_SIZE;
