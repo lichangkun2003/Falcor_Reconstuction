@@ -23,7 +23,7 @@ struct CoarseToFineTestAccess
     {
         auto ctx = device->getRenderContext();
         auto pass = VoxelReconstructionNoLightTransport::create(device, {});
-        require(pass->mReconstructionMode == 0u, "Fixed-resolution mode must remain the default");
+        require(pass->mReconstructionMode == uint32_t(RECONSTRUCTION_MODE), "Configured reconstruction mode was not applied");
         pass->mReconstructionMode = 1u;
         pass->mCoarseToFine.targetResolution = 64u;
         pass->mCoarseToFine.iterationsPerLevel = 2u;
@@ -47,7 +47,9 @@ struct CoarseToFineTestAccess
         VoxelData parent = {};
         parent.occupied = 1u;
         parent.ellipsoid.center = float3(0.25f, 0.6f, 0.7f);
-        parent.ellipsoid.logScale = float3(std::log(0.8f), std::log(0.5f), std::log(0.3f));
+        // This scheduling fixture fully contains every child; selective
+        // intersection and sparse allocation are covered separately below.
+        parent.ellipsoid.logScale = float3(std::log(3.0f), std::log(2.5f), std::log(2.0f));
         parent.ellipsoid.rotation = float4(std::cos(0.3f), 0, 0, std::sin(0.3f));
         parent.radiance.coefficients[0] = float3(0.3f, 0.6f, 0.9f);
         parent.opacity.coefficients[0] = std::log(0.4f / 0.6f) / calcSH(0u, float3(0, 0, 1));
@@ -203,6 +205,93 @@ struct CoarseToFineTestAccess
         );
         require(pass->mGridResources.voxelPages[0] == oldPage, "Mode0 restart replaced an initialized grid");
         std::cout << "PASS: refinement capacity failure retains old grid; mode0 restart remains unchanged\n";
+        checkIntersections(device);
+    }
+
+    static void checkIntersections(const ref<Device>& device)
+    {
+        auto ctx = device->getRenderContext();
+        auto pass = VoxelReconstructionNoLightTransport::create(device, {});
+        pass->mReconstructionMode = 1u;
+        pass->mCoarseToFine.targetResolution = 32u;
+        const auto check = [&](VoxelData parent, float3 size, uint32_t expectedMask, uint32_t parents = 1u)
+        {
+            GridData grid = {};
+            grid.voxelCount = uint3(16u);
+            grid.voxelSize = size;
+            grid.activeVoxelCount = grid.solidVoxelCount = parents;
+            auto resources = pass->allocateSparseGrid(ctx, grid, parents);
+            auto block = pass->createSparseGridBlock(resources);
+            pass->commitSparseGrid(std::move(resources), block, 16u);
+            std::vector<uint32_t> cells(parents);
+            std::vector<VoxelData> data(parents, parent);
+            for (uint32_t i = 0; i < parents; ++i)
+                cells[i] = i + 2u + 16u * 3u + 256u * 3u;
+            pass->uploadSparseBatch(ctx, block, 0, cells.data(), parents, data.data());
+            pass->barrierSparseVoxels(ctx);
+            ctx->submit(true);
+            pass->refineCoarseToFineGrid(ctx);
+            const auto bytes = ctx->readTextureSubresource(pass->mGridResources.indexPages[0].get(), 0);
+            std::vector<bool> seen(pass->mGridResources.gridData.activeVoxelCount, false);
+            uint32_t occupied = 0u;
+            for (uint32_t p = 0; p < parents; ++p)
+                for (uint32_t child = 0; child < 8u; ++child)
+                {
+                    uint32_t x = 2u * (p + 2u) + (child & 1u);
+                    uint32_t y = 6u + ((child >> 1u) & 1u), z = 6u + ((child >> 2u) & 1u);
+                    uint32_t cellIndex = x + 32u * y + 1024u * z;
+                    int32_t id;
+                    std::memcpy(&id, bytes.data() + cellIndex * sizeof(int32_t), sizeof(id));
+                    if ((expectedMask & (1u << child)) == 0u)
+                    {
+                        require(id == -1, "A child outside the parent ellipsoid became occupied");
+                        continue;
+                    }
+                    require(id >= 0 && uint32_t(id) < seen.size(), "Intersecting/contained child missing from compact pool");
+                    require(!seen[id], "Multiple child cells share one compact ID");
+                    seen[id] = true;
+                    ++occupied;
+                    require(
+                        read<uint32_t>(pass->mGridResources.cellIndexPages, uint32_t(id)) == cellIndex,
+                        "Filtered child has an incorrect reverse spatial index"
+                    );
+                    const auto inherited = read<VoxelData>(pass->mGridResources.voxelPages, uint32_t(id));
+                    require(
+                        inherited.occupied == 1u && std::memcmp(&inherited.radiance, &parent.radiance, sizeof(parent.radiance)) == 0,
+                        "Filtered child did not inherit parent appearance"
+                    );
+                }
+            require(occupied == seen.size(), "Compact refinement retained unused/rejected child slots");
+        };
+        VoxelData sphere = {};
+        sphere.occupied = 1u;
+        sphere.radiance.coefficients[0] = float3(0.2f, 0.4f, 0.6f);
+        sphere.ellipsoid.rotation = float4(1, 0, 0, 0);
+        sphere.ellipsoid.center = float3(0.25f);
+        sphere.ellipsoid.logScale = float3(std::log(0.1f));
+        check(sphere, float3(1), 0x01u);     // Ellipsoid wholly inside one child, with no corner inside it.
+        check(sphere, float3(1), 0x01u, 9u); // Worst-case 72 > 64 slots; actual nine children must fit.
+        sphere.ellipsoid.logScale = float3(std::log(0.249f));
+        check(sphere, float3(1), 0x01u);
+        sphere.ellipsoid.logScale = float3(std::log(0.25f));
+        check(sphere, float3(1), 0x17u); // Closed tangency on three faces counts as contact.
+        sphere.ellipsoid.logScale = float3(std::log(0.26f));
+        check(sphere, float3(1), 0x17u); // Face-interior overlap, even when child centers/corners miss.
+        sphere.ellipsoid.logScale = float3(std::log(0.4f));
+        check(sphere, float3(1), 0x7fu); // Edge overlaps but the diagonally opposite corner is outside.
+        sphere.ellipsoid.logScale = float3(std::log(2.0f));
+        check(sphere, float3(1), 0xffu); // All children wholly inside the parent volume.
+        sphere.ellipsoid.logScale = float3(std::log(0.05f), std::log(0.1f), std::log(0.15f));
+        check(sphere, float3(0.5f, 1.0f, 1.5f), 0x01u);
+        sphere.ellipsoid.center = float3(0.25f, 0.75f, 0.25f);
+        sphere.ellipsoid.rotation = float4(std::cos(3.14159265359f / 8.0f), 0, 0, std::sin(3.14159265359f / 8.0f));
+        for (float width : {0.02f, 0.0001f})
+        {
+            sphere.ellipsoid.logScale = float3(std::log(0.6f), std::log(width), std::log(width));
+            check(sphere, float3(1), 0x0du); // AABB overlaps lower-right XY child, rotated ellipsoid does not.
+        }
+        std::cout << "PASS: refinement volume containment, face/edge/tangent overlap, rotated thin-shape rejection, non-cubic cells, "
+                     "actual-count allocation\n";
     }
 };
 

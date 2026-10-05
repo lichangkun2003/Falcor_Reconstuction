@@ -522,7 +522,9 @@ struct NeighborGrowthTestAccess
             desc.enableDebugLayer = true;
             auto device = make_ref<Device>(desc);
             auto ctx = device->getRenderContext();
-            auto pass = VoxelReconstructionNoLightTransport::create(device, {});
+            Properties properties;
+            properties["reconstructionMode"] = 0u;
+            auto pass = VoxelReconstructionNoLightTransport::create(device, properties);
             require(pass->mTopologySettings.growthFacePenetration == 1.0f, "Default growth depth is not delta 1");
             require(pass->mTopologySettings.growthInterval == 10u, "Default growth interval is not ten full rounds");
             pass->mUpdatePass.init();

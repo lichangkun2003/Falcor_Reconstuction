@@ -100,7 +100,42 @@ void VoxelReconstructionNoLightTransport::refineCoarseToFineGrid(RenderContext* 
     if (!isCoarseToFine() || oldResolution == 0u || nextResolution > mCoarseToFine.targetResolution)
         throw RuntimeError("Invalid coarse-to-fine refinement level.");
     const uint32_t parents = mGridResources.gridData.activeVoxelCount;
-    const uint64_t children = uint64_t(parents) * 8u;
+    const auto flags = ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess;
+    auto ranges = mpDevice->createStructuredBuffer(sizeof(uint2), std::max(parents, 1u), flags);
+    auto counter = mpDevice->createStructuredBuffer(sizeof(uint32_t), 1u, flags);
+    const auto createPass = [&](const char* entry)
+    {
+        ProgramDesc desc;
+        desc.addShaderLibrary("RenderPasses/VoxelReconstructionNoLightTransport/Shader/RefineGrid.cs.slang").csEntry(entry);
+        return ComputePass::create(mpDevice, desc, getReconstructionDefines(), true);
+    };
+    auto countPass = createPass("countChildren");
+    auto pass = createPass("main");
+    const auto dispatch = [&](const ref<ComputePass>& stage)
+    {
+        auto var = stage->getRootVar();
+        var["gCoarseGrid"] = mpGridBlock;
+        var["gChildRanges"] = ranges;
+        var["gChildCounter"] = counter;
+        var["CB"]["gParentCount"] = parents;
+        constexpr uint32_t batchSize = 65535u * 256u;
+        for (uint32_t offset = 0; offset < parents;)
+        {
+            const uint32_t count = std::min(batchSize, parents - offset);
+            var["CB"]["gParentOffset"] = offset;
+            stage->execute(pRenderContext, uint3(count, 1, 1));
+            offset += count;
+        }
+    };
+    pRenderContext->clearUAV(counter->getUAV().get(), uint4(0));
+    barrierSparseVoxels(pRenderContext);
+    dispatch(countPass);
+    pRenderContext->uavBarrier(counter.get());
+    pRenderContext->uavBarrier(ranges.get());
+    pRenderContext->submit(true);
+    uint32_t children = 0u;
+    counter->getBlob(&children, 0, sizeof(children));
+    // Check and allocate the actual intersecting population, not parents * 8.
     if (children == 0u || children > uint64_t(SPARSE_POOL_PAGE_SIZE) * SPARSE_POOL_MAX_PAGES)
         throw RuntimeError(
             fmt::format("Refinement needs {} cells; pool limit is {}", children, uint64_t(SPARSE_POOL_PAGE_SIZE) * SPARSE_POOL_MAX_PAGES)
@@ -114,29 +149,22 @@ void VoxelReconstructionNoLightTransport::refineCoarseToFineGrid(RenderContext* 
     // the live grid, parameters, and optimizer state untouched.
     auto resources = allocateSparseGrid(pRenderContext, grid, uint32_t(children));
     auto block = createSparseGridBlock(resources);
-    ProgramDesc desc;
-    desc.addShaderLibrary("RenderPasses/VoxelReconstructionNoLightTransport/Shader/RefineGrid.cs.slang").csEntry("main");
-    auto pass = ComputePass::create(mpDevice, desc, getReconstructionDefines(), true);
     auto var = pass->getRootVar();
-    var["gCoarseGrid"] = mpGridBlock;
     var["gGridDataParamBlock"] = block;
-    var["CB"]["gParentCount"] = parents;
-    barrierSparseVoxels(pRenderContext);
-    constexpr uint32_t batchSize = 65535u * 256u;
-    for (uint32_t offset = 0; offset < parents;)
-    {
-        const uint32_t count = std::min(batchSize, parents - offset);
-        var["CB"]["gParentOffset"] = offset;
-        pass->execute(pRenderContext, uint3(count, 1, 1));
-        offset += count;
-    }
+    pRenderContext->clearUAV(counter->getUAV().get(), uint4(0));
+    dispatch(pass);
     for (const auto& page : resources.voxelPages)
         pRenderContext->uavBarrier(page.get());
     for (const auto& page : resources.indexPages)
         pRenderContext->uavBarrier(page.get());
     for (const auto& page : resources.cellIndexPages)
         pRenderContext->uavBarrier(page.get());
+    pRenderContext->uavBarrier(counter.get());
     pRenderContext->submit(true);
+    uint32_t initialized = 0u;
+    counter->getBlob(&initialized, 0, sizeof(initialized));
+    if (initialized != children)
+        throw RuntimeError("Refinement child count/initialization mismatch.");
     commitSparseGrid(std::move(resources), block, nextResolution);
     mGrowthCooldownPresent = false;
     mPointCloud.clearAccumulation = true;
