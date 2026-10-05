@@ -288,6 +288,7 @@ void VoxelReconstructionNoLightTransport::uploadSparseBatch(
 
 void VoxelReconstructionNoLightTransport::resetPointCloudOptimization(RenderContext* pRenderContext)
 {
+    mReconstructionExperimentKey.clear();
     resetGrowthCooldown(pRenderContext);
     mTopologySettings.lastGrowthCount = 0;
     mTopologySettings.lastGrowthPages = 0;

@@ -289,6 +289,86 @@ struct CoarseToFineTestAccess
         require(pass->mGridResources.voxelPages[0] == oldPage, "Mode0 restart replaced an initialized grid");
         std::cout << "PASS: refinement capacity failure retains old grid; mode0 restart remains unchanged\n";
         checkIntersections(device);
+        checkExperimentNaming(device);
+    }
+
+    static void checkExperimentNaming(const ref<Device>& device)
+    {
+        const auto directory = std::filesystem::temp_directory_path() /
+            ("falcor_experiment_names_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+        require(std::filesystem::create_directory(directory), "Could not create isolated naming directory");
+        struct Cleanup
+        {
+            std::filesystem::path directory;
+            ~Cleanup()
+            {
+                // Only this test's freshly created temporary directory is removed.
+                std::error_code error;
+                std::filesystem::remove_all(directory, error);
+            }
+        } cleanup{directory};
+        auto ctx = device->getRenderContext();
+        auto pass = VoxelReconstructionNoLightTransport::create(device, {});
+        pass->mReconstructionOutputRoot = directory;
+        pass->mReconstructionMode = 1u;
+        pass->mCoarseToFine.targetResolution = 32u;
+        pass->mReconstructionNameTag = "naming";
+        GridData grid = {};
+        grid.voxelCount = uint3(16u);
+        grid.voxelSize = float3(1.0f);
+        grid.activeVoxelCount = grid.solidVoxelCount = 1u;
+        auto resources = pass->allocateSparseGrid(ctx, grid, 1u);
+        auto block = pass->createSparseGridBlock(resources);
+        pass->commitSparseGrid(std::move(resources), block, 16u);
+        VoxelData parent = {};
+        parent.occupied = 1u;
+        parent.ellipsoid.center = float3(0.5f);
+        parent.ellipsoid.logScale = float3(std::log(2.0f));
+        parent.ellipsoid.rotation = float4(1, 0, 0, 0);
+        const uint32_t cell = 2u + 16u * 3u + 256u * 3u;
+        pass->uploadSparseBatch(ctx, block, 0u, &cell, 1u, &parent);
+        pass->barrierSparseVoxels(ctx);
+        pass->mReduceLossPass.iterationLossHistory = {0.2f, 0.1f};
+        const auto first = pass->getDefaultReconstructionSavePath();
+        if (first.filename().string().find("_E0_naming_16_") == std::string::npos)
+            throw std::runtime_error("Empty directory did not start at E0: " + first.string());
+        require(pass->getDefaultReconstructionSavePath() == first, "Path preview consumed experiment numbers");
+        pass->saveSparseReconstruction(ctx, first);
+        require(std::filesystem::is_regular_file(first.parent_path() / "Loss" / (first.stem().string() + ".csv")),
+            "Loss file does not share its bin's experiment and level name");
+        pass->refineCoarseToFineGrid(ctx);
+        const auto fine = pass->getDefaultReconstructionSavePath();
+        require(fine.filename().string().find("_E0_naming_32_") != std::string::npos, "One run's levels did not share E0");
+        pass->saveSparseReconstruction(ctx, fine);
+        const auto repeated = pass->getDefaultReconstructionSavePath();
+        require(repeated.filename().string().find("_E1_naming_32_") != std::string::npos, "Repeated save would overwrite E0");
+        pass->saveSparseReconstruction(ctx, repeated);
+        const auto name = first.filename().string();
+        const auto base = name.substr(0u, name.find("_E0_") + 2u);
+        const auto two = first.parent_path() / (base + "2_other_16.bin");
+        const auto nine = first.parent_path() / (base + "9_other_16.bin");
+        pass->saveSparseReconstruction(ctx, two);
+        pass->saveSparseReconstruction(ctx, nine);
+        require(std::filesystem::remove(nine), "Could not remove the isolated test bin to check CSV-only numbering");
+        pass->resetPointCloudOptimization(ctx);
+        const auto ten = pass->getDefaultReconstructionSavePath();
+        require(ten.filename().string().find("_E10_") != std::string::npos, "Restart did not scan the maximum existing numeric index");
+        pass->saveSparseReconstruction(ctx, ten);
+        pass->refreshReconstructionFileList();
+        const auto& files = pass->mReconstructionFilePaths;
+        const auto twoPosition = std::find_if(files.begin(), files.end(), [&](const auto& path) { return path.filename() == two.filename(); });
+        const auto tenPosition = std::find_if(files.begin(), files.end(), [&](const auto& path) { return path.filename() == ten.filename(); });
+        require(twoPosition != files.end() && tenPosition != files.end() && twoPosition < tenPosition,
+            "File list sorts E10 before E2");
+        auto restarted = VoxelReconstructionNoLightTransport::create(device, {});
+        restarted->mReconstructionOutputRoot = directory;
+        restarted->mReconstructionMode = 1u;
+        require(restarted->getDefaultReconstructionSavePath().filename().string().find("_E11_") != std::string::npos,
+            "A new process/pass reused an existing experiment index");
+        restarted->mReconstructionMode = 0u;
+        require(restarted->getDefaultReconstructionSavePath().filename().string().find("_E0_") != std::string::npos,
+            "Experiment numbering leaked between mode directories");
+        std::cout << "PASS: experiment E numbering, shared level prefix, repeated-save protection, matching loss CSV, restart scan, numeric order\n";
     }
 
     static void checkSaveLoad(VoxelReconstructionNoLightTransport& source, RenderContext* ctx)

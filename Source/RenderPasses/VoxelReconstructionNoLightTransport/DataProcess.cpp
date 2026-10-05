@@ -32,12 +32,67 @@
 #include <stdexcept>
 #include <cstring>
 #include <cwctype>
+#include <charconv>
 #include <slang-gfx.h>
 
 namespace
 {
 constexpr uint32_t kReconstructionMagic = 0x56525832; // "VRX2"
 constexpr uint32_t kSparseReconstructionVersion = 3;
+
+uint64_t nextExperimentIndex(const std::filesystem::path& directory, const std::string& prefix)
+{
+    uint64_t next = 0u;
+    if (!std::filesystem::exists(directory)) return next;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(directory))
+    {
+        if (!entry.is_regular_file()) continue;
+        const std::string stem = entry.path().stem().string();
+        if (stem.compare(0, prefix.size(), prefix) != 0) continue;
+        const size_t begin = prefix.size();
+        const size_t end = stem.find('_', begin);
+        if (end == std::string::npos || end == begin) continue;
+        uint64_t index;
+        const auto parsed = std::from_chars(stem.data() + begin, stem.data() + end, index);
+        if (parsed.ec != std::errc{} || parsed.ptr != stem.data() + end) continue;
+        if (index == std::numeric_limits<uint64_t>::max())
+            throw RuntimeError("Experiment index exhausted in " + directory.string());
+        next = std::max(next, index + 1u);
+    }
+    return next;
+}
+
+bool naturalPathLess(const std::filesystem::path& lhs, const std::filesystem::path& rhs)
+{
+    const auto a = lhs.generic_string(), b = rhs.generic_string();
+    size_t i = 0u, j = 0u;
+    const auto digit = [](char c) { return c >= '0' && c <= '9'; };
+    while (i < a.size() && j < b.size())
+    {
+        if (digit(a[i]) && digit(b[j]))
+        {
+            size_t endA = i, endB = j;
+            while (endA < a.size() && digit(a[endA])) ++endA;
+            while (endB < b.size() && digit(b[endB])) ++endB;
+            size_t startA = i, startB = j;
+            while (startA < endA && a[startA] == '0') ++startA;
+            while (startB < endB && b[startB] == '0') ++startB;
+            if (endA - startA != endB - startB) return endA - startA < endB - startB;
+            const int order = a.compare(startA, endA - startA, b, startB, endB - startB);
+            if (order != 0) return order < 0;
+            i = endA;
+            j = endB;
+        }
+        else
+        {
+            if (a[i] != b[j]) return a[i] < b[j];
+            ++i;
+            ++j;
+        }
+    }
+    if (i != a.size() || j != b.size()) return i == a.size();
+    return a < b; // Deterministic tie-break for numerically equal spellings.
+}
 
 bool samePathComponent(const std::filesystem::path& a, const std::filesystem::path& b)
 {
@@ -90,6 +145,7 @@ uint64_t checkedVoxelCount(uint3 count, uint32_t dimensionLimit)
 
 void VoxelReconstructionNoLightTransport::resetLoadedReconstruction(RenderContext* pRenderContext)
 {
+    mReconstructionExperimentKey.clear();
     mEnableReconstruction = false;
     mOptimizerParams.reset();
     mCoarseToFine.levelStartIteration = 0u;
@@ -132,7 +188,7 @@ DefineList VoxelReconstructionNoLightTransport::getReconstructionDefines()
 
 std::filesystem::path VoxelReconstructionNoLightTransport::getReconstructionModeDirectory() const
 {
-    return resolveReconstructionPath(ReconstructionDataDir) / (isCoarseToFine() ? "mode1" : "mode0");
+    return resolveReconstructionPath(mReconstructionOutputRoot) / (isCoarseToFine() ? "mode1" : "mode0");
 }
 
 
@@ -173,7 +229,7 @@ std::string VoxelReconstructionNoLightTransport::getOptimizedParamTag() const
     return result;
 
 }
-std::filesystem::path VoxelReconstructionNoLightTransport::getDefaultReconstructionSavePath() const
+std::string VoxelReconstructionNoLightTransport::getReconstructionExperimentPrefix()
 {
     auto sceneDirectory = std::filesystem::path(ReferenceImageDir).lexically_normal();
     // A trailing separator gives an empty filename; use the last directory component.
@@ -182,11 +238,6 @@ std::filesystem::path VoxelReconstructionNoLightTransport::getDefaultReconstruct
     if (sceneName.empty() || sceneName == "." || sceneName == "..") sceneName = "scene";
 
     const std::filesystem::path outputDir = getReconstructionModeDirectory();
-
-    uint3 voxelCount = mGridResources.gridData.voxelCount;
-
-    std::string paramTag = getOptimizedParamTag();
-
 
     // 获取当天日期：month_day，例如 5_29
     auto now = std::chrono::system_clock::now();
@@ -205,20 +256,35 @@ std::filesystem::path VoxelReconstructionNoLightTransport::getDefaultReconstruct
     std::string dateTag = fmt::format("{}_{}", month, day);
 
 
-    std::string nameTag = mReconstructionNameTag;
-
-    std::string filename;
-
-    if (nameTag.empty())
+    const std::string base = fmt::format("{}_recon{}_E", sceneName, dateTag);
+    const std::string key = (outputDir / base).generic_string() + "|" + mReconstructionNameTag;
+    if (mReconstructionExperimentKey != key)
     {
-        filename = fmt::format("{}_recon{}_{}_{}.bin", sceneName, dateTag, mVoxelResolution, paramTag);
+        const uint64_t index = nextExperimentIndex(outputDir, base);
+        mReconstructionExperimentPrefix = base + std::to_string(index);
+        if (!mReconstructionNameTag.empty()) mReconstructionExperimentPrefix += "_" + mReconstructionNameTag;
+        mReconstructionExperimentKey = key;
     }
-    else
-    {
-        filename = fmt::format("{}_recon{}_{}_{}_{}.bin", sceneName, dateTag, nameTag, mVoxelResolution, paramTag);
-    }
+    return mReconstructionExperimentPrefix;
+}
 
-    return outputDir / filename;
+std::filesystem::path VoxelReconstructionNoLightTransport::getDefaultReconstructionSavePath()
+{
+    const auto makePath = [&]()
+    {
+        return getReconstructionModeDirectory() /
+            fmt::format("{}_{}_{}.bin", getReconstructionExperimentPrefix(), mVoxelResolution, getOptimizedParamTag());
+    };
+    auto path = makePath();
+    // Repeat saves at the same level get a new experiment number. Other
+    // levels of the current run retain the prefix, grouping its checkpoints.
+    if (std::filesystem::exists(path) ||
+        std::filesystem::exists(path.parent_path() / "Loss" / (path.stem().string() + ".csv")))
+    {
+        mReconstructionExperimentKey.clear();
+        path = makePath();
+    }
+    return path;
 }
 
 
@@ -274,7 +340,7 @@ void VoxelReconstructionNoLightTransport::saveSparseReconstruction(
     }
     if (!out) throw RuntimeError("Failed while writing sparse reconstruction payload.");
     out.close();
-    saveLossHistory();
+    saveLossHistory(path);
     const uint64_t payloadBytes = uint64_t(activeCount) * (sizeof(uint32_t) + sizeof(VoxelData));
     logInfo("Saved sparse reconstruction to {}, grid={}x{}x{}, active={}, payload={} bytes",
         path.string(), voxelCount.x, voxelCount.y, voxelCount.z, activeCount, payloadBytes);
@@ -355,9 +421,9 @@ void VoxelReconstructionNoLightTransport::saveReconstruction(RenderContext* pRen
         logWarning("Save reconstruction skipped: initialize from PLY or load a reconstruction first.");
         return;
     }
-    const auto path = getDefaultReconstructionSavePath();
     try
     {
+        const auto path = getDefaultReconstructionSavePath();
         saveSparseReconstruction(pRenderContext, path);
         mReconstructionIOStatus = "Saved sparse reconstruction: " + path.filename().string();
     }
@@ -415,7 +481,7 @@ void VoxelReconstructionNoLightTransport::refreshReconstructionFileList()
     std::sort(
         mReconstructionFilePaths.begin(),
         mReconstructionFilePaths.end(),
-        [](const std::filesystem::path& a, const std::filesystem::path& b) { return a.generic_string() < b.generic_string(); }
+        naturalPathLess
     );
     mReconstructionFilePaths.erase(std::unique(mReconstructionFilePaths.begin(), mReconstructionFilePaths.end()), mReconstructionFilePaths.end());
     mSelectedReconstructionFile = 0;
@@ -432,7 +498,7 @@ void VoxelReconstructionNoLightTransport::refreshReconstructionFileList()
 
 
 
-void VoxelReconstructionNoLightTransport::saveLossHistory() const
+void VoxelReconstructionNoLightTransport::saveLossHistory(const std::filesystem::path& reconstructionPath) const
 {
     if (mReduceLossPass.iterationLossHistory.empty())
     {
@@ -444,35 +510,7 @@ void VoxelReconstructionNoLightTransport::saveLossHistory() const
 
     std::filesystem::create_directories(lossDir);
 
-    // 获取当前日期：month_day
-    auto now = std::chrono::system_clock::now();
-    std::time_t time = std::chrono::system_clock::to_time_t(now);
-
-    std::tm localTime{};
-#if defined(_WIN32)
-    localtime_s(&localTime, &time);
-#else
-    localtime_r(&time, &localTime);
-#endif
-
-    int month = localTime.tm_mon + 1;
-    int day = localTime.tm_mday;
-
-    std::string dateTag = fmt::format("{}_{}", month, day);
-
-    // 文件名：日期_NameTag.csv
-    std::string filename;
-
-    if (mReconstructionNameTag.empty())
-    {
-        filename = fmt::format("{}.csv", dateTag);
-    }
-    else
-    {
-        filename = fmt::format("{}_{}.csv", dateTag, mReconstructionNameTag);
-    }
-
-    std::filesystem::path lossPath = lossDir / filename;
+    const auto lossPath = lossDir / (reconstructionPath.stem().string() + ".csv");
 
     std::ofstream out(lossPath);
 

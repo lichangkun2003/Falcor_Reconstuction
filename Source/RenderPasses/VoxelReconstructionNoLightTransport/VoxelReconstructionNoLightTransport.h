@@ -151,12 +151,13 @@ public:
     void startReconstruction();
     void stopReconstruction();
 
-    std::filesystem::path getDefaultReconstructionSavePath() const;
+    std::filesystem::path getDefaultReconstructionSavePath();
+    std::string getReconstructionExperimentPrefix();
     std::string getOptimizedParamTag() const;
     void saveReconstruction(RenderContext* pRenderContext);
     void loadReconstruction(RenderContext* pRenderContext, const std::filesystem::path& path);
     void refreshReconstructionFileList();
-    void saveLossHistory() const;
+    void saveLossHistory(const std::filesystem::path& reconstructionPath) const;
     std::filesystem::path getReconstructionModeDirectory() const;
 
     struct GridResources
@@ -504,6 +505,9 @@ private:
     std::vector<std::filesystem::path> mReconstructionFilePaths;
     uint32_t mSelectedReconstructionFile = 0;
     std::string mReconstructionNameTag = "";
+    std::filesystem::path mReconstructionOutputRoot = ReconstructionDataDir;
+    std::string mReconstructionExperimentKey;
+    std::string mReconstructionExperimentPrefix;
 
 };
 
