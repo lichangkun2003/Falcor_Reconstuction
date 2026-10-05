@@ -45,6 +45,7 @@ void VoxelReconstructionNoLightTransport::resetGrowthCooldown(RenderContext* pRe
 
 void VoxelReconstructionNoLightTransport::growNeighborVoxels(RenderContext* pRenderContext)
 {
+    if (isCoarseToFine()) return;
     const uint32_t start = getDeletionEvidenceStartIteration();
     const uint32_t interval = std::max(1u, mTopologySettings.growthInterval);
     if (!mTopologySettings.enableGrowth || mOptimizerParams.currentIteration < start)

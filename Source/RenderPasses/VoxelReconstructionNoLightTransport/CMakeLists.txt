@@ -11,6 +11,7 @@ set(voxel_reconstruction_sources
     TopologyPass.cpp
     TopologyDeletion.cpp
     TopologyGrowth.cpp
+    CoarseToFine.cpp
     DataProcess.cpp
 )
 
@@ -59,6 +60,7 @@ target_sources(VoxelReconstructionNoLightTransport PRIVATE
     Shader/TopologyPass.cs.slang
     Shader/DeleteCompactPass.cs.slang
     Shader/GrowthPass.cs.slang
+    Shader/RefineGrid.cs.slang
 )
 
 # Keep this pass's C++ dependencies explicit: localized MSVC /showIncludes output
@@ -81,6 +83,7 @@ if(VOXEL_RECONSTRUCTION_BUILD_GROWTH_TESTS)
     add_falcor_executable(VoxelNeighborGrowthTests)
     target_sources(VoxelNeighborGrowthTests PRIVATE
         Tests/NeighborGrowth.cpp
+        Tests/CoarseToFine.cpp
         ${voxel_reconstruction_sources}
         ${voxel_reconstruction_shared_headers}
         PointCloudLoader.cpp
@@ -90,4 +93,5 @@ if(VOXEL_RECONSTRUCTION_BUILD_GROWTH_TESTS)
     # millions of voxels. getReconstructionDefines() forwards these to Slang.
     target_compile_definitions(VoxelNeighborGrowthTests PRIVATE SPARSE_POOL_PAGE_SIZE=32u SPARSE_POOL_MAX_PAGES=2)
     set_property(SOURCE Tests/NeighborGrowth.cpp APPEND PROPERTY OBJECT_DEPENDS ${voxel_reconstruction_object_dependencies})
+    set_property(SOURCE Tests/CoarseToFine.cpp APPEND PROPERTY OBJECT_DEPENDS ${voxel_reconstruction_object_dependencies})
 endif()

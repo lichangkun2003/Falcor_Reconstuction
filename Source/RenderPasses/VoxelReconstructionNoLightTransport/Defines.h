@@ -6,6 +6,13 @@
 #define GRID_RESOLUTION 512
 #endif
 
+// 0: fixed-resolution reconstruction; 1: conservative coarse-to-fine experiment.
+#ifndef RECONSTRUCTION_MODE
+#define RECONSTRUCTION_MODE 0
+#endif
+#define COARSE_TO_FINE_START_RESOLUTION 16
+#define COARSE_TO_FINE_ITERATIONS_PER_LEVEL 100
+
 #define REFERENCE_IMAGES_COUNT 100
 
 

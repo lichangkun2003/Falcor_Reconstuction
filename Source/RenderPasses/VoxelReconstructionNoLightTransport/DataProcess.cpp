@@ -92,6 +92,9 @@ void VoxelReconstructionNoLightTransport::resetLoadedReconstruction(RenderContex
 {
     mEnableReconstruction = false;
     mOptimizerParams.reset();
+    mCoarseToFine.levelStartIteration = 0u;
+    mCoarseToFine.initializationPending = false;
+    mCoarseToFine.status = "Loaded grid; enabling mode1 trains from its current resolution with fresh level timing";
     mInitVoxelData = false;
     mSaveReconstructionRequested = false;
     mLoadReconstructionRequested = false;
@@ -129,7 +132,7 @@ DefineList VoxelReconstructionNoLightTransport::getReconstructionDefines()
 
 std::filesystem::path VoxelReconstructionNoLightTransport::getReconstructionModeDirectory() const
 {
-    return resolveReconstructionPath(ReconstructionDataDir) / "mode1";
+    return resolveReconstructionPath(ReconstructionDataDir) / (isCoarseToFine() ? "mode1" : "mode0");
 }
 
 

@@ -28,6 +28,7 @@ void VoxelReconstructionNoLightTransport::createDeletionPassResources()
 
 void VoxelReconstructionNoLightTransport::deleteAndCompactCandidates(RenderContext* pRenderContext)
 {
+    if (isCoarseToFine()) return;
     const uint32_t oldActiveCount = mGridResources.gridData.activeVoxelCount;
     const uint32_t expectedCandidates = mTopologySettings.candidateCount;
     if (oldActiveCount == 0u || expectedCandidates == 0u)

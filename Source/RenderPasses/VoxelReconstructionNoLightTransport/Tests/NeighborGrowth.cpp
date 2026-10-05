@@ -16,6 +16,8 @@
 #include <set>
 #include "../VoxelReconstructionNoLightTransport.h"
 
+void runCoarseToFineTests(const ref<Device>& device);
+
 struct NeighborGrowthTestAccess
 {
     static void require(bool condition, const char* message)
@@ -724,6 +726,7 @@ struct NeighborGrowthTestAccess
             checkGrowthPreview(*pass, ctx);
             std::cout << "PASS: production preview highlights low-opacity grown cells, filters originals, retains "
                          "context/deletion/occupied layers\n";
+            runCoarseToFineTests(device);
             device->wait();
             std::cout << "All neighbor-growth GPU regression tests passed.\n";
             return 0;

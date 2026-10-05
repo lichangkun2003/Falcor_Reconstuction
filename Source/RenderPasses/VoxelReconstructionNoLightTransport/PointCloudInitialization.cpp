@@ -309,13 +309,16 @@ void VoxelReconstructionNoLightTransport::resetPointCloudOptimization(RenderCont
     resetDeletionEvidence(pRenderContext);
 }
 
-bool VoxelReconstructionNoLightTransport::initializePointCloudVoxelData(RenderContext* pRenderContext)
+bool VoxelReconstructionNoLightTransport::initializePointCloudVoxelData(RenderContext* pRenderContext, const std::filesystem::path& source)
 {
-    const auto path = resolveReconstructionPath(ReferenceImageDir) / InitializationPointCloudFile;
+    const auto path = source.empty() ? resolveReconstructionPath(ReferenceImageDir) / InitializationPointCloudFile : source;
     try
     {
         // Read and validate before touching the active reconstruction.
-        auto grid = mGridResources.gridData;
+        if (isCoarseToFine()) validateCoarseToFineSettings();
+        const uint32_t resolution = isCoarseToFine() ? mCoarseToFine.startResolution :
+            (mCoarseToFine.initializationPending ? uint32_t(GRID_RESOLUTION) : mVoxelResolution);
+        auto grid = isCoarseToFine() || mCoarseToFine.initializationPending ? makeVoxelGrid(resolution) : mGridResources.gridData;
         auto points = PointCloudInitialization::load(path,
             {grid.voxelCount.x, grid.voxelCount.y, grid.voxelCount.z},
             {grid.gridMin.x, grid.gridMin.y, grid.gridMin.z},
@@ -372,8 +375,12 @@ bool VoxelReconstructionNoLightTransport::initializePointCloudVoxelData(RenderCo
         var["gSeeds"].setBuffer(nullptr);
 
         // Commit only after successful initialization, then release references to the old grid.
-        commitSparseGrid(std::move(resources), block, mVoxelResolution);
+        commitSparseGrid(std::move(resources), block, resolution);
         resetPointCloudOptimization(pRenderContext);
+        mCoarseToFine.levelStartIteration = 0u;
+        mCoarseToFine.initializationPending = false;
+        mCoarseToFine.status = fmt::format("Initialized at resolution {}; {} rounds per level", resolution,
+            mCoarseToFine.iterationsPerLevel);
         mPointCloud.initialized = true;
         mLoadedReconstructionForViewing = false;
         const auto& stats = points.statistics;

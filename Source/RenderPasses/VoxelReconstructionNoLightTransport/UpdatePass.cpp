@@ -86,7 +86,7 @@ void VoxelReconstructionNoLightTransport::runUpdatePass(RenderContext* pRenderCo
     cb["gLrOpacity"] = getEffectiveOpacityLearningRate();
     cb["gBackgroundCarveAdamMultiplier"] = mUpdatePass.mBackgroundCarveAdamMultiplier;
     cb["gEllipsoidPruneThreshold"] = mUpdatePass.mEllipsoidPruneThreshold;
-    cb["gEnableEllipsoidPruning"] = mUpdatePass.mEnableEllipsoidPruning;
+    cb["gEnableEllipsoidPruning"] = !isCoarseToFine() && mUpdatePass.mEnableEllipsoidPruning;
 
     //mpPixelDebug->prepareProgram(mUpdatePass.mpComputePass->getProgram(), mUpdatePass.mpComputePass->getRootVar());
 

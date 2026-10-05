@@ -92,6 +92,7 @@ inline std::filesystem::path resolveReconstructionPath(const std::filesystem::pa
 class VoxelReconstructionNoLightTransport : public RenderPass
 {
     friend struct NeighborGrowthTestAccess;
+    friend struct CoarseToFineTestAccess;
 public:
     FALCOR_PLUGIN_CLASS(VoxelReconstructionNoLightTransport, "VoxelReconstructionNoLightTransport", "Insert pass description here.");
 
@@ -350,6 +351,16 @@ public:
         std::string deletionStatus = "No compaction performed";
     };
 
+    struct CoarseToFineSettings
+    {
+        uint32_t startResolution = COARSE_TO_FINE_START_RESOLUTION;
+        uint32_t targetResolution = GRID_RESOLUTION;
+        uint32_t iterationsPerLevel = COARSE_TO_FINE_ITERATIONS_PER_LEVEL;
+        uint32_t levelStartIteration = 0;
+        bool initializationPending = false;
+        std::string status = "Initialize from PLY to start the resolution pyramid";
+    };
+
     struct ReduceLossPass
     {
         ref<Buffer> mpReduceBufferA;
@@ -369,6 +380,14 @@ public:
     };
 
 private:
+    bool isCoarseToFine() const { return mReconstructionMode == 1u; }
+    void renderUICoarseToFine(Gui::Widgets& widget);
+    void validateCoarseToFineSettings() const;
+    bool prepareReconstruction(RenderContext* pRenderContext);
+    void advanceCoarseToFine(RenderContext* pRenderContext);
+    void refineCoarseToFineGrid(RenderContext* pRenderContext);
+    uint32_t coarseToFineRemainingLevels() const;
+    GridData makeVoxelGrid(uint32_t resolution) const;
     static DefineList getReconstructionDefines();
     void updateOutputResolution();
     void resetLoadedReconstruction(RenderContext* pRenderContext);
@@ -406,7 +425,7 @@ private:
     void createGrowthPassResources();
     void resetGrowthCooldown(RenderContext* pRenderContext);
     void growNeighborVoxels(RenderContext* pRenderContext);
-    bool initializePointCloudVoxelData(RenderContext* pRenderContext);
+    bool initializePointCloudVoxelData(RenderContext* pRenderContext, const std::filesystem::path& source = {});
     void resetPointCloudOptimization(RenderContext* pRenderContext);
     GridResources allocateSparseGrid(RenderContext* pRenderContext, const GridData& grid, uint32_t capacity);
     ref<ParameterBlock> createSparseGridBlock(const GridResources& resources);
@@ -433,6 +452,8 @@ private:
     uint mVoxelResolution = GRID_RESOLUTION; // X,Y,Z三个方向中，最长的边被划分的体素数量
 
     OptimizerParams mOptimizerParams;
+    uint32_t mReconstructionMode = RECONSTRUCTION_MODE;
+    CoarseToFineSettings mCoarseToFine;
     TopologySettings mTopologySettings;
 
     // Passes

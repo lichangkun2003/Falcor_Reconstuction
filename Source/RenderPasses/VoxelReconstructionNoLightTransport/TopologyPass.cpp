@@ -14,7 +14,7 @@ bool VoxelReconstructionNoLightTransport::shouldCollectDeletionEvidence() const
     // background vote per evidence window.
     const bool finalSppSample = mRayMarchingPass.mSpp > 0u &&
         mRayMarchingPass.mSampleIndex == mRayMarchingPass.mSpp;
-    return mTopologySettings.collectDeletionEvidence &&
+    return !isCoarseToFine() && mTopologySettings.collectDeletionEvidence &&
         mOptimizerParams.currentIteration >= start &&
         finalSppSample &&
         mGridResources.gridData.activeVoxelCount > 0;
@@ -71,7 +71,7 @@ void VoxelReconstructionNoLightTransport::resetDeletionEvidence(RenderContext* p
 
 void VoxelReconstructionNoLightTransport::evaluateDeletionEvidence(RenderContext* pRenderContext)
 {
-    if (!mTopologySettings.collectDeletionEvidence || !mpTopologyPass || !mpTopologySummary)
+    if (isCoarseToFine() || !mTopologySettings.collectDeletionEvidence || !mpTopologyPass || !mpTopologySummary)
         return;
 
     const uint32_t start = getDeletionEvidenceStartIteration();
