@@ -12,6 +12,9 @@
 #endif
 #define COARSE_TO_FINE_START_RESOLUTION 16
 #define COARSE_TO_FINE_TOTAL_ITERATIONS 700
+// Four active levels use these relative weights (coarse -> fine).
+// Other level counts interpolate the same curve across the active schedule.
+#define COARSE_TO_FINE_LEVEL_WEIGHTS {12u, 14u, 19u, 25u}
 
 #define REFERENCE_IMAGES_COUNT 100
 

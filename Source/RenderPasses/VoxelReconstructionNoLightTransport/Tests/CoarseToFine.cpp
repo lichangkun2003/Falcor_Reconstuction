@@ -59,14 +59,48 @@ struct CoarseToFineTestAccess
         return float(std::log(childAlpha / (1.0 - childAlpha)) / y0);
     }
 
+    static void checkLevelBudgets(VoxelReconstructionNoLightTransport& pass)
+    {
+        const auto original = pass.mCoarseToFine;
+        pass.mCoarseToFine.scheduleStartResolution = 64u;
+        pass.mCoarseToFine.targetResolution = 512u;
+        pass.mCoarseToFine.totalIterations = 700u;
+        const uint32_t expected[4] = {120u, 140u, 190u, 250u};
+        for (uint32_t index = 0u; index < 4u; ++index)
+            require(pass.coarseToFineLevelBudget(64u << index) == expected[index], "64-start experiment ratios are incorrect");
+        for (uint32_t levels = 1u; levels <= 7u; ++levels)
+        {
+            pass.mCoarseToFine.scheduleStartResolution = 16u;
+            pass.mCoarseToFine.targetResolution = 16u << (levels - 1u);
+            for (uint32_t total : {levels, levels + 1u, 12u, 700u, 701u, 1000000u})
+            {
+                pass.mCoarseToFine.totalIterations = total;
+                uint32_t sum = 0u;
+                for (uint32_t index = 0u; index < levels; ++index)
+                {
+                    const uint32_t budget = pass.coarseToFineLevelBudget(16u << index);
+                    require(budget >= 1u, "A level received no optimization time");
+                    sum += budget;
+                }
+                require(sum == total, "Interpolated schedule did not preserve the exact iteration total");
+            }
+        }
+        pass.mCoarseToFine.scheduleStartResolution = pass.mCoarseToFine.targetResolution = 512u;
+        pass.mCoarseToFine.totalIterations = 700u;
+        require(pass.coarseToFineLevelBudget(512u) == 700u, "Final-level restart did not receive the full total");
+        pass.mCoarseToFine = original;
+        std::cout << "PASS: coarse-biased level ratios, exact totals across 1-7 levels, minimum budgets, target-level restart\n";
+    }
+
     static void run(const ref<Device>& device)
     {
         auto ctx = device->getRenderContext();
         auto pass = VoxelReconstructionNoLightTransport::create(device, {});
         require(pass->mReconstructionMode == uint32_t(RECONSTRUCTION_MODE), "Configured reconstruction mode was not applied");
+        checkLevelBudgets(*pass);
         pass->mReconstructionMode = 1u;
         pass->mCoarseToFine.targetResolution = 64u;
-        pass->mCoarseToFine.totalIterations = 12u; // Linear level weights produce 2, 4, and 6 rounds.
+        pass->mCoarseToFine.totalIterations = 12u; // Interpolated weights produce 3, 3, and 6 rounds.
         pass->mCoarseToFine.saveEachLevel = false; // Most scheduling checks must not write experiment checkpoints.
         pass->createUpdatePassResource(ctx);
         pass->createTopologyPassResource(ctx);
@@ -136,6 +170,9 @@ struct CoarseToFineTestAccess
         } checkpointCleanup{levelCheckpoint};
         pass->mOptimizerParams.currentIteration = 2u;
         pass->advanceCoarseToFine(ctx);
+        require(pass->mVoxelResolution == 16u, "Extra coarse round was skipped");
+        pass->mOptimizerParams.currentIteration = 3u;
+        pass->advanceCoarseToFine(ctx);
         require(std::filesystem::is_regular_file(levelCheckpoint), "Completed coarse level was not checkpointed before refinement");
         pass->mCoarseToFine.saveEachLevel = false;
         pass->mReconstructionNameTag.clear();
@@ -149,7 +186,7 @@ struct CoarseToFineTestAccess
             "Refinement moved the world grid bounds"
         );
         require(
-            pass->mOptimizerParams.currentIteration == 2u && pass->getEffectiveOpacityLearningRate() == beforeLr,
+            pass->mOptimizerParams.currentIteration == 3u && pass->getEffectiveOpacityLearningRate() == beforeLr,
             "Refinement reset the training clock or opacity schedule"
         );
         const auto bytes = ctx->readTextureSubresource(pass->mGridResources.indexPages[0].get(), 0);

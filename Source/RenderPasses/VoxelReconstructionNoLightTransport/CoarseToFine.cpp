@@ -50,7 +50,7 @@ uint32_t VoxelReconstructionNoLightTransport::coarseToFineRemainingLevels() cons
 uint32_t VoxelReconstructionNoLightTransport::coarseToFineLevelBudget(uint32_t resolution) const
 {
     const uint32_t start = mCoarseToFine.scheduleStartResolution;
-    if (!isPowerOfTwo(start) || resolution < start || resolution > mCoarseToFine.targetResolution)
+    if (!isPowerOfTwo(start) || !isPowerOfTwo(resolution) || resolution < start || resolution > mCoarseToFine.targetResolution)
         throw RuntimeError("Current resolution is outside the active coarse-to-fine schedule.");
     uint32_t levels = 1u;
     for (uint32_t value = start; value < mCoarseToFine.targetResolution; value *= 2u)
@@ -58,9 +58,26 @@ uint32_t VoxelReconstructionNoLightTransport::coarseToFineLevelBudget(uint32_t r
     uint32_t index = 0u;
     for (uint32_t value = start; value < resolution; value *= 2u)
         ++index;
-    const uint64_t weightSum = uint64_t(levels) * (levels + 1u) / 2u;
-    const uint64_t previousWeight = uint64_t(index) * (index + 1u) / 2u;
-    const uint64_t cumulativeWeight = uint64_t(index + 1u) * (index + 2u) / 2u;
+    if (mCoarseToFine.totalIterations < levels)
+        throw RuntimeError("The iteration total is smaller than the active level count.");
+    if (levels == 1u) return mCoarseToFine.totalIterations;
+    constexpr uint64_t weights[4] = COARSE_TO_FINE_LEVEL_WEIGHTS;
+    static_assert(weights[0] > 0u && weights[1] > 0u && weights[2] > 0u && weights[3] > 0u,
+        "Coarse-to-fine level weights must be positive.");
+    // Integer interpolation keeps exact totals without floating-point rounding.
+    // Its common denominator (levels - 1) cancels when allocating rounds.
+    uint64_t weightSum = 0u, previousWeight = 0u, cumulativeWeight = 0u;
+    for (uint32_t level = 0u; level < levels; ++level)
+    {
+        const uint32_t position = 3u * level;
+        const uint32_t segment = position / (levels - 1u);
+        const uint32_t fraction = position % (levels - 1u);
+        const uint64_t weight = weights[segment] * (levels - 1u - fraction) +
+            weights[std::min(segment + 1u, 3u)] * fraction;
+        weightSum += weight;
+        if (level < index) previousWeight += weight;
+        if (level <= index) cumulativeWeight += weight;
+    }
     const uint64_t remainder = mCoarseToFine.totalIterations - levels;
     return 1u + uint32_t(remainder * cumulativeWeight / weightSum - remainder * previousWeight / weightSum);
 }

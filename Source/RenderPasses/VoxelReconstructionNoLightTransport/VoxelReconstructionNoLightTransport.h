@@ -216,7 +216,7 @@ public:
     struct LossPass
     {
         uint mView;
-        float alphaLossWeight = 0.3f;
+        float alphaLossWeight = 0.5f;
         ref<ComputePass> mpComputePass;
         ref<Texture> lossBuffer;
         ref<Texture> dL_dColor;
@@ -338,7 +338,7 @@ public:
         float minRemovalLossDelta = 1e-4f;
         float minEvidenceTransmittance = 0.05f;
         uint32_t minDeletionConflictViews = 5;
-        uint32_t deletionConflictSupportRatio = 3;
+        uint32_t deletionConflictSupportRatio = 2;
         uint32_t evidenceInterval = 5;
         uint32_t deletionInterval = 10;
         uint32_t candidateCount = 0;
