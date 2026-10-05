@@ -64,11 +64,15 @@ Growth counts unique cells before reserving sufficient parameter pages. It initi
 
 ### Viewing grown voxels
 
+Growth/deletion debug controls below are available only in mode0. Mode1's Topology panel shows its disabled-topology status and only offers **Show Occupied Grid** / **Show Default**; no growth, split, or deletion controls are displayed.
+
 In **Topology**, click **Stop and Show Grown Voxels** while training, or **Show Grown Voxels** after training has stopped. Alternatively, with reconstruction disabled select **Draw Mode: TopologyDebug** and **Debug Layer: Grown voxels**. Surviving voxels created in any growth round are green; optional occupied context is gray. Disable **Show Occupied Context** to see only grown cells, including those behind original geometry. This debug view shows occupied **cells**, independently of the ellipsoid's opacity or shape, not the normal shaded ellipsoid surface. **Show Default** returns to normal rendering.
 
 Every child stores its birth round plus one (zero denotes an initialized voxel). This marker survives parameter optimization, protection expiry, evidence resets, deletion compaction, stopping training, and restarting optimization on the same grid. Deleted voxels no longer appear. **Init / Reset from PLY** clears lineage by replacing the grid. Markers are session-local: sparse v3 bins do not store them, so loading a saved reconstruction cannot distinguish originally initialized and grown voxels. `Last growth` remains the most recent operation's count, not a cumulative count.
 
 ### GPU regression test
+
+The IO roundtrip test saves a filtered refined grid in an isolated temporary directory under each mode, loads it through the production v3 reader, compares voxel parameters byte-for-byte and the full sparse index (including empty cells), and verifies mode1 restarts from the saved resolution. Temporary test files are removed afterward; existing experiment files are untouched.
 
 The same executable also runs `Tests/CoarseToFine.cpp`: coarse PLY initialization, mode1 topology gates, selected-child spatial indexing and parameter transfer, containment in both directions, face/edge/tangent intersections, rotated thin-shape AABB false positives, non-cubic cells, actual-count allocation, constant-opacity transmittance, fresh Adam state, real optimizer updates after rebinding, the 16 -> 32 -> 64 schedule including final-level training, and capacity-failure preservation of the old grid. It uses the one-point `Tests/CoarseSeed.ply` fixture; no scene dataset is needed.
 

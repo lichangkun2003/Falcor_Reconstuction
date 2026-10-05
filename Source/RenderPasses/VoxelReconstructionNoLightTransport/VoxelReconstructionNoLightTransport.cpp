@@ -539,8 +539,30 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget)
 
 void VoxelReconstructionNoLightTransport::renderUITopology(Gui::Widgets& widget)
 {
+    if (isCoarseToFine() && mTopologySettings.debugLayer != uint32_t(TopologyDebugLayer::Occupied))
+    {
+        mTopologySettings.debugLayer = uint32_t(TopologyDebugLayer::Occupied);
+        mRayMarchingPass.mOptionsChanged = true;
+    }
     auto group = widget.group("Topology", true);
     if (!group) return;
+
+    if (isCoarseToFine())
+    {
+        group.text("mode1: coarse-to-fine refinement only.");
+        group.text("Deletion, deletion evidence, pruning, and neighbor growth are disabled at every level.");
+        if (group.button("Show Occupied Grid"))
+        {
+            mRayMarchingPass.mDrawMode = uint32_t(ABSDFDrawMode::TopologyDebug);
+            mRayMarchingPass.mOptionsChanged = true;
+        }
+        if (group.button("Show Default"))
+        {
+            mRayMarchingPass.mDrawMode = uint32_t(ABSDFDrawMode::Default);
+            mRayMarchingPass.mOptionsChanged = true;
+        }
+        return;
+    }
 
     group.text("Confirmed candidates are deleted and compacted periodically at complete iteration boundaries.");
     group.text("TopologyDebug is a viewing mode; training always renders with Default.");
@@ -580,11 +602,6 @@ void VoxelReconstructionNoLightTransport::renderUITopology(Gui::Widgets& widget)
             mRayMarchingPass.mOptionsChanged = true;
     }
 
-    if (isCoarseToFine())
-    {
-        group.text("mode1: deletion evidence, deletion, and neighbor growth are disabled at every level.");
-        return;
-    }
     group.text("Deletion evidence");
     group.checkbox("Collect Deletion Evidence", mTopologySettings.collectDeletionEvidence);
     group.text(fmt::format(

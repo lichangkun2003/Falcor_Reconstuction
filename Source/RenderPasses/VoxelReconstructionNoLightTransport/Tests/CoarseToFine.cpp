@@ -2,6 +2,7 @@
 #include <cmath>
 #include <cstring>
 #include <iostream>
+#include <chrono>
 
 struct CoarseToFineTestAccess
 {
@@ -208,6 +209,73 @@ struct CoarseToFineTestAccess
         checkIntersections(device);
     }
 
+    static void checkSaveLoad(VoxelReconstructionNoLightTransport& source, RenderContext* ctx)
+    {
+        const auto grid = source.mGridResources.gridData;
+        for (uint32_t mode : {0u, 1u})
+        {
+            source.mReconstructionMode = mode;
+            const auto modeDirectory = source.getReconstructionModeDirectory();
+            require(modeDirectory.filename() == (mode == 0u ? "mode0" : "mode1"), "Save path uses the wrong mode directory");
+            const auto directory =
+                modeDirectory / ("io_roundtrip_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+            std::filesystem::create_directories(modeDirectory);
+            require(std::filesystem::create_directory(directory), "Could not create an isolated IO test directory");
+            struct Cleanup
+            {
+                std::filesystem::path file;
+                std::filesystem::path directory;
+                ~Cleanup()
+                {
+                    std::error_code error;
+                    std::filesystem::remove(file, error);
+                    std::filesystem::remove(directory, error);
+                }
+            } cleanup{directory / "roundtrip.bin", directory};
+            source.saveSparseReconstruction(ctx, cleanup.file);
+            auto loaded = VoxelReconstructionNoLightTransport::create(source.mpDevice, {});
+            loaded->mReconstructionMode = mode;
+            loaded->mUpdatePass.init();
+            loaded->loadSparseReconstruction(ctx, cleanup.file);
+            const auto& restored = loaded->mGridResources.gridData;
+            require(
+                all(restored.voxelCount == grid.voxelCount) && all(restored.voxelSize == grid.voxelSize) &&
+                    all(restored.gridMin == grid.gridMin) && restored.activeVoxelCount == grid.activeVoxelCount,
+                "Save/load changed refined grid metadata"
+            );
+            for (uint32_t id = 0u; id < grid.activeVoxelCount; ++id)
+            {
+                const auto before = read<VoxelData>(source.mGridResources.voxelPages, id);
+                const auto after = read<VoxelData>(loaded->mGridResources.voxelPages, id);
+                require(std::memcmp(&before, &after, sizeof(before)) == 0, "Save/load changed voxel geometry or appearance bits");
+                require(
+                    read<uint32_t>(source.mGridResources.cellIndexPages, id) == read<uint32_t>(loaded->mGridResources.cellIndexPages, id),
+                    "Save/load changed sparse spatial addresses"
+                );
+            }
+            require(
+                ctx->readTextureSubresource(source.mGridResources.indexPages[0].get(), 0) ==
+                    ctx->readTextureSubresource(loaded->mGridResources.indexPages[0].get(), 0),
+                "Loaded index does not preserve empty cells"
+            );
+            require(
+                !loaded->mOptimizerParams.isRunning && loaded->mOptimizerParams.currentIteration == 0u,
+                "Loading did not stop/reset optimization"
+            );
+            loaded->mCoarseToFine.targetResolution = 64u;
+            loaded->mCoarseToFine.iterationsPerLevel = 2u;
+            require(
+                loaded->prepareReconstruction(ctx) && loaded->mVoxelResolution == 32u,
+                "Restart after loading discarded the saved resolution"
+            );
+            if (mode == 1u)
+                require(loaded->mOptimizerParams.maxIteration == 4u, "Loaded mode1 schedule did not start at saved level");
+        }
+        source.mReconstructionMode = 1u;
+        std::cout
+            << "PASS: mode0/mode1 v3 save-load roundtrip preserves refined sparse cells and parameters; mode1 restarts at saved level\n";
+    }
+
     static void checkIntersections(const ref<Device>& device)
     {
         auto ctx = device->getRenderContext();
@@ -262,6 +330,8 @@ struct CoarseToFineTestAccess
                     );
                 }
             require(occupied == seen.size(), "Compact refinement retained unused/rejected child slots");
+            if (parents == 9u)
+                checkSaveLoad(*pass, ctx);
         };
         VoxelData sphere = {};
         sphere.occupied = 1u;
