@@ -42,8 +42,14 @@ void VoxelReconstructionNoLightTransport::createUpdatePassResource(RenderContext
 
 float VoxelReconstructionNoLightTransport::getEffectiveOpacityLearningRate() const
 {
-    if (mUpdatePass.mLrOpacity <= 0.0f ||
-        mOptimizerParams.currentIteration < mUpdatePass.mOpacityWarmupIterations)
+    if (mUpdatePass.mLrOpacity <= 0.0f)
+        return 0.0f;
+
+    // Every coarse-to-fine level optimizes opacity at the requested rate,
+    // including its first view and restarts from a saved level.
+    if (isCoarseToFine()) return mUpdatePass.mLrOpacity;
+
+    if (mOptimizerParams.currentIteration < mUpdatePass.mOpacityWarmupIterations)
         return 0.0f;
 
     if (mUpdatePass.mOpacityRampIterations == 0u)
@@ -119,8 +125,13 @@ void VoxelReconstructionNoLightTransport::renderUIUpdatePass(Gui::Widgets& widge
 
     group.var("Adam LR radiance", mUpdatePass.mLrRadiance, 0.0f, 0.1f, 1e-5f, false, "%.6f");
     group.var("Adam LR opacity (target)", mUpdatePass.mLrOpacity, 0.0f, 0.1f, 1e-5f, false, "%.6f");
-    group.var("Opacity warm-up iterations", mUpdatePass.mOpacityWarmupIterations, 0u, 200u, 1u);
-    group.var("Opacity ramp iterations", mUpdatePass.mOpacityRampIterations, 0u, 200u, 1u);
+    if (isCoarseToFine())
+        group.text("mode1: opacity uses the target LR from the first round at every level; no warm-up or ramp.");
+    else
+    {
+        group.var("Opacity warm-up iterations", mUpdatePass.mOpacityWarmupIterations, 0u, 200u, 1u);
+        group.var("Opacity ramp iterations", mUpdatePass.mOpacityRampIterations, 0u, 200u, 1u);
+    }
     group.text(fmt::format("Effective opacity LR: {:.6f}", getEffectiveOpacityLearningRate()));
 
     group.text("Geometry learning rates");
