@@ -357,6 +357,7 @@ public:
         uint32_t targetResolution = GRID_RESOLUTION;
         uint32_t iterationsPerLevel = COARSE_TO_FINE_ITERATIONS_PER_LEVEL;
         float parentOpacityThreshold = 0.01f;
+        bool saveEachLevel = true;
         uint32_t levelStartIteration = 0;
         bool initializationPending = false;
         std::string status = "Initialize from PLY to start the resolution pyramid";

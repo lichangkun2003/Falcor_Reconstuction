@@ -56,6 +56,7 @@ struct CoarseToFineTestAccess
         pass->mReconstructionMode = 1u;
         pass->mCoarseToFine.targetResolution = 64u;
         pass->mCoarseToFine.iterationsPerLevel = 2u;
+        pass->mCoarseToFine.saveEachLevel = false; // Most scheduling checks must not write experiment checkpoints.
         pass->createUpdatePassResource(ctx);
         pass->mUpdatePass.mpComputePass->getRootVar(); // Test rebinding existing update resources at refinement.
         {
@@ -107,8 +108,24 @@ struct CoarseToFineTestAccess
         pass->advanceCoarseToFine(ctx);
         require(pass->mVoxelResolution == 16u, "Refinement ran before a full level completed");
         const float beforeLr = pass->getEffectiveOpacityLearningRate();
+        pass->mCoarseToFine.saveEachLevel = true;
+        pass->mReconstructionNameTag =
+            "level_checkpoint_test_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+        const auto levelCheckpoint = pass->getDefaultReconstructionSavePath();
+        struct CheckpointCleanup
+        {
+            std::filesystem::path file;
+            ~CheckpointCleanup()
+            {
+                std::error_code error;
+                std::filesystem::remove(file, error);
+            }
+        } checkpointCleanup{levelCheckpoint};
         pass->mOptimizerParams.currentIteration = 2u;
         pass->advanceCoarseToFine(ctx);
+        require(std::filesystem::is_regular_file(levelCheckpoint), "Completed coarse level was not checkpointed before refinement");
+        pass->mCoarseToFine.saveEachLevel = false;
+        pass->mReconstructionNameTag.clear();
         require(
             pass->mVoxelResolution == 32u && pass->mGridResources.gridData.activeVoxelCount == 8u,
             "First level did not subdivide one parent into eight cells"

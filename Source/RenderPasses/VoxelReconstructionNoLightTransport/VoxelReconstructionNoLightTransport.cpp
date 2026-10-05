@@ -41,6 +41,7 @@ VoxelReconstructionNoLightTransport::VoxelReconstructionNoLightTransport(ref<Dev
         else if (key == "targetResolution") mCoarseToFine.targetResolution = value;
         else if (key == "iterationsPerLevel") mCoarseToFine.iterationsPerLevel = value;
         else if (key == "refinementParentOpacityThreshold") mCoarseToFine.parentOpacityThreshold = value;
+        else if (key == "saveEachRefinementLevel") mCoarseToFine.saveEachLevel = value;
     }
     if (mReconstructionMode > 1u) throw RuntimeError("Reconstruction mode must be 0 or 1.");
     if (isCoarseToFine()) validateCoarseToFineSettings();
@@ -91,6 +92,7 @@ Properties VoxelReconstructionNoLightTransport::getProperties() const
     props["targetResolution"] = mCoarseToFine.targetResolution;
     props["iterationsPerLevel"] = mCoarseToFine.iterationsPerLevel;
     props["refinementParentOpacityThreshold"] = mCoarseToFine.parentOpacityThreshold;
+    props["saveEachRefinementLevel"] = mCoarseToFine.saveEachLevel;
     return props;
 }
 

@@ -77,6 +77,21 @@ void VoxelReconstructionNoLightTransport::advanceCoarseToFine(RenderContext* pRe
     {
         if (mVoxelResolution < mCoarseToFine.targetResolution)
         {
+            if (mCoarseToFine.saveEachLevel)
+            {
+                const auto checkpoint = getDefaultReconstructionSavePath();
+                try
+                {
+                    saveSparseReconstruction(pRenderContext, checkpoint);
+                    mReconstructionIOStatus = "Saved level checkpoint: " + checkpoint.filename().string();
+                    mReconstructionFileListDirty = true;
+                }
+                catch (const std::exception& error)
+                {
+                    mReconstructionIOStatus = std::string("Level checkpoint failed; refinement continues: ") + error.what();
+                    logError("{}", mReconstructionIOStatus);
+                }
+            }
             refineCoarseToFineGrid(pRenderContext);
             mCoarseToFine.levelStartIteration = mOptimizerParams.currentIteration;
         }
@@ -220,6 +235,8 @@ void VoxelReconstructionNoLightTransport::renderUICoarseToFine(Gui::Widgets& wid
             widget.tooltip(
                 "At refinement only: discard parents whose opacity SH upper bound is below this threshold. Zero disables filtering."
             );
+            widget.checkbox("Save Each Completed Level", mCoarseToFine.saveEachLevel);
+            widget.tooltip("Save the current mode1 grid before every refinement. The final target level is saved at completion as usual.");
         }
         if (mCoarseToFine.initializationPending)
             widget.text("Next Enable or Init / Reset reloads the PLY with the selected mode/resolution.");
