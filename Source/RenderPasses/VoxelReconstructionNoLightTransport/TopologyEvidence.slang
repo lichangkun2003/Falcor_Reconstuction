@@ -3,13 +3,13 @@
 
 BEGIN_NAMESPACE_FALCOR
 
-// One compact persistent record per active voxel. View stamps ensure that one
+// One compact persistent record per active voxel. Exact camera bitsets ensure that one
 // physical camera contributes at most one foreground vote and one background
 // vote in each evidence window, regardless of iterations, resolution, or SPP.
 struct TopologyEvidence
 {
-    uint lastForegroundView;
-    uint lastBackgroundView;
+    uint foregroundViewMask[TOPOLOGY_EVIDENCE_VIEW_WORDS];
+    uint backgroundViewMask[TOPOLOGY_EVIDENCE_VIEW_WORDS];
     uint packedCountsAndFlags;
     // Full training rounds must finish before a newborn can collect deletion votes.
     uint deletionEligibleIteration;

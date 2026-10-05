@@ -56,7 +56,8 @@ using namespace Falcor;
 static_assert(sizeof(GaussianEllipsoid) == 40, "GaussianEllipsoid host/device layout changed.");
 static_assert(sizeof(VoxelData) == 44 + 12 * SH_COUNT + 4 * SH_OPACITY_COUNT, "VoxelData host/device layout changed.");
 static_assert(sizeof(GradRecord) == 48 + 12 * SH_COUNT + 4 * SH_OPACITY_COUNT, "GradRecord host/device layout changed.");
-static_assert(sizeof(TopologyEvidence) == 24, "TopologyEvidence host/device layout changed.");
+static_assert(sizeof(TopologyEvidence) == (2 * TOPOLOGY_EVIDENCE_VIEW_WORDS + 4) * sizeof(uint32_t),
+    "TopologyEvidence host/device layout changed.");
 
 namespace
 {

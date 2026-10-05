@@ -86,6 +86,10 @@ bool VoxelReconstructionNoLightTransport::prepareReconstruction(RenderContext* p
 {
     try
     {
+        if (mReferenceCameras.size() > TOPOLOGY_EVIDENCE_MAX_VIEWS)
+            throw std::runtime_error(fmt::format(
+                "Dataset has {} cameras; raise TOPOLOGY_EVIDENCE_MAX_VIEWS (currently {}) and rebuild for exact deletion voting.",
+                mReferenceCameras.size(), TOPOLOGY_EVIDENCE_MAX_VIEWS));
         if (isCoarseToFine())
             validateCoarseToFineSettings();
         if ((!mPointCloud.initialized || mCoarseToFine.initializationPending) && !initializePointCloudVoxelData(pRenderContext))

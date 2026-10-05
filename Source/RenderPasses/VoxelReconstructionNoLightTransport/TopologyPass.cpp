@@ -12,7 +12,7 @@ bool VoxelReconstructionNoLightTransport::shouldCollectDeletionEvidence() const
     const uint32_t start = getDeletionEvidenceStartIteration();
     // Use one jittered evidence sample per view and iteration, independent of
     // the training SPP. Repeated iterations improve 1-SPP coverage, while
-    // per-view stamps still limit each camera to one foreground and one
+    // per-view bitsets still limit each camera to one foreground and one
     // background vote per evidence window.
     const bool finalSppSample = mRayMarchingPass.mSpp > 0u && mRayMarchingPass.mSampleIndex == mRayMarchingPass.mSpp;
     const bool deletionLevel = !isCoarseToFine() || mVoxelResolution == mCoarseToFine.targetResolution;

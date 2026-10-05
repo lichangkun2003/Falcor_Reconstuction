@@ -2,6 +2,8 @@
 
 In both modes, each complete training iteration visits every reference camera exactly once in a newly shuffled order. All SPP samples for one camera finish before advancing. The camera, reference image, and deletion-evidence ID use the same original dataset index; evidence is never keyed by the shuffled traversal position. The viewing Camera Index remains in original dataset order.
 
+Deletion evidence uses separate exact foreground/background camera bitsets per active voxel. A physical camera may vote once per class per evidence window, even across interleaved cameras, repeated training rounds, or concurrent pixels. Window rollover and explicit evidence reset clear both sets; growth/compaction retain protection and lineage as before. `TOPOLOGY_EVIDENCE_MAX_VIEWS` in `Defines.h` defaults to 128 (48 bytes per evidence record, up from 24). Training rejects datasets above this capacity instead of silently aliasing/ignoring votes; increase the definition and rebuild for larger datasets. Camera counts are now genuinely independent-view counts, so the unchanged thresholds may behave more conservatively than the old repeated-vote implementation. Reconstruction files do not store this transient evidence and retain their existing format.
+
 This pass initializes a voxel reconstruction from a point cloud and optimizes its occupied voxels. `RECONSTRUCTION_MODE` in `Defines.h` selects the default: `0` retains fixed-resolution training, and `1` enables the coarse-to-fine experiment. The UI can select either mode before training. `GRID_RESOLUTION` sets mode0's initial resolution and mode1's default target. The old full-grid `RECON_MODE_ORIGINAL` implementation remains removed.
 
 ## Coarse-to-fine experiment (mode1)

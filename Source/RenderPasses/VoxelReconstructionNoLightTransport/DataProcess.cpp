@@ -183,6 +183,7 @@ DefineList VoxelReconstructionNoLightTransport::getReconstructionDefines()
     defines.add("GRID_RESOLUTION", std::to_string(GRID_RESOLUTION));
     defines.add("SPARSE_POOL_PAGE_SIZE", std::to_string(uint32_t(SPARSE_POOL_PAGE_SIZE)));
     defines.add("SPARSE_POOL_MAX_PAGES", std::to_string(SPARSE_POOL_MAX_PAGES));
+    defines.add("TOPOLOGY_EVIDENCE_MAX_VIEWS", std::to_string(TOPOLOGY_EVIDENCE_MAX_VIEWS));
     return defines;
 }
 

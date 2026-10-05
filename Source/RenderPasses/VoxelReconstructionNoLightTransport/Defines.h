@@ -18,6 +18,16 @@
 
 #define REFERENCE_IMAGES_COUNT 100
 
+// Exact per-window camera sets (foreground/background), not hashes or last-view stamps.
+// Raise this and rebuild for datasets with more cameras. 128 covers the 100-view dataset.
+#ifndef TOPOLOGY_EVIDENCE_MAX_VIEWS
+#define TOPOLOGY_EVIDENCE_MAX_VIEWS 128
+#endif
+#define TOPOLOGY_EVIDENCE_VIEW_WORDS ((TOPOLOGY_EVIDENCE_MAX_VIEWS + 31) / 32)
+#if TOPOLOGY_EVIDENCE_MAX_VIEWS < 1 || TOPOLOGY_EVIDENCE_MAX_VIEWS > 32767
+#error "Topology camera capacity must fit the 15-bit evidence count."
+#endif
+
 
 
 // Maximum hard-hit records retained for differentiable compositing along one ray.

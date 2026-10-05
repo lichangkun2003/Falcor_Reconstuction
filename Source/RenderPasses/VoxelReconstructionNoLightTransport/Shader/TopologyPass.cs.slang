@@ -16,8 +16,11 @@ void resetEvidence(uint3 dispatchThreadId : SV_DispatchThreadID)
 {
     uint voxelID = gSparseOffset + dispatchThreadId.x;
     if (voxelID >= gGridDataParamBlock.activeVoxelCount) return;
-    TOPOLOGY_DATA(voxelID).lastForegroundView = 0u;
-    TOPOLOGY_DATA(voxelID).lastBackgroundView = 0u;
+    for (uint word = 0u; word < TOPOLOGY_EVIDENCE_VIEW_WORDS; ++word)
+    {
+        TOPOLOGY_DATA(voxelID).foregroundViewMask[word] = 0u;
+        TOPOLOGY_DATA(voxelID).backgroundViewMask[word] = 0u;
+    }
     TOPOLOGY_DATA(voxelID).packedCountsAndFlags = 0u;
     if (!gPreserveGrowthProtection)
     {
@@ -37,8 +40,11 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     TopologyEvidence evidence = TOPOLOGY_DATA(voxelID);
     if (gCurrentIteration < evidence.deletionEligibleIteration)
     {
-        evidence.lastForegroundView = 0u;
-        evidence.lastBackgroundView = 0u;
+        for (uint word = 0u; word < TOPOLOGY_EVIDENCE_VIEW_WORDS; ++word)
+        {
+            evidence.foregroundViewMask[word] = 0u;
+            evidence.backgroundViewMask[word] = 0u;
+        }
         evidence.packedCountsAndFlags = 0u;
         TOPOLOGY_DATA(voxelID) = evidence;
         return;
@@ -73,8 +79,11 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         (candidate ? kTopologyEvidenceDeletionCandidate : 0u);
     // Begin a fresh window. Camera IDs may vote again in the next window, but
     // repeated iterations of the same camera cannot inflate this window.
-    evidence.lastForegroundView = 0u;
-    evidence.lastBackgroundView = 0u;
+    for (uint word = 0u; word < TOPOLOGY_EVIDENCE_VIEW_WORDS; ++word)
+    {
+        evidence.foregroundViewMask[word] = 0u;
+        evidence.backgroundViewMask[word] = 0u;
+    }
     TOPOLOGY_DATA(voxelID) = evidence;
 
     if (candidate)

@@ -361,32 +361,38 @@ void accumulateAppearanceGrad(
 
 void recordUniqueDeletionEvidence(uint voxelIndex, bool foreground)
 {
-    uint previousView = 0u;
+    // IDs are one-based physical camera indices. Never alias out-of-range cameras.
+    if (gEvidenceViewID == 0u || gEvidenceViewID > TOPOLOGY_EVIDENCE_MAX_VIEWS)
+        return;
+    uint view = gEvidenceViewID - 1u;
+    uint word = view / 32u;
+    uint bit = 1u << (view % 32u);
+    uint previousMask = 0u;
     if (foreground)
     {
         // Most pixels/samples for a view arrive after its first vote. Avoid an
-        // unnecessary atomic in that common case; the exchange still resolves
+        // unnecessary atomic in that common case; the atomic OR still resolves
         // races between the first voting pixels.
-        if (TOPOLOGY_DATA(voxelIndex).lastForegroundView == gEvidenceViewID)
+        if ((TOPOLOGY_DATA(voxelIndex).foregroundViewMask[word] & bit) != 0u)
             return;
-        InterlockedExchange(
-            TOPOLOGY_DATA(voxelIndex).lastForegroundView,
-            gEvidenceViewID,
-            previousView
+        InterlockedOr(
+            TOPOLOGY_DATA(voxelIndex).foregroundViewMask[word],
+            bit,
+            previousMask
         );
-        if (previousView != gEvidenceViewID)
+        if ((previousMask & bit) == 0u)
             InterlockedAdd(TOPOLOGY_DATA(voxelIndex).packedCountsAndFlags, 1u);
     }
     else
     {
-        if (TOPOLOGY_DATA(voxelIndex).lastBackgroundView == gEvidenceViewID)
+        if ((TOPOLOGY_DATA(voxelIndex).backgroundViewMask[word] & bit) != 0u)
             return;
-        InterlockedExchange(
-            TOPOLOGY_DATA(voxelIndex).lastBackgroundView,
-            gEvidenceViewID,
-            previousView
+        InterlockedOr(
+            TOPOLOGY_DATA(voxelIndex).backgroundViewMask[word],
+            bit,
+            previousMask
         );
-        if (previousView != gEvidenceViewID)
+        if ((previousMask & bit) == 0u)
             InterlockedAdd(
                 TOPOLOGY_DATA(voxelIndex).packedCountsAndFlags,
                 1u << kTopologyEvidenceBackgroundShift

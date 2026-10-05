@@ -203,6 +203,68 @@ struct NeighborGrowthTestAccess
             topologyBackgroundViews(read<TopologyEvidence>(pass.mGridResources.topologyEvidencePages, 1).packedCountsAndFlags) == 1u,
             "Expired protection did not permit one unique view vote"
         );
+        // Many concurrent pixels and interleaved cameras across repeated rounds.
+        // Exercise both sides of 32-bit word boundaries and the final supported ID.
+        std::vector<PathRecord> paths(256u, path);
+        std::vector<float4> derivatives(256u, derivative);
+        std::vector<uint32_t> classes(256u, background);
+        var["gPathRecordBuffer"] = pass.mpDevice->createStructuredBuffer(
+            sizeof(PathRecord), uint32_t(paths.size()), ResourceBindFlags::ShaderResource, MemoryType::DeviceLocal, paths.data());
+        var["gDL_dColorBuffer"] = pass.mpDevice->createTexture2D(16, 16, ResourceFormat::RGBA32Float, 1, 1, derivatives.data());
+        var["gBackgroundMaskBuffer"] = pass.mpDevice->createTexture2D(16, 16, ResourceFormat::R32Uint, 1, 1, classes.data());
+        var["dummy"] = pass.mpDevice->createTexture2D(16, 16, ResourceFormat::RGBA32Float, 1, 1, nullptr,
+            ResourceBindFlags::UnorderedAccess);
+        cb["gResolution"] = uint2(16);
+        const auto vote = [&](uint32_t camera, uint32_t iteration)
+        {
+            cb["gEvidenceViewID"] = camera;
+            cb["gCurrentIteration"] = iteration;
+            gradientPass->execute(ctx, uint3(16, 16, 1));
+            pass.barrierSparseGradients(ctx);
+            pass.barrierTopologyEvidence(ctx);
+        };
+        std::set<uint32_t> uniqueCameras{1u};
+        for (uint32_t iteration = 55u; iteration < 60u; ++iteration)
+            for (uint32_t camera : {2u, 1u, 33u, 2u, 32u, 33u, 64u, 100u, uint32_t(TOPOLOGY_EVIDENCE_MAX_VIEWS)})
+            {
+                if (camera > TOPOLOGY_EVIDENCE_MAX_VIEWS) continue;
+                uniqueCameras.insert(camera);
+                vote(camera, iteration);
+            }
+        vote(0u, 59u);
+        vote(TOPOLOGY_EVIDENCE_MAX_VIEWS + 1u, 59u);
+        ctx->submit(true);
+        require(topologyBackgroundViews(read<TopologyEvidence>(pass.mGridResources.topologyEvidencePages, 1).packedCountsAndFlags)
+            == uniqueCameras.size(), "Interleaved/repeated cameras inflated the background count");
+        // A camera can independently supply one vote of each class, never one per pixel/round.
+        derivatives.assign(256u, float4(0, 0, 0, -1));
+        classes.assign(256u, 2u);
+        var["gDL_dColorBuffer"] = pass.mpDevice->createTexture2D(16, 16, ResourceFormat::RGBA32Float, 1, 1, derivatives.data());
+        var["gBackgroundMaskBuffer"] = pass.mpDevice->createTexture2D(16, 16, ResourceFormat::R32Uint, 1, 1, classes.data());
+        for (uint32_t camera : {1u, 2u, 1u, 2u, 1u}) vote(camera, 59u);
+        ctx->submit(true);
+        auto counted = read<TopologyEvidence>(pass.mGridResources.topologyEvidencePages, 1);
+        require(topologyForegroundViews(counted.packedCountsAndFlags) == 2u &&
+            topologyBackgroundViews(counted.packedCountsAndFlags) == uniqueCameras.size(),
+            "Foreground/background sets were not independent");
+        pass.mOptimizerParams.currentIteration = 60u;
+        pass.evaluateDeletionEvidence(ctx);
+        auto cleared = read<TopologyEvidence>(pass.mGridResources.topologyEvidencePages, 1);
+        for (uint32_t word = 0u; word < TOPOLOGY_EVIDENCE_VIEW_WORDS; ++word)
+            require(cleared.foregroundViewMask[word] == 0u && cleared.backgroundViewMask[word] == 0u,
+                "Window rollover did not clear every camera word");
+        vote(1u, 60u);
+        ctx->submit(true);
+        require(topologyForegroundViews(read<TopologyEvidence>(pass.mGridResources.topologyEvidencePages, 1).packedCountsAndFlags) == 1u,
+            "Same camera could not vote in the next window");
+        pass.resetDeletionEvidence(ctx, true);
+        cleared = read<TopologyEvidence>(pass.mGridResources.topologyEvidencePages, 1);
+        require(cleared.packedCountsAndFlags == 0u && cleared.deletionEligibleIteration == 55u,
+            "Explicit evidence reset lost protection or retained counts");
+        for (uint32_t word = 0u; word < TOPOLOGY_EVIDENCE_VIEW_WORDS; ++word)
+            require(cleared.foregroundViewMask[word] == 0u && cleared.backgroundViewMask[word] == 0u,
+                "Explicit reset retained camera bits");
+        std::cout << "PASS: exact camera sets across repeated/random-order rounds, concurrent pixels, word boundaries, independent classes, rollover/reset\n";
         // A protected voxel also cannot retain a stale/fabricated candidate flag.
         auto evidence = read<TopologyEvidence>(pass.mGridResources.topologyEvidencePages, 1);
         evidence.packedCountsAndFlags = kTopologyEvidenceDeletionCandidate;
@@ -237,8 +299,10 @@ struct NeighborGrowthTestAccess
             pass.evaluateDeletionEvidence(ctx);
             evidence = read<TopologyEvidence>(pass.mGridResources.topologyEvidencePages, 0u);
             history = evidence.packedCountsAndFlags;
-            require(evidence.lastForegroundView == 0u && evidence.lastBackgroundView == 0u &&
-                topologyForegroundViews(history) == 0u && topologyBackgroundViews(history) == 0u,
+            for (uint32_t word = 0u; word < TOPOLOGY_EVIDENCE_VIEW_WORDS; ++word)
+                require(evidence.foregroundViewMask[word] == 0u && evidence.backgroundViewMask[word] == 0u,
+                    "Evidence window did not clear camera sets");
+            require(topologyForegroundViews(history) == 0u && topologyBackgroundViews(history) == 0u,
                 "Evidence window did not reset camera stamps/counts");
         };
         window(4u, 0u);
