@@ -82,7 +82,7 @@ void VoxelReconstructionNoLightTransport::runGradientPass(RenderContext* pRender
     cb["gCollectDeletionEvidence"] = shouldCollectDeletionEvidence();
     // The topology pass clears these stamps at every evidence-window boundary,
     // so the camera index makes each physical view vote at most once per window.
-    cb["gEvidenceViewID"] = mOptimizerParams.currentView + 1u;
+    cb["gEvidenceViewID"] = getTrainingViewIndex() + 1u;
     cb["gCurrentIteration"] = mOptimizerParams.currentIteration;
     cb["gMinRemovalLossDelta"] = mTopologySettings.minRemovalLossDelta;
     cb["gMinEvidenceTransmittance"] = mTopologySettings.minEvidenceTransmittance;

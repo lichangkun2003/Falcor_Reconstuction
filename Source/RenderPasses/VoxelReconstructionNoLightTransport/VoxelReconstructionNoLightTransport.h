@@ -37,6 +37,7 @@
 #include <filesystem>
 #include <iomanip>
 #include <sstream>
+#include <random>
 #include <nlohmann/json.hpp>
 
 
@@ -150,6 +151,8 @@ public:
 
     void startReconstruction();
     void stopReconstruction();
+    void shuffleTrainingViews();
+    uint32_t getTrainingViewIndex() const;
 
     std::filesystem::path getDefaultReconstructionSavePath();
     std::string getReconstructionExperimentPrefix();
@@ -487,6 +490,9 @@ private:
     // Voxel Optimization
     std::vector<ref<Texture>> mReferenceImages;
     std::vector<ref<Camera>> mReferenceCameras;
+    // currentView is the traversal position; camera/image/evidence IDs use this permutation.
+    std::vector<uint32_t> mTrainingViewOrder;
+    std::mt19937 mTrainingViewRng{std::random_device{}()};
     std::vector<std::filesystem::path> mReferenceImagePaths;
     ref<Buffer> mpPathRecordBuffer;
 

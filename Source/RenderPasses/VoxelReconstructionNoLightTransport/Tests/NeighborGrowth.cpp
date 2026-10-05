@@ -221,8 +221,11 @@ struct NeighborGrowthTestAccess
     }
     static void checkDeletionVoteRatio(VoxelReconstructionNoLightTransport& pass, RenderContext* ctx)
     {
-        require(pass.mTopologySettings.minDeletionConflictViews == 5u &&
-            pass.mTopologySettings.deletionConflictSupportRatio == 3u, "Incorrect deletion vote defaults");
+        // Exercise a known ratio without constraining user-tunable experiment defaults.
+        const uint32_t originalMinViews = pass.mTopologySettings.minDeletionConflictViews;
+        const uint32_t originalRatio = pass.mTopologySettings.deletionConflictSupportRatio;
+        pass.mTopologySettings.minDeletionConflictViews = 5u;
+        pass.mTopologySettings.deletionConflictSupportRatio = 3u;
         seed(pass, ctx, {cell(3, 3, 3)}, {parentVoxel()});
         uint32_t history = 0u;
         const auto window = [&](uint32_t background, uint32_t foreground)
@@ -266,6 +269,8 @@ struct NeighborGrowthTestAccess
         write(pass.mGridResources.topologyEvidencePages, 0u, evidence);
         window(20u, 0u);
         require(history == 0u, "Vote ratio bypassed newborn deletion protection");
+        pass.mTopologySettings.minDeletionConflictViews = originalMinViews;
+        pass.mTopologySettings.deletionConflictSupportRatio = originalRatio;
     }
 
     static void checkGrowthPenetration(VoxelReconstructionNoLightTransport& pass, RenderContext* ctx)

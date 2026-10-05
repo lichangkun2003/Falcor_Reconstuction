@@ -26,6 +26,7 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #include "VoxelReconstructionNoLightTransport.h"
+#include <algorithm>
 
 extern "C" FALCOR_API_EXPORT void registerPlugin(Falcor::PluginRegistry& registry)
 {
@@ -257,6 +258,9 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
     // 只有 Spp == 1 时第 0 帧同时是唯一一帧，照旧出梯度（loss shader 会回退到累积图本身）.
     bool hasResidualBaseline = mRayMarchingPass.mSpp <= 1u || !isFirstSample;
 
+    if (mEnableReconstruction && mOptimizerParams.isRunning && isFirstSample && mOptimizerParams.currentView == 0u)
+        shuffleTrainingViews();
+
     rayMarchingPass(pRenderContext, renderData);
 
     if (mEnableReconstruction && mOptimizerParams.isRunning)
@@ -273,7 +277,7 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
         {
             // 每一帧都反传自己的 PathRecord 并原子累加到 gradBuffer.
             // 第 0 帧没有前缀可用（见 hasResidualBaseline），只当基线.
-            mLossPass.mView = mOptimizerParams.currentView;
+            mLossPass.mView = getTrainingViewIndex();
             runLossPass(pRenderContext, renderData);
             runGradientPass(pRenderContext, renderData);
         }
@@ -466,6 +470,8 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget)
     {
         widget.text("Current iteration: " + std::to_string(mOptimizerParams.currentIteration));
         widget.text("Current view: " + std::to_string(mOptimizerParams.currentView));
+        if (mOptimizerParams.isRunning && !mTrainingViewOrder.empty())
+            widget.text("Training camera index: " + std::to_string(getTrainingViewIndex()));
         widget.text("Is running: " + std::string(mOptimizerParams.isRunning ? "true" : "false"));
         widget.text(fmt::format("Mean loss: {:.8f}", mReduceLossPass.meanLoss));
     }
@@ -943,6 +949,19 @@ void VoxelReconstructionNoLightTransport::stopReconstruction()
     mRayMarchingPass.mSampleIndex = 0;
     mPointCloud.clearAccumulation = true;
     updateOutputResolution();
+}
+
+void VoxelReconstructionNoLightTransport::shuffleTrainingViews()
+{
+    mTrainingViewOrder.resize(mReferenceCameras.size());
+    for (uint32_t i = 0; i < mTrainingViewOrder.size(); ++i)
+        mTrainingViewOrder[i] = i;
+    std::shuffle(mTrainingViewOrder.begin(), mTrainingViewOrder.end(), mTrainingViewRng);
+}
+
+uint32_t VoxelReconstructionNoLightTransport::getTrainingViewIndex() const
+{
+    return mTrainingViewOrder.at(mOptimizerParams.currentView);
 }
 
 bool VoxelReconstructionNoLightTransport::onMouseEvent(const MouseEvent& mouseEvent)

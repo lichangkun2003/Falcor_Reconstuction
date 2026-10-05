@@ -1,5 +1,7 @@
 # VoxelReconstructionNoLightTransport
 
+In both modes, each complete training iteration visits every reference camera exactly once in a newly shuffled order. All SPP samples for one camera finish before advancing. The camera, reference image, and deletion-evidence ID use the same original dataset index; evidence is never keyed by the shuffled traversal position. The viewing Camera Index remains in original dataset order.
+
 This pass initializes a voxel reconstruction from a point cloud and optimizes its occupied voxels. `RECONSTRUCTION_MODE` in `Defines.h` selects the default: `0` retains fixed-resolution training, and `1` enables the coarse-to-fine experiment. The UI can select either mode before training. `GRID_RESOLUTION` sets mode0's initial resolution and mode1's default target. The old full-grid `RECON_MODE_ORIGINAL` implementation remains removed.
 
 ## Coarse-to-fine experiment (mode1)

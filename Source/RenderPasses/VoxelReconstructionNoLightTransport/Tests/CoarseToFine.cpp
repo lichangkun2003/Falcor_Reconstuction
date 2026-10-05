@@ -59,6 +59,43 @@ struct CoarseToFineTestAccess
         return float(std::log(childAlpha / (1.0 - childAlpha)) / y0);
     }
 
+    static void checkTrainingViewOrder(VoxelReconstructionNoLightTransport& pass)
+    {
+        const auto originalCameras = pass.mReferenceCameras;
+        const auto originalOptimizer = pass.mOptimizerParams;
+        const auto originalOrder = pass.mTrainingViewOrder;
+        const auto originalRng = pass.mTrainingViewRng;
+        pass.mTrainingViewRng.seed(42u);
+        std::vector<uint32_t> previous;
+        bool changed = false;
+        for (uint32_t count : {1u, 8u, 8u, 8u, 3u})
+        {
+            pass.mReferenceCameras.resize(count);
+            pass.shuffleTrainingViews();
+            std::vector<bool> seen(count, false);
+            const auto order = pass.mTrainingViewOrder;
+            for (uint32_t position = 0u; position < count; ++position)
+            {
+                pass.mOptimizerParams.currentView = position;
+                const uint32_t camera = pass.getTrainingViewIndex();
+                require(camera < count && !seen[camera], "Shuffled iteration repeated or missed a camera");
+                seen[camera] = true;
+                for (uint32_t sample = 0u; sample < 8u; ++sample)
+                    require(pass.getTrainingViewIndex() == camera, "Camera changed between SPP samples");
+            }
+            require(pass.mTrainingViewOrder == order, "Reading view IDs mutated the training permutation");
+            if (previous.size() == count && previous != order)
+                changed = true;
+            previous = order;
+        }
+        require(changed, "Training order was not reshuffled between iterations");
+        pass.mReferenceCameras = originalCameras;
+        pass.mOptimizerParams = originalOptimizer;
+        pass.mTrainingViewOrder = originalOrder;
+        pass.mTrainingViewRng = originalRng;
+        std::cout << "PASS: per-iteration shuffled camera permutation, stable SPP IDs, dataset resize\n";
+    }
+
     static void checkLevelBudgets(VoxelReconstructionNoLightTransport& pass)
     {
         const auto original = pass.mCoarseToFine;
@@ -98,6 +135,7 @@ struct CoarseToFineTestAccess
         auto pass = VoxelReconstructionNoLightTransport::create(device, {});
         require(pass->mReconstructionMode == uint32_t(RECONSTRUCTION_MODE), "Configured reconstruction mode was not applied");
         checkLevelBudgets(*pass);
+        checkTrainingViewOrder(*pass);
         pass->mReconstructionMode = 1u;
         pass->mCoarseToFine.targetResolution = 64u;
         pass->mCoarseToFine.totalIterations = 12u; // Interpolated weights produce 3, 3, and 6 rounds.
