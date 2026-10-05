@@ -48,6 +48,15 @@ struct CoarseToFineTestAccess
         require(all(childAxes >= max(0.5f * size * 1e-4f, float3(1e-8f)) * 0.999f), "Child below optimizer minimum scale");
     }
 
+    static float attenuatedOpacityDC(const SphericalHarmonicsOpacity& parent, float opticalDepthScale)
+    {
+        const float y0 = calcSH(0u, float3(0, 0, 1));
+        const double parentLogit = double(parent.coefficients[0]) * y0;
+        const double parentAlpha = 1.0 / (1.0 + std::exp(-parentLogit));
+        const double childAlpha = 1.0 - std::pow(1.0 - parentAlpha, opticalDepthScale);
+        return float(std::log(childAlpha / (1.0 - childAlpha)) / y0);
+    }
+
     static void run(const ref<Device>& device)
     {
         auto ctx = device->getRenderContext();
@@ -164,8 +173,15 @@ struct CoarseToFineTestAccess
             checkGeometry(parent.ellipsoid, child.ellipsoid, grid.voxelSize, uint3(id & 1u, (id >> 1u) & 1u, (id >> 2u) & 1u));
             require(std::memcmp(&child.radiance, &parent.radiance, sizeof(parent.radiance)) == 0, "Refinement reset radiance");
             require(
-                std::memcmp(&child.opacity, &parent.opacity, sizeof(parent.opacity)) == 0, "Refinement did not fully inherit opacity SH"
+                std::abs(child.opacity.coefficients[0] - attenuatedOpacityDC(parent.opacity, pass->mCoarseToFine.opacityOpticalDepthScale)) <
+                    1e-4f,
+                "Refinement opacity did not use optical-depth attenuation"
             );
+            for (uint32_t coefficient = 1u; coefficient < SH_OPACITY_COUNT; ++coefficient)
+                require(
+                    child.opacity.coefficients[coefficient] == parent.opacity.coefficients[coefficient],
+                    "Refinement changed directional opacity coefficients"
+                );
             const auto adam = read<GeometryAdamState>(pass->mGridResources.adamPages, id);
             const GeometryAdamState zero = {};
             require(std::memcmp(&adam, &zero, sizeof(adam)) == 0, "Refinement retained incompatible parent Adam moments");
@@ -416,10 +432,18 @@ struct CoarseToFineTestAccess
                         inherited.occupied == 1u && std::memcmp(&inherited.radiance, &parent.radiance, sizeof(parent.radiance)) == 0,
                         "Filtered child did not inherit parent appearance"
                     );
-                    require(
-                        std::memcmp(&inherited.opacity, &parent.opacity, sizeof(parent.opacity)) == 0,
-                        "Directional opacity SH was modified during refinement"
-                    );
+                    const float expectedOpacityDC = attenuatedOpacityDC(parent.opacity, pass->mCoarseToFine.opacityOpticalDepthScale);
+                    if (std::abs(inherited.opacity.coefficients[0] - expectedOpacityDC) >= 1e-4f)
+                        throw std::runtime_error(fmt::format(
+                            "Filtered child opacity attenuation mismatch: expected {}, got {}",
+                            expectedOpacityDC,
+                            inherited.opacity.coefficients[0]
+                        ));
+                    for (uint32_t coefficient = 1u; coefficient < SH_OPACITY_COUNT; ++coefficient)
+                        require(
+                            inherited.opacity.coefficients[coefficient] == parent.opacity.coefficients[coefficient],
+                            "Directional opacity SH was modified during refinement"
+                        );
                     checkGeometry(parent.ellipsoid, inherited.ellipsoid, size, uint3(child & 1u, (child >> 1u) & 1u, (child >> 2u) & 1u));
                 }
             require(occupied == seen.size(), "Compact refinement retained unused/rejected child slots");

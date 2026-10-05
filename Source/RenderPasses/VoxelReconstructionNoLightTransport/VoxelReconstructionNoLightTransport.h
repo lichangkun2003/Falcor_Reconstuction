@@ -357,6 +357,10 @@ public:
         uint32_t targetResolution = GRID_RESOLUTION;
         uint32_t totalIterations = COARSE_TO_FINE_TOTAL_ITERATIONS;
         float parentOpacityThreshold = 0.01f;
+        float opacityOpticalDepthScale = 0.65f;
+        bool enableCoarseGrowth = true;
+        float coarseGrowthFacePenetration = 2.0f;
+        uint32_t coarseGrowthInterval = 20u;
         bool saveEachLevel = true;
         uint32_t scheduleStartResolution = 0;
         uint32_t levelStartIteration = 0;

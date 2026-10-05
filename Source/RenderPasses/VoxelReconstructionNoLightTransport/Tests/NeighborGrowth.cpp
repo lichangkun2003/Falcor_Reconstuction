@@ -317,6 +317,46 @@ struct NeighborGrowthTestAccess
                 "Delta 2 did not require strictly more than two voxel widths beyond the shared face"
             );
         }
+        for (float radius : {3.5f, 3.6f})
+        {
+            sphere.ellipsoid.logScale = float3(std::log(radius));
+            seed(pass, ctx, {origin}, {sphere});
+            pass.mTopologySettings.growthFacePenetration = 3.0f;
+            pass.growNeighborVoxels(ctx);
+            require(
+                pass.mTopologySettings.lastGrowthCount == (radius > 3.5f ? 6u : 0u),
+                "Growth penetration above delta 2 was clamped or used a non-strict boundary"
+            );
+        }
+    }
+
+    static void checkCoarseModeGrowth(VoxelReconstructionNoLightTransport& pass, RenderContext* ctx)
+    {
+        const uint32_t origin = cell(3, 3, 3);
+        auto sphere = parentVoxel();
+        sphere.ellipsoid.rotation = float4(1, 0, 0, 0);
+        sphere.ellipsoid.logScale = float3(std::log(2.6f));
+        seed(pass, ctx, {origin}, {sphere});
+        pass.mReconstructionMode = 1u;
+        pass.mCoarseToFine.targetResolution = 16u;
+        pass.mCoarseToFine.levelStartIteration = 40u;
+        pass.mCoarseToFine.enableCoarseGrowth = true;
+        pass.mCoarseToFine.coarseGrowthFacePenetration = 2.0f;
+        pass.mCoarseToFine.coarseGrowthInterval = 20u;
+        pass.mOptimizerParams.currentIteration = 59u;
+        pass.growNeighborVoxels(ctx);
+        require(pass.mGridResources.gridData.activeVoxelCount == 1u, "Mode1 coarse growth ignored its level-local cadence");
+        pass.mOptimizerParams.currentIteration = 60u;
+        pass.growNeighborVoxels(ctx);
+        require(pass.mTopologySettings.lastGrowthCount == 6u, "Mode1 coarse growth did not run at delta 2 after twenty rounds");
+
+        seed(pass, ctx, {origin}, {sphere});
+        pass.mCoarseToFine.targetResolution = 8u;
+        pass.mCoarseToFine.levelStartIteration = 40u;
+        pass.mOptimizerParams.currentIteration = 60u;
+        pass.growNeighborVoxels(ctx);
+        require(pass.mGridResources.gridData.activeVoxelCount == 1u, "Mode1 growth remained enabled at the target level");
+        pass.mReconstructionMode = 0u;
     }
 
     static void checkGrowthWaiting(VoxelReconstructionNoLightTransport& pass, RenderContext* ctx)
@@ -527,12 +567,19 @@ struct NeighborGrowthTestAccess
             auto pass = VoxelReconstructionNoLightTransport::create(device, properties);
             require(pass->mTopologySettings.growthFacePenetration == 1.0f, "Default growth depth is not delta 1");
             require(pass->mTopologySettings.growthInterval == 10u, "Default growth interval is not ten full rounds");
+            require(
+                pass->mCoarseToFine.enableCoarseGrowth && pass->mCoarseToFine.coarseGrowthFacePenetration == 2.0f &&
+                    pass->mCoarseToFine.coarseGrowthInterval == 20u,
+                "Default mode1 coarse-growth settings are incorrect"
+            );
             pass->mUpdatePass.init();
             pass->createTopologyPassResource(ctx);
             pass->createDeletionPassResources();
             checkGrowthPenetration(*pass, ctx);
             std::cout << "PASS: face-depth trigger, strict thresholds, per-face direction, occupied neighbors, non-cubic widths, rotated "
                          "footprint\n";
+            checkCoarseModeGrowth(*pass, ctx);
+            std::cout << "PASS: mode1 grows every twenty level-local rounds at delta 2 and stops growth at the target\n";
             checkGrowthWaiting(*pass, ctx);
             std::cout << "PASS: newborn wait blocks unstable children, expires after full rounds, resets per generation, supports UI "
                          "changes, independent of deletion\n";

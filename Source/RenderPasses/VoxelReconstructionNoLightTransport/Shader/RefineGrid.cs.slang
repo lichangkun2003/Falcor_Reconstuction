@@ -8,7 +8,32 @@ cbuffer CB
     uint gParentOffset;
     uint gParentCount;
     float gParentOpacityThreshold;
+    float gOpacityOpticalDepthScale;
 };
+
+// Opacity SH stores logits. A uniform DC shift lowers every directional
+// logit while preserving the learned directional coefficients. Choose the
+// shift so the DC-only opacity has the requested optical depth
+// tauChild = scale * tauParent.
+void attenuateRefinementOpacity(inout SphericalHarmonicsOpacity opacity)
+{
+    float scale = clamp(gOpacityOpticalDepthScale, 0.01f, 1.0f);
+    if (scale >= 1.0f)
+        return;
+    float y0 = calcSH(0u, float3(0, 0, 1));
+    float parentLogit = opacity.coefficients[0] * y0;
+    float parentOpticalDepth = parentLogit > 15.0f
+        ? parentLogit
+        : (parentLogit < -15.0f ? exp(parentLogit) : log(1.0f + exp(parentLogit)));
+    float childOpticalDepth = scale * parentOpticalDepth;
+    float childLogit = childOpticalDepth > 15.0f
+        ? childOpticalDepth
+        : (childOpticalDepth < 1e-4f ? log(max(childOpticalDepth, 1e-30f)) : log(exp(childOpticalDepth) - 1.0f));
+    // Extremely negative logits may underflow in exp(). Never let that
+    // numerical case increase opacity.
+    childLogit = min(childLogit, parentLogit);
+    opacity.coefficients[0] += (childLogit - parentLogit) / y0;
+}
 
 // Conservative SH bound: reject only parents transparent in every direction.
 bool retainRefinementParent(SphericalHarmonicsOpacity opacity)
@@ -158,7 +183,9 @@ void main(uint3 threadID : SV_DispatchThreadID)
     uint parentCellIndex = gCoarseGrid.cellIndexPages[NonUniformResourceIndex(page)][offset];
     uint3 parentCell = uint3(IndexToCell(int(parentCellIndex), gCoarseGrid.voxelCount));
     GaussianEllipsoid parentEllipsoid = data.ellipsoid;
-    // Appearance is copied unchanged; only geometry is fitted.
+    // Radiance is copied unchanged. Opacity is attenuated once per split to
+    // reduce the accumulated opacity of multiple children along one ray.
+    attenuateRefinementOpacity(data.opacity);
     for (uint child = 0u; child < 8u; ++child)
     {
         if ((range.x & (1u << child)) == 0u) continue;

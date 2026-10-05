@@ -34,7 +34,7 @@
 #define ELLIPSOID_MAX_SCALE_VOXELS 4.0f
 
 // Shared UI/upload bound for the outward-depth growth experiment.
-#define GROWTH_MAX_FACE_PENETRATION_VOXELS 2.0f
+#define GROWTH_MAX_FACE_PENETRATION_VOXELS 4.0f
 
 #define MAX_CANDIDATES 16
 

@@ -49,6 +49,14 @@ VoxelReconstructionNoLightTransport::VoxelReconstructionNoLightTransport(ref<Dev
             mCoarseToFine.totalIterations = value; // Legacy graph compatibility.
         else if (key == "refinementParentOpacityThreshold")
             mCoarseToFine.parentOpacityThreshold = value;
+        else if (key == "refinementOpacityOpticalDepthScale")
+            mCoarseToFine.opacityOpticalDepthScale = value;
+        else if (key == "coarseGrowthEnabled")
+            mCoarseToFine.enableCoarseGrowth = value;
+        else if (key == "coarseGrowthFacePenetration")
+            mCoarseToFine.coarseGrowthFacePenetration = value;
+        else if (key == "coarseGrowthInterval")
+            mCoarseToFine.coarseGrowthInterval = value;
         else if (key == "saveEachRefinementLevel")
             mCoarseToFine.saveEachLevel = value;
     }
@@ -101,6 +109,10 @@ Properties VoxelReconstructionNoLightTransport::getProperties() const
     props["targetResolution"] = mCoarseToFine.targetResolution;
     props["totalIterations"] = mCoarseToFine.totalIterations;
     props["refinementParentOpacityThreshold"] = mCoarseToFine.parentOpacityThreshold;
+    props["refinementOpacityOpticalDepthScale"] = mCoarseToFine.opacityOpticalDepthScale;
+    props["coarseGrowthEnabled"] = mCoarseToFine.enableCoarseGrowth;
+    props["coarseGrowthFacePenetration"] = mCoarseToFine.coarseGrowthFacePenetration;
+    props["coarseGrowthInterval"] = mCoarseToFine.coarseGrowthInterval;
     props["saveEachRefinementLevel"] = mCoarseToFine.saveEachLevel;
     return props;
 }
@@ -561,20 +573,24 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget)
 void VoxelReconstructionNoLightTransport::renderUITopology(Gui::Widgets& widget)
 {
     const bool mode1Target = isCoarseToFine() && mVoxelResolution == mCoarseToFine.targetResolution;
-    if (isCoarseToFine() && !mode1Target && mTopologySettings.debugLayer != uint32_t(TopologyDebugLayer::Occupied))
-    {
-        mTopologySettings.debugLayer = uint32_t(TopologyDebugLayer::Occupied);
-        mRayMarchingPass.mOptionsChanged = true;
-    }
     auto group = widget.group("Topology", true);
     if (!group)
         return;
 
     if (isCoarseToFine() && !mode1Target)
     {
-        group.text("mode1 coarse level: deletion evidence, deletion, pruning, and neighbor growth are disabled.");
+        group.text("mode1 coarse level: deletion and pruning are disabled; conservative neighbor growth is enabled.");
         if (group.button("Show Occupied Grid"))
         {
+            mTopologySettings.debugLayer = uint32_t(TopologyDebugLayer::Occupied);
+            mRayMarchingPass.mDrawMode = uint32_t(ABSDFDrawMode::TopologyDebug);
+            mRayMarchingPass.mOptionsChanged = true;
+        }
+        if (group.button(mEnableReconstruction ? "Stop and Show Grown Voxels" : "Show Grown Voxels"))
+        {
+            if (mEnableReconstruction)
+                stopReconstruction();
+            mTopologySettings.debugLayer = uint32_t(TopologyDebugLayer::Growth);
             mRayMarchingPass.mDrawMode = uint32_t(ABSDFDrawMode::TopologyDebug);
             mRayMarchingPass.mOptionsChanged = true;
         }
@@ -583,6 +599,22 @@ void VoxelReconstructionNoLightTransport::renderUITopology(Gui::Widgets& widget)
             mRayMarchingPass.mDrawMode = uint32_t(ABSDFDrawMode::Default);
             mRayMarchingPass.mOptionsChanged = true;
         }
+        group.checkbox("Enable Coarse Growth", mCoarseToFine.enableCoarseGrowth);
+        group.var("Coarse Growth Interval (iterations)", mCoarseToFine.coarseGrowthInterval, 1u, 100u, 1u);
+        group.var(
+            "Coarse Growth Face Penetration (voxel widths)",
+            mCoarseToFine.coarseGrowthFacePenetration,
+            0.0f,
+            float(GROWTH_MAX_FACE_PENETRATION_VOXELS),
+            0.05f
+        );
+        group.text("One layer per scheduled boundary; the final boundary before refinement is skipped.");
+        group.text(mTopologySettings.growthStatus);
+        group.text(fmt::format(
+            "Last growth: {} voxels; {} pool pages added",
+            mTopologySettings.lastGrowthCount,
+            mTopologySettings.lastGrowthPages
+        ));
         return;
     }
 

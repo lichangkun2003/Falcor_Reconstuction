@@ -22,6 +22,13 @@ void VoxelReconstructionNoLightTransport::validateCoarseToFineSettings() const
     if (!std::isfinite(mCoarseToFine.parentOpacityThreshold) || mCoarseToFine.parentOpacityThreshold < 0.0f ||
         mCoarseToFine.parentOpacityThreshold > 0.99f)
         throw RuntimeError("Refinement parent opacity threshold must be in [0, 0.99].");
+    if (!std::isfinite(mCoarseToFine.opacityOpticalDepthScale) || mCoarseToFine.opacityOpticalDepthScale <= 0.0f ||
+        mCoarseToFine.opacityOpticalDepthScale > 1.0f)
+        throw RuntimeError("Refinement opacity optical-depth scale must be in (0, 1].");
+    if (!std::isfinite(mCoarseToFine.coarseGrowthFacePenetration) || mCoarseToFine.coarseGrowthFacePenetration < 0.0f ||
+        mCoarseToFine.coarseGrowthFacePenetration > float(GROWTH_MAX_FACE_PENETRATION_VOXELS) ||
+        mCoarseToFine.coarseGrowthInterval == 0u)
+        throw RuntimeError("Coarse growth requires a valid face penetration and a nonzero interval.");
 }
 
 uint32_t VoxelReconstructionNoLightTransport::coarseToFineRemainingLevels() const
@@ -79,7 +86,9 @@ bool VoxelReconstructionNoLightTransport::prepareReconstruction(RenderContext* p
                 mCoarseToFine.levelIterationBudget,
                 mCoarseToFine.totalIterations
             );
-            mTopologySettings.growthStatus = "Disabled in mode1";
+            mTopologySettings.growthStatus = mVoxelResolution == mCoarseToFine.targetResolution
+                                                 ? "Disabled at the mode1 target level"
+                                                 : "Coarse growth waiting for its scheduled boundary";
             mTopologySettings.deletionStatus = mVoxelResolution == mCoarseToFine.targetResolution ? "Enabled at the mode1 target level"
                                                                                                   : "Waiting for the mode1 target level";
         }
@@ -135,7 +144,10 @@ void VoxelReconstructionNoLightTransport::advanceCoarseToFine(RenderContext* pRe
             return;
         }
         if (levelIteration < mCoarseToFine.levelIterationBudget)
+        {
+            growNeighborVoxels(pRenderContext);
             return;
+        }
         if (mVoxelResolution < mCoarseToFine.targetResolution)
         {
             if (mCoarseToFine.saveEachLevel)
@@ -156,8 +168,17 @@ void VoxelReconstructionNoLightTransport::advanceCoarseToFine(RenderContext* pRe
             refineCoarseToFineGrid(pRenderContext);
             mCoarseToFine.levelStartIteration = mOptimizerParams.currentIteration;
             mCoarseToFine.levelIterationBudget = coarseToFineLevelBudget(mVoxelResolution);
+            mTopologySettings.lastGrowthCount = 0u;
+            mTopologySettings.lastGrowthPages = 0u;
             if (mVoxelResolution == mCoarseToFine.targetResolution)
+            {
+                mTopologySettings.growthStatus = "Disabled at the mode1 target level";
                 mTopologySettings.deletionStatus = "Collecting deletion evidence at the mode1 target level";
+            }
+            else
+            {
+                mTopologySettings.growthStatus = "Coarse growth waiting for its scheduled boundary";
+            }
         }
     }
     catch (const std::exception& error)
@@ -195,6 +216,7 @@ void VoxelReconstructionNoLightTransport::refineCoarseToFineGrid(RenderContext* 
         var["gChildCounter"] = counter;
         var["CB"]["gParentCount"] = parents;
         var["CB"]["gParentOpacityThreshold"] = mCoarseToFine.parentOpacityThreshold;
+        var["CB"]["gOpacityOpticalDepthScale"] = mCoarseToFine.opacityOpticalDepthScale;
         constexpr uint32_t batchSize = 65535u * 256u;
         for (uint32_t offset = 0; offset < parents;)
         {
@@ -292,6 +314,19 @@ void VoxelReconstructionNoLightTransport::renderUICoarseToFine(Gui::Widgets& wid
             widget.tooltip(
                 "At refinement only: discard parents whose opacity SH upper bound is below this threshold. Zero disables filtering."
             );
+            widget.var("Refinement Opacity Optical-Depth Scale", mCoarseToFine.opacityOpticalDepthScale, 0.01f, 1.0f, 0.01f);
+            widget.tooltip(
+                "Attenuate child opacity at every refinement in optical-depth space. 1 keeps parent opacity; 0.65 reduces stacking."
+            );
+            widget.checkbox("Enable Coarse Growth", mCoarseToFine.enableCoarseGrowth);
+            widget.var(
+                "Coarse Growth Face Penetration",
+                mCoarseToFine.coarseGrowthFacePenetration,
+                0.0f,
+                float(GROWTH_MAX_FACE_PENETRATION_VOXELS),
+                0.05f
+            );
+            widget.var("Coarse Growth Interval", mCoarseToFine.coarseGrowthInterval, 1u, 100u, 1u);
             widget.checkbox("Save Each Completed Level", mCoarseToFine.saveEachLevel);
             widget.tooltip("Save the current mode1 grid before every refinement. The final target level is saved at completion as usual.");
         }
@@ -300,7 +335,7 @@ void VoxelReconstructionNoLightTransport::renderUICoarseToFine(Gui::Widgets& wid
     }
     if (isCoarseToFine())
     {
-        widget.text("mode1: deletion is enabled only at the target level; pruning and neighbor growth remain disabled.");
+        widget.text("mode1: coarse levels may grow; target-level deletion is enabled; pruning remains disabled.");
         widget.text(fmt::format(
             "Current resolution: {}; target: {}; level rounds: {} / {}; total: {} / {}",
             mVoxelResolution,
