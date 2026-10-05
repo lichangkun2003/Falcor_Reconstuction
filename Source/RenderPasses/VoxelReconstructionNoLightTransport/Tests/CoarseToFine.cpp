@@ -459,6 +459,9 @@ struct CoarseToFineTestAccess
         check(sphere, float3(1), 0x01u);     // Ellipsoid wholly inside one child, with no corner inside it.
         check(sphere, float3(1), 0x01u, 9u); // Worst-case 72 > 64 slots; actual nine children must fit.
         sphere.opacity.coefficients[0] = std::log(0.001f / 0.999f) / calcSH(0u, float3(0, 0, 1));
+        require(pass->mCoarseToFine.parentOpacityThreshold == 0.0f, "Intermediate opacity filtering is not disabled by default");
+        check(sphere, float3(1), 0x01u); // Low-opacity parents survive by default until target-level deletion.
+        pass->mCoarseToFine.parentOpacityThreshold = 0.01f;
         check(sphere, float3(1), 0u); // Transparent in every direction; rollback if all parents are rejected.
         pass->mCoarseToFine.parentOpacityThreshold = 0.0f;
         check(sphere, float3(1), 0x01u); // Zero explicitly disables filtering.

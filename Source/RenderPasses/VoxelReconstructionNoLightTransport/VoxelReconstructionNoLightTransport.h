@@ -336,8 +336,8 @@ public:
         float backgroundAlphaMax = 1e-4f;
         float minRemovalLossDelta = 1e-4f;
         float minEvidenceTransmittance = 0.05f;
-        uint32_t minDeletionConflictViews = 3;
-        uint32_t maxDeletionSupportViews = 0;
+        uint32_t minDeletionConflictViews = 5;
+        uint32_t deletionConflictSupportRatio = 3;
         uint32_t evidenceInterval = 5;
         uint32_t deletionInterval = 10;
         uint32_t candidateCount = 0;
@@ -356,7 +356,7 @@ public:
         uint32_t startResolution = COARSE_TO_FINE_START_RESOLUTION;
         uint32_t targetResolution = GRID_RESOLUTION;
         uint32_t totalIterations = COARSE_TO_FINE_TOTAL_ITERATIONS;
-        float parentOpacityThreshold = 0.01f;
+        float parentOpacityThreshold = 0.0f;
         float opacityOpticalDepthScale = 0.65f;
         bool enableCoarseGrowth = true;
         float coarseGrowthFacePenetration = 2.0f;

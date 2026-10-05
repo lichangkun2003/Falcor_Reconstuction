@@ -673,7 +673,7 @@ void VoxelReconstructionNoLightTransport::renderUITopology(Gui::Widgets& widget)
     group.var("Min Removal Loss Delta", mTopologySettings.minRemovalLossDelta, 0.0f, 0.1f, 1e-5f, false, "%.6f");
     group.var("Min Evidence Transmittance", mTopologySettings.minEvidenceTransmittance, 0.0f, 1.0f, 0.01f);
     group.var("Min Background Conflict Views", mTopologySettings.minDeletionConflictViews, 1u, 1000u, 1u);
-    group.var("Max Foreground Support Views", mTopologySettings.maxDeletionSupportViews, 0u, 1000u, 1u);
+    group.var("Min Background / Foreground View Ratio", mTopologySettings.deletionConflictSupportRatio, 1u, 1000u, 1u);
     group.text(fmt::format("Completed evidence windows: {}", mTopologySettings.completedWindows));
     group.text(fmt::format("Deletion candidates (two windows): {}", mTopologySettings.candidateCount));
     group.text(fmt::format("Pending background strikes: {}", mTopologySettings.oneWindowCount));

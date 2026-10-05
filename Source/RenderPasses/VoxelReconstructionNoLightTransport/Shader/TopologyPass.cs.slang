@@ -6,7 +6,7 @@ cbuffer CB
 {
     uint gSparseOffset;
     uint gMinConflictViews;
-    uint gMaxSupportViews;
+    uint gConflictSupportRatio;
     uint gCurrentIteration;
     bool gPreserveGrowthProtection;
 }
@@ -47,17 +47,20 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     uint foregroundViews = topologyForegroundViews(packed);
     uint backgroundViews = topologyBackgroundViews(packed);
     bool occupied = VOXEL_DATA(voxelID).occupied != 0;
-    bool rejectedByForeground = foregroundViews > gMaxSupportViews;
-    bool qualified = occupied && !rejectedByForeground &&
-        foregroundViews <= gMaxSupportViews &&
-        backgroundViews >= gMinConflictViews;
+    uint ratio = max(gConflictSupportRatio, 1u);
+    bool conflictDominates = backgroundViews >= ratio * foregroundViews;
+    // Sparse windows cannot cancel history on one incidental foreground hit.
+    // Require enough support to challenge a minimally qualifying conflict set.
+    uint minReliableSupport = max(2u, (gMinConflictViews + ratio - 1u) / ratio);
+    bool rejectedByForeground = foregroundViews >= minReliableSupport && !conflictDominates;
+    bool qualified = occupied && backgroundViews >= gMinConflictViews && conflictDominates;
     bool wasQualified = topologyWasQualified(packed);
     bool wasCandidate = topologyIsDeletionCandidate(packed);
 
     // A missing stochastic hit is absence of evidence, not evidence that the
     // voxel should be kept. Preserve a previous background strike (and a
-    // confirmed candidate) through empty/weak windows. A reliable foreground
-    // support vote explicitly clears both states. This makes the decision
+    // confirmed candidate) through empty/weak windows. Sufficient foreground
+    // support without dominant background conflict clears both states. This makes the decision
     // stable for both 1 SPP and multi-SPP while remaining conservative at the
     // silhouette.
     bool candidate = occupied && !rejectedByForeground &&
@@ -78,7 +81,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         InterlockedAdd(gTopologySummary[0], 1u);
     else if (keepQualification)
         InterlockedAdd(gTopologySummary[1], 1u);
-    else if (foregroundViews > gMaxSupportViews)
+    else if (rejectedByForeground)
         InterlockedAdd(gTopologySummary[2], 1u);
     else if (backgroundViews > 0u)
         InterlockedAdd(gTopologySummary[3], 1u);

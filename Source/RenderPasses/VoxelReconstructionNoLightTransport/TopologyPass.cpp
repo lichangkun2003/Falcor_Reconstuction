@@ -86,7 +86,7 @@ void VoxelReconstructionNoLightTransport::evaluateDeletionEvidence(RenderContext
     var["gTopologySummary"] = mpTopologySummary;
     auto cb = var["CB"];
     cb["gMinConflictViews"] = mTopologySettings.minDeletionConflictViews;
-    cb["gMaxSupportViews"] = mTopologySettings.maxDeletionSupportViews;
+    cb["gConflictSupportRatio"] = std::clamp(mTopologySettings.deletionConflictSupportRatio, 1u, 1000u);
     cb["gCurrentIteration"] = mOptimizerParams.currentIteration;
 
     constexpr uint32_t batchSize = 65535u * 256u;

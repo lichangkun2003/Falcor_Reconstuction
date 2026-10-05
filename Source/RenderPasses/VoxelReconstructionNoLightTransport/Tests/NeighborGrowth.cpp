@@ -219,6 +219,55 @@ struct NeighborGrowthTestAccess
         pass.mTopologySettings.evidenceInterval = interval;
         pass.mOptimizerParams.currentIteration = 50u;
     }
+    static void checkDeletionVoteRatio(VoxelReconstructionNoLightTransport& pass, RenderContext* ctx)
+    {
+        require(pass.mTopologySettings.minDeletionConflictViews == 5u &&
+            pass.mTopologySettings.deletionConflictSupportRatio == 3u, "Incorrect deletion vote defaults");
+        seed(pass, ctx, {cell(3, 3, 3)}, {parentVoxel()});
+        uint32_t history = 0u;
+        const auto window = [&](uint32_t background, uint32_t foreground)
+        {
+            auto evidence = read<TopologyEvidence>(pass.mGridResources.topologyEvidencePages, 0u);
+            evidence.packedCountsAndFlags = history | foreground | (background << kTopologyEvidenceBackgroundShift);
+            write(pass.mGridResources.topologyEvidencePages, 0u, evidence);
+            pass.mOptimizerParams.currentIteration += pass.mTopologySettings.evidenceInterval;
+            pass.evaluateDeletionEvidence(ctx);
+            evidence = read<TopologyEvidence>(pass.mGridResources.topologyEvidencePages, 0u);
+            history = evidence.packedCountsAndFlags;
+            require(evidence.lastForegroundView == 0u && evidence.lastBackgroundView == 0u &&
+                topologyForegroundViews(history) == 0u && topologyBackgroundViews(history) == 0u,
+                "Evidence window did not reset camera stamps/counts");
+        };
+        window(4u, 0u);
+        require(history == 0u, "Insufficient background qualified for deletion");
+        window(5u, 1u);
+        require(topologyWasQualified(history) && !topologyIsDeletionCandidate(history), "Minority support vetoed first strike");
+        window(0u, 1u);
+        require(topologyWasQualified(history) && !topologyIsDeletionCandidate(history), "Sparse support erased history");
+        window(0u, 0u);
+        require(topologyWasQualified(history), "Stochastic empty window erased history");
+        window(5u, 1u);
+        require(topologyIsDeletionCandidate(history), "Two qualifying windows did not confirm deletion");
+        window(0u, 1u);
+        require(topologyIsDeletionCandidate(history), "Weak window unlatched candidate");
+        window(5u, 2u);
+        require(history == 0u, "Reliable non-dominated foreground did not cancel candidate");
+        window(6u, 2u);
+        require(topologyWasQualified(history) && !topologyIsDeletionCandidate(history), "Inclusive ratio boundary failed");
+        window(6u, 2u);
+        require(topologyIsDeletionCandidate(history), "Dominant background did not override multiple support votes");
+        pass.growNeighborVoxels(ctx);
+        require(pass.mGridResources.gridData.activeVoxelCount == 1u && pass.mTopologySettings.lastGrowthCount == 0u,
+            "Ratio-qualified deletion candidate still produced children");
+        window(0u, 2u);
+        require(history == 0u, "Strong foreground-only evidence did not clear history");
+        auto evidence = read<TopologyEvidence>(pass.mGridResources.topologyEvidencePages, 0u);
+        evidence.deletionEligibleIteration = pass.mOptimizerParams.currentIteration + 10u;
+        write(pass.mGridResources.topologyEvidencePages, 0u, evidence);
+        window(20u, 0u);
+        require(history == 0u, "Vote ratio bypassed newborn deletion protection");
+    }
+
     static void checkGrowthPenetration(VoxelReconstructionNoLightTransport& pass, RenderContext* ctx)
     {
         const uint32_t origin = cell(3, 3, 3);
@@ -575,6 +624,8 @@ struct NeighborGrowthTestAccess
             pass->mUpdatePass.init();
             pass->createTopologyPassResource(ctx);
             pass->createDeletionPassResources();
+            checkDeletionVoteRatio(*pass, ctx);
+            std::cout << "PASS: deletion vote dominance, two-window confirmation, weak-window history, foreground recovery, protection\n";
             checkGrowthPenetration(*pass, ctx);
             std::cout << "PASS: face-depth trigger, strict thresholds, per-face direction, occupied neighbors, non-cubic widths, rotated "
                          "footprint\n";
