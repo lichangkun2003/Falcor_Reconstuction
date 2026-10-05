@@ -20,6 +20,34 @@ struct CoarseToFineTestAccess
         return result;
     }
 
+    static void checkGeometry(const GaussianEllipsoid& parent, const GaussianEllipsoid& child, float3 size, uint3 bits)
+    {
+        require(all(child.rotation == parent.rotation), "Refinement changed parent rotation");
+        const float3 axes = exp(parent.logScale);
+        const float3 childAxes = exp(child.logScale);
+        const float3 ratio = childAxes / axes;
+        require(all(abs(ratio - float3(ratio.x)) < float3(2e-5f)), "Refinement changed semi-axis proportions");
+        require(
+            all(child.center >= float3(0.01f - 2e-5f)) && all(child.center <= float3(0.99f + 2e-5f)),
+            "Child center outside optimizer bounds"
+        );
+        const float4 q = parent.rotation / std::sqrt(dot(parent.rotation, parent.rotation));
+        const float w = q.x, x = q.y, y = q.z, z = q.w;
+        const float3 rows[3] = {
+            float3(1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)),
+            float3(2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)),
+            float3(2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y))};
+        const float3 displacement = (0.5f * (float3(bits) + child.center) - parent.center) * size;
+        const float3 principal = (rows[0] * displacement.x + rows[1] * displacement.y + rows[2] * displacement.z) / axes;
+        require(length(principal) + ratio.x <= 1.0f + 3e-5f, "Child protrudes outside parent ellipsoid");
+        for (uint32_t axis = 0; axis < 3; ++axis)
+        {
+            const float extent = length(rows[axis] * childAxes) / (0.5f * size[axis]);
+            require(extent <= std::min(child.center[axis], 1.0f - child.center[axis]) + 3e-5f, "Child protrudes outside its own cell");
+        }
+        require(all(childAxes >= max(0.5f * size * 1e-4f, float3(1e-8f)) * 0.999f), "Child below optimizer minimum scale");
+    }
+
     static void run(const ref<Device>& device)
     {
         auto ctx = device->getRenderContext();
@@ -113,14 +141,8 @@ struct CoarseToFineTestAccess
             int32_t mapped;
             std::memcpy(&mapped, bytes.data() + expectedCell * sizeof(int32_t), sizeof(mapped));
             require(mapped == int32_t(id), "Spatial map disagrees with compact child ID");
-            require(
-                child.occupied == 1u && all(child.ellipsoid.center == float3(0.5f)) && all(child.ellipsoid.rotation == float4(1, 0, 0, 0)),
-                "Interior child did not use centered PLY geometry"
-            );
-            require(
-                all(abs(exp(child.ellipsoid.logScale) - 0.3f * grid.voxelSize) < float3(1e-6f)),
-                "Child world semi-axes did not use PLY initialization"
-            );
+            require(child.occupied == 1u, "Child unoccupied");
+            checkGeometry(parent.ellipsoid, child.ellipsoid, grid.voxelSize, uint3(id & 1u, (id >> 1u) & 1u, (id >> 2u) & 1u));
             require(std::memcmp(&child.radiance, &parent.radiance, sizeof(parent.radiance)) == 0, "Refinement reset radiance");
             require(
                 std::memcmp(&child.opacity, &parent.opacity, sizeof(parent.opacity)) == 0, "Refinement did not fully inherit opacity SH"
@@ -169,7 +191,8 @@ struct CoarseToFineTestAccess
         pass->mOptimizerParams.currentIteration = 4u;
         pass->advanceCoarseToFine(ctx);
         require(
-            pass->mVoxelResolution == 64u && pass->mGridResources.gridData.activeVoxelCount == 64u,
+            pass->mVoxelResolution == 64u && pass->mGridResources.gridData.activeVoxelCount > 8u &&
+                pass->mGridResources.gridData.activeVoxelCount <= 64u,
             "Second refinement failed across pool pages"
         );
         pass->mOptimizerParams.currentIteration = 5u;
@@ -184,13 +207,25 @@ struct CoarseToFineTestAccess
         std::cout << "PASS: 16 -> 32 -> 64 schedule includes full optimization at the target resolution\n";
 
         auto oldPage = pass->mGridResources.voxelPages[0];
+        const uint32_t beforeFailureCount = pass->mGridResources.gridData.activeVoxelCount;
+        // Ensure the capacity fixture, independently of the fitted shapes, has eight children per parent.
+        for (uint32_t id = 0; id < beforeFailureCount; ++id)
+        {
+            auto voxel = read<VoxelData>(pass->mGridResources.voxelPages, id);
+            voxel.ellipsoid.center = float3(0.5f);
+            voxel.ellipsoid.rotation = float4(1, 0, 0, 0);
+            voxel.ellipsoid.logScale = log(pass->mGridResources.gridData.voxelSize);
+            auto parentCellIndex = read<uint32_t>(pass->mGridResources.cellIndexPages, id);
+            pass->uploadSparseBatch(ctx, pass->mpGridBlock, id, &parentCellIndex, 1u, &voxel);
+        }
+        pass->barrierSparseVoxels(ctx);
         pass->mCoarseToFine.targetResolution = 128u;
         pass->mOptimizerParams.isRunning = pass->mEnableReconstruction = true;
         pass->mSaveReconstructionRequested = false;
-        pass->advanceCoarseToFine(ctx); // 512 children exceed this test's 64-slot pool.
+        pass->advanceCoarseToFine(ctx); // Eight children per parent exceed this test's 64-slot pool.
         require(
             !pass->mOptimizerParams.isRunning && pass->mVoxelResolution == 64u && pass->mGridResources.voxelPages[0] == oldPage &&
-                pass->mGridResources.gridData.activeVoxelCount == 64u,
+                pass->mGridResources.gridData.activeVoxelCount == beforeFailureCount,
             "Refinement failure damaged the last complete level"
         );
         require(!pass->mSaveReconstructionRequested, "Failed refinement was reported as successful completion");
@@ -328,7 +363,15 @@ struct CoarseToFineTestAccess
                         require(id == -1, "A child outside the parent ellipsoid became occupied");
                         continue;
                     }
-                    require(id >= 0 && uint32_t(id) < seen.size(), "Intersecting/contained child missing from compact pool");
+                    if (id < 0 || uint32_t(id) >= seen.size())
+                        throw std::runtime_error(fmt::format(
+                            "Missing fitted child {}; expected mask {}; parent axes ({}, {}, {})",
+                            child,
+                            expectedMask,
+                            std::exp(parent.ellipsoid.logScale.x),
+                            std::exp(parent.ellipsoid.logScale.y),
+                            std::exp(parent.ellipsoid.logScale.z)
+                        ));
                     require(!seen[id], "Multiple child cells share one compact ID");
                     seen[id] = true;
                     ++occupied;
@@ -345,28 +388,7 @@ struct CoarseToFineTestAccess
                         std::memcmp(&inherited.opacity, &parent.opacity, sizeof(parent.opacity)) == 0,
                         "Directional opacity SH was modified during refinement"
                     );
-                    require(
-                        all(abs(exp(inherited.ellipsoid.logScale) - 0.3f * size) < float3(1e-6f)) &&
-                            all(inherited.ellipsoid.rotation == float4(1, 0, 0, 0)),
-                        "Child did not use PLY axes/rotation"
-                    );
-                    // Independent center check for the identity-rotation fixtures.
-                    if (all(parent.ellipsoid.rotation == float4(1, 0, 0, 0)))
-                    {
-                        float3 bits(float(child & 1u), float((child >> 1u) & 1u), float((child >> 2u) & 1u));
-                        float3 point = (0.5f * (bits + 0.5f) - parent.ellipsoid.center) * size / exp(parent.ellipsoid.logScale);
-                        float3 expected(0.5f);
-                        if (dot(point, point) > 1.0f + 1e-5f)
-                        {
-                            float3 direction = 2.0f * parent.ellipsoid.center - bits - 0.5f;
-                            float largest = std::max(std::abs(direction.x), std::max(std::abs(direction.y), std::abs(direction.z)));
-                            expected += direction * std::min(1.0f, 0.49f / std::max(largest, 1e-8f));
-                        }
-                        require(
-                            all(abs(inherited.ellipsoid.center - expected) < float3(1e-6f)),
-                            "Child center did not follow interior/boundary initialization"
-                        );
-                    }
+                    checkGeometry(parent.ellipsoid, inherited.ellipsoid, size, uint3(child & 1u, (child >> 1u) & 1u, (child >> 2u) & 1u));
                 }
             require(occupied == seen.size(), "Compact refinement retained unused/rejected child slots");
             if (parents == 9u)
@@ -394,7 +416,7 @@ struct CoarseToFineTestAccess
         sphere.ellipsoid.logScale = float3(std::log(0.249f));
         check(sphere, float3(1), 0x01u);
         sphere.ellipsoid.logScale = float3(std::log(0.25f));
-        check(sphere, float3(1), 0x17u); // Closed tangency on three faces counts as contact.
+        check(sphere, float3(1), 0x01u); // Tangency alone cannot contain a positive-volume child.
         sphere.ellipsoid.logScale = float3(std::log(0.26f));
         check(sphere, float3(1), 0x17u); // Face-interior overlap, even when child centers/corners miss.
         sphere.ellipsoid.logScale = float3(std::log(0.4f));
@@ -405,13 +427,16 @@ struct CoarseToFineTestAccess
         check(sphere, float3(0.5f, 1.0f, 1.5f), 0x01u);
         sphere.ellipsoid.center = float3(0.25f, 0.75f, 0.25f);
         sphere.ellipsoid.rotation = float4(std::cos(3.14159265359f / 8.0f), 0, 0, std::sin(3.14159265359f / 8.0f));
-        for (float width : {0.02f, 0.0001f})
+        for (float width : {0.02f, 0.001f, 0.0001f})
         {
             sphere.ellipsoid.logScale = float3(std::log(0.6f), std::log(width), std::log(width));
-            check(sphere, float3(1), 0x0du); // AABB overlaps lower-right XY child, rotated ellipsoid does not.
+            // Very thin edge slivers cannot hold centers inside [0.01,0.99]; keep the central child only.
+            check(sphere, float3(1), width > 0.01f ? 0x0du : 0x04u);
         }
+        sphere.ellipsoid.logScale = float3(std::log(1e-6f));
+        check(sphere, float3(1), 0u); // Never inflate unrepresentable geometry to the optimizer minimum.
         std::cout << "PASS: refinement volume containment, face/edge/tangent overlap, rotated thin-shape rejection, non-cubic cells, "
-                     "actual-count allocation\n";
+                     "actual-count allocation; inherited rotation/ratios and parent/cell containment\n";
     }
 };
 

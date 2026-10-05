@@ -23,56 +23,106 @@ bool retainRefinementParent(SphericalHarmonicsOpacity opacity)
     return upper >= log(gParentOpacityThreshold / (1.0f - gParentOpacityThreshold));
 }
 
-// Closed ellipsoid/AABB intersection, in parent-cell coordinates. The minimum
-// of the ellipsoid quadratic is at its center, a face interior, an edge, or
-// a corner. Include volume containment, not just surface crossings.
-bool intersectsRefinementCell(GaussianEllipsoid ellipsoid, float3 voxelSize, uint3 bits)
+// Exact box-constrained quadratic minimum in parent-cell coordinates.
+// Enumerate center, face interiors, and clamped edges (including corners).
+float closestParentPoint(GaussianEllipsoid parent, float3 voxelSize,
+    float3 lower, float3 upper, out float3 best)
 {
-    float3 lower = 0.5f * float3(bits) - ellipsoid.center;
-    float3 upper = lower + 0.5f;
-    if (all(lower <= 0.0f) && all(upper >= 0.0f)) return true;
-    float3 scale = gaussianEllipsoidScale(ellipsoid);
-    float3x3 rotation = gaussianRotationMatrix(ellipsoid.rotation);
+    float3 scale = gaussianEllipsoidScale(parent);
+    float3x3 rotation = gaussianRotationMatrix(parent.rotation);
     float3 unitAxis[3];
-    float3 scaledAxis[3];
+    float3 covarianceAxis[3];
     for (uint axis = 0u; axis < 3u; ++axis)
     {
         unitAxis[axis] = rotation[axis] * voxelSize[axis] / scale;
-        scaledAxis[axis] = rotation[axis] * scale / voxelSize[axis];
+        covarianceAxis[axis] = rotation[axis] * scale / voxelSize[axis];
     }
-    const float threshold = 1.0f + 1e-5f;
-    // Six unconstrained face minima from the covariance; no unstable 2x2 inverse.
+    best = clamp(float3(0), lower, upper);
+    float3 initial = unitAxis[0] * best.x + unitAxis[1] * best.y + unitAxis[2] * best.z;
+    float minimum = dot(initial, initial);
+    if (minimum == 0.0f) return minimum;
     for (uint n = 0u; n < 3u; ++n)
     {
-        float variance = dot(scaledAxis[n], scaledAxis[n]);
+        float variance = dot(covarianceAxis[n], covarianceAxis[n]);
         for (uint side = 0u; side < 2u; ++side)
         {
             float bound = side == 0u ? lower[n] : upper[n];
-            if (bound * bound > threshold * variance) continue;
             float3 q;
             for (uint axis = 0u; axis < 3u; ++axis)
-                q[axis] = dot(scaledAxis[axis], scaledAxis[n]) * (bound / variance);
+                q[axis] = dot(covarianceAxis[axis], covarianceAxis[n]) * (bound / variance);
             q[n] = bound;
-            if (all(q >= lower) && all(q <= upper)) return true;
+            if (all(q >= lower) && all(q <= upper))
+            {
+                float3 unit = unitAxis[0] * q.x + unitAxis[1] * q.y + unitAxis[2] * q.z;
+                float value = dot(unit, unit);
+                if (value < minimum) { minimum = value; best = q; }
+            }
         }
     }
-    // Twelve edge minima, clamped to the edge endpoints (the eight corners).
     for (uint freeAxis = 0u; freeAxis < 3u; ++freeAxis)
     {
         uint a = (freeAxis + 1u) % 3u;
         uint b = (freeAxis + 2u) % 3u;
         for (uint sides = 0u; sides < 4u; ++sides)
         {
-            float qa = (sides & 1u) == 0u ? lower[a] : upper[a];
-            float qb = (sides & 2u) == 0u ? lower[b] : upper[b];
-            float3 fixed = unitAxis[a] * qa + unitAxis[b] * qb;
-            float qf = clamp(-dot(fixed, unitAxis[freeAxis]) / dot(unitAxis[freeAxis], unitAxis[freeAxis]),
+            float3 q;
+            q[a] = (sides & 1u) == 0u ? lower[a] : upper[a];
+            q[b] = (sides & 2u) == 0u ? lower[b] : upper[b];
+            float3 fixed = unitAxis[a] * q[a] + unitAxis[b] * q[b];
+            q[freeAxis] = clamp(-dot(fixed, unitAxis[freeAxis]) / dot(unitAxis[freeAxis], unitAxis[freeAxis]),
                 lower[freeAxis], upper[freeAxis]);
-            float3 point = fixed + unitAxis[freeAxis] * qf;
-            if (dot(point, point) <= threshold) return true;
+            float3 unit = fixed + unitAxis[freeAxis] * q[freeAxis];
+            float value = dot(unit, unit);
+            if (value < minimum) { minimum = value; best = q; }
         }
     }
-    return false;
+    return minimum;
+}
+
+// A child with the same rotation and semi-axis ratios is a translated,
+// uniformly scaled copy of the parent. In parent-unit-sphere coordinates,
+// containment is exactly |center| + scale <= 1.
+bool fitRefinementChild(GaussianEllipsoid parent, float3 voxelSize, uint3 bits,
+    out GaussianEllipsoid child)
+{
+    child = parent;
+    float3 axes = gaussianEllipsoidScale(parent);
+    float3x3 rotation = gaussianRotationMatrix(parent.rotation);
+    float3 extent;
+    for (uint axis = 0u; axis < 3u; ++axis)
+        extent[axis] = length(rotation[axis] * axes) / voxelSize[axis];
+    float3 lower = 0.5f * float3(bits) - parent.center;
+    float3 upper = lower + 0.5f;
+    float3 fineSize = 0.5f * voxelSize;
+    // Respect the existing optimizer's minimum axes and [0.01,0.99] center bounds.
+    // Never inflate a fitted child afterward: reject unrepresentable slivers instead.
+    float3 minimumRatio = max(fineSize * 1e-4f, float3(1e-8f)) / axes;
+    float lo = max(minimumRatio.x, max(minimumRatio.y, minimumRatio.z));
+    float3 boxLimit = 0.25f / extent;
+    float hi = min(1.0f, min(boxLimit.x, min(boxLimit.y, boxLimit.z)));
+    float3 inset = max(float3(0.005f), lo * extent);
+    float3 best;
+    if (lo > hi || any(lower + inset > upper - inset)) return false;
+    float value = closestParentPoint(parent, voxelSize, lower + inset, upper - inset, best);
+    const float margin = 1e-5f;
+    if (sqrt(max(value, 0.0f)) + lo > 1.0f - margin) return false;
+    // Monotone feasibility: increasing scale shrinks both permissible center sets.
+    for (uint iteration = 0u; iteration < 18u; ++iteration)
+    {
+        float candidate = 0.5f * (lo + hi);
+        inset = max(float3(0.005f), candidate * extent);
+        float3 point;
+        value = closestParentPoint(parent, voxelSize, lower + inset, upper - inset, point);
+        if (sqrt(max(value, 0.0f)) + candidate <= 1.0f - margin)
+        {
+            lo = candidate;
+            best = point;
+        }
+        else hi = candidate;
+    }
+    child.center = 2.0f * (parent.center + best) - float3(bits);
+    child.logScale = log(axes * lo);
+    return true;
 }
 
 [numthreads(256, 1, 1)]
@@ -87,7 +137,8 @@ void countChildren(uint3 threadID : SV_DispatchThreadID)
         for (uint child = 0u; child < 8u; ++child)
         {
             uint3 bits = uint3(child & 1u, (child >> 1u) & 1u, (child >> 2u) & 1u);
-            if (intersectsRefinementCell(parent.ellipsoid, gCoarseGrid.voxelSize, bits)) mask |= 1u << child;
+            GaussianEllipsoid childEllipsoid;
+            if (fitRefinementChild(parent.ellipsoid, gCoarseGrid.voxelSize, bits, childEllipsoid)) mask |= 1u << child;
         }
     uint offset;
     InterlockedAdd(gChildCounter[0], countbits(mask), offset);
@@ -107,22 +158,12 @@ void main(uint3 threadID : SV_DispatchThreadID)
     uint parentCellIndex = gCoarseGrid.cellIndexPages[NonUniformResourceIndex(page)][offset];
     uint3 parentCell = uint3(IndexToCell(int(parentCellIndex), gCoarseGrid.voxelCount));
     GaussianEllipsoid parentEllipsoid = data.ellipsoid;
-    // PLY geometry initialization; radiance and opacity SH remain unchanged.
-    data.ellipsoid.logScale = log(max(0.6f * gGridDataParamBlock.voxelSize, float3(1e-8f)));
-    data.ellipsoid.rotation = float4(1, 0, 0, 0);
+    // Appearance is copied unchanged; only geometry is fitted.
     for (uint child = 0u; child < 8u; ++child)
     {
         if ((range.x & (1u << child)) == 0u) continue;
         uint3 bits = uint3(child & 1u, (child >> 1u) & 1u, (child >> 2u) & 1u);
-        data.ellipsoid.center = float3(0.5f);
-        float3 parentLocalCenter = 0.5f * (float3(bits) + 0.5f);
-        if (gaussianEllipsoidImplicit(parentEllipsoid, parentLocalCenter, gCoarseGrid.voxelSize) > 1e-5f)
-        {
-            float3 direction = 2.0f * parentEllipsoid.center - float3(bits) - 0.5f;
-            float maxComponent = max(abs(direction.x), max(abs(direction.y), abs(direction.z)));
-            // Approach the parent along a straight line, respecting optimizer center bounds.
-            data.ellipsoid.center += direction * min(1.0f, 0.49f / max(maxComponent, 1e-8f));
-        }
+        if (!fitRefinementChild(parentEllipsoid, gCoarseGrid.voxelSize, bits, data.ellipsoid)) continue;
         uint3 cell = parentCell * 2u + bits;
         uint id = range.y + countbits(range.x & ((1u << child) - 1u));
         VOXEL_DATA(id) = data;
