@@ -55,9 +55,11 @@ struct CoarseToFineTestAccess
         require(pass->mReconstructionMode == uint32_t(RECONSTRUCTION_MODE), "Configured reconstruction mode was not applied");
         pass->mReconstructionMode = 1u;
         pass->mCoarseToFine.targetResolution = 64u;
-        pass->mCoarseToFine.iterationsPerLevel = 2u;
+        pass->mCoarseToFine.totalIterations = 12u; // Linear level weights produce 2, 4, and 6 rounds.
         pass->mCoarseToFine.saveEachLevel = false; // Most scheduling checks must not write experiment checkpoints.
         pass->createUpdatePassResource(ctx);
+        pass->createTopologyPassResource(ctx);
+        pass->createDeletionPassResources();
         pass->mUpdatePass.mpComputePass->getRootVar(); // Test rebinding existing update resources at refinement.
         {
             const auto fixture = getProjectDirectory() / "Source/RenderPasses/VoxelReconstructionNoLightTransport/Tests/CoarseSeed.ply";
@@ -89,7 +91,7 @@ struct CoarseToFineTestAccess
         ctx->submit(true);
         pass->mPointCloud.initialized = true;
         require(pass->prepareReconstruction(ctx), "Could not start mode1 from an existing coarse grid");
-        require(pass->mOptimizerParams.maxIteration == 6u, "Level schedule omitted final-resolution optimization");
+        require(pass->mOptimizerParams.maxIteration == 12u, "Level schedule did not use the configured total");
         pass->mOptimizerParams.isRunning = pass->mEnableReconstruction = true;
 
         pass->mOptimizerParams.currentIteration = 50u;
@@ -202,26 +204,39 @@ struct CoarseToFineTestAccess
         );
         std::cout << "PASS: mode1 gates topology; eight-child transfer, opacity, fresh Adam, production optimizer rebinding\n";
 
-        pass->mOptimizerParams.currentIteration = 3u;
+        pass->mOptimizerParams.currentIteration = 5u;
         pass->advanceCoarseToFine(ctx);
         require(pass->mVoxelResolution == 32u, "Second level did not receive its own optimization time");
-        pass->mOptimizerParams.currentIteration = 4u;
+        pass->mOptimizerParams.currentIteration = 6u;
         pass->advanceCoarseToFine(ctx);
         require(
             pass->mVoxelResolution == 64u && pass->mGridResources.gridData.activeVoxelCount > 8u &&
                 pass->mGridResources.gridData.activeVoxelCount <= 64u,
             "Second refinement failed across pool pages"
         );
-        pass->mOptimizerParams.currentIteration = 5u;
+        pass->mRayMarchingPass.mSampleIndex = pass->mRayMarchingPass.mSpp;
+        require(pass->shouldCollectDeletionEvidence(), "Mode1 target level did not enable deletion evidence");
+        pass->mOptimizerParams.currentIteration = 11u;
         pass->advanceCoarseToFine(ctx);
         require(pass->mOptimizerParams.isRunning, "Training stopped before optimizing the target level");
-        pass->mOptimizerParams.currentIteration = 6u;
+        const uint32_t beforeTargetDeletion = pass->mGridResources.gridData.activeVoxelCount;
+        TopologyEvidence targetCandidate = read<TopologyEvidence>(pass->mGridResources.topologyEvidencePages, beforeTargetDeletion - 1u);
+        targetCandidate.packedCountsAndFlags |= kTopologyEvidenceDeletionCandidate;
+        pass->mGridResources.topologyEvidencePages[(beforeTargetDeletion - 1u) / SPARSE_POOL_PAGE_SIZE]->setBlob(
+            &targetCandidate, size_t((beforeTargetDeletion - 1u) % SPARSE_POOL_PAGE_SIZE) * sizeof(targetCandidate), sizeof(targetCandidate)
+        );
+        pass->mTopologySettings.candidateCount = 1u;
+        pass->mOptimizerParams.currentIteration = 12u;
         pass->advanceCoarseToFine(ctx);
         require(
             !pass->mOptimizerParams.isRunning && pass->mSaveReconstructionRequested,
             "Target level completion did not stop and request a save"
         );
-        std::cout << "PASS: 16 -> 32 -> 64 schedule includes full optimization at the target resolution\n";
+        require(
+            pass->mGridResources.gridData.activeVoxelCount == beforeTargetDeletion - 1u,
+            "Mode1 target level did not compact a confirmed deletion candidate"
+        );
+        std::cout << "PASS: weighted 16 -> 32 -> 64 schedule uses the exact total and enables deletion only at the target\n";
 
         auto oldPage = pass->mGridResources.voxelPages[0];
         const uint32_t beforeFailureCount = pass->mGridResources.gridData.activeVoxelCount;
@@ -311,13 +326,13 @@ struct CoarseToFineTestAccess
                 "Loading did not stop/reset optimization"
             );
             loaded->mCoarseToFine.targetResolution = 64u;
-            loaded->mCoarseToFine.iterationsPerLevel = 2u;
+            loaded->mCoarseToFine.totalIterations = 6u;
             require(
                 loaded->prepareReconstruction(ctx) && loaded->mVoxelResolution == 32u,
                 "Restart after loading discarded the saved resolution"
             );
             if (mode == 1u)
-                require(loaded->mOptimizerParams.maxIteration == 4u, "Loaded mode1 schedule did not start at saved level");
+                require(loaded->mOptimizerParams.maxIteration == 6u, "Loaded mode1 schedule did not use the configured total");
         }
         source.mReconstructionMode = 1u;
         std::cout

@@ -12,9 +12,13 @@ bool isPowerOfTwo(uint32_t value)
 void VoxelReconstructionNoLightTransport::validateCoarseToFineSettings() const
 {
     if (!isPowerOfTwo(mCoarseToFine.startResolution) || !isPowerOfTwo(mCoarseToFine.targetResolution) ||
-        mCoarseToFine.startResolution > mCoarseToFine.targetResolution || mCoarseToFine.targetResolution > 1024u ||
-        mCoarseToFine.iterationsPerLevel == 0u || mCoarseToFine.iterationsPerLevel > 100000u)
-        throw RuntimeError("Coarse-to-fine requires power-of-two resolutions, start <= target <= 1024, and 1..100000 rounds per level.");
+        mCoarseToFine.startResolution > mCoarseToFine.targetResolution || mCoarseToFine.targetResolution > 1024u)
+        throw RuntimeError("Coarse-to-fine requires power-of-two resolutions with start <= target <= 1024.");
+    uint32_t configuredLevels = 1u;
+    for (uint32_t resolution = mCoarseToFine.startResolution; resolution < mCoarseToFine.targetResolution; resolution *= 2u)
+        ++configuredLevels;
+    if (mCoarseToFine.totalIterations < configuredLevels || mCoarseToFine.totalIterations > 1000000u)
+        throw RuntimeError("Coarse-to-fine total iterations must be at least the configured level count and at most 1000000.");
     if (!std::isfinite(mCoarseToFine.parentOpacityThreshold) || mCoarseToFine.parentOpacityThreshold < 0.0f ||
         mCoarseToFine.parentOpacityThreshold > 0.99f)
         throw RuntimeError("Refinement parent opacity threshold must be in [0, 0.99].");
@@ -33,6 +37,24 @@ uint32_t VoxelReconstructionNoLightTransport::coarseToFineRemainingLevels() cons
     return levels;
 }
 
+uint32_t VoxelReconstructionNoLightTransport::coarseToFineLevelBudget(uint32_t resolution) const
+{
+    const uint32_t start = mCoarseToFine.scheduleStartResolution;
+    if (!isPowerOfTwo(start) || resolution < start || resolution > mCoarseToFine.targetResolution)
+        throw RuntimeError("Current resolution is outside the active coarse-to-fine schedule.");
+    uint32_t levels = 1u;
+    for (uint32_t value = start; value < mCoarseToFine.targetResolution; value *= 2u)
+        ++levels;
+    uint32_t index = 0u;
+    for (uint32_t value = start; value < resolution; value *= 2u)
+        ++index;
+    const uint64_t weightSum = uint64_t(levels) * (levels + 1u) / 2u;
+    const uint64_t previousWeight = uint64_t(index) * (index + 1u) / 2u;
+    const uint64_t cumulativeWeight = uint64_t(index + 1u) * (index + 2u) / 2u;
+    const uint64_t remainder = mCoarseToFine.totalIterations - levels;
+    return 1u + uint32_t(remainder * cumulativeWeight / weightSum - remainder * previousWeight / weightSum);
+}
+
 bool VoxelReconstructionNoLightTransport::prepareReconstruction(RenderContext* pRenderContext)
 {
     try
@@ -41,21 +63,25 @@ bool VoxelReconstructionNoLightTransport::prepareReconstruction(RenderContext* p
             validateCoarseToFineSettings();
         if ((!mPointCloud.initialized || mCoarseToFine.initializationPending) && !initializePointCloudVoxelData(pRenderContext))
             return false;
-        const uint32_t levels = isCoarseToFine() ? coarseToFineRemainingLevels() : 0u;
+        if (isCoarseToFine())
+            coarseToFineRemainingLevels();
         resetPointCloudOptimization(pRenderContext);
         mCoarseToFine.levelStartIteration = 0u;
         if (isCoarseToFine())
         {
-            mOptimizerParams.maxIteration = levels * mCoarseToFine.iterationsPerLevel;
+            mCoarseToFine.scheduleStartResolution = mVoxelResolution;
+            mCoarseToFine.levelIterationBudget = coarseToFineLevelBudget(mVoxelResolution);
+            mOptimizerParams.maxIteration = mCoarseToFine.totalIterations;
             mCoarseToFine.status = fmt::format(
-                "Resolution {} -> {}; {} rounds per level, {} total remaining rounds",
+                "Resolution {} -> {}; current level {} rounds, {} total scheduled rounds",
                 mVoxelResolution,
                 mCoarseToFine.targetResolution,
-                mCoarseToFine.iterationsPerLevel,
-                mOptimizerParams.maxIteration
+                mCoarseToFine.levelIterationBudget,
+                mCoarseToFine.totalIterations
             );
             mTopologySettings.growthStatus = "Disabled in mode1";
-            mTopologySettings.deletionStatus = "Disabled in mode1";
+            mTopologySettings.deletionStatus = mVoxelResolution == mCoarseToFine.targetResolution ? "Enabled at the mode1 target level"
+                                                                                                  : "Waiting for the mode1 target level";
         }
         return true;
     }
@@ -70,11 +96,46 @@ bool VoxelReconstructionNoLightTransport::prepareReconstruction(RenderContext* p
 
 void VoxelReconstructionNoLightTransport::advanceCoarseToFine(RenderContext* pRenderContext)
 {
-    if (!isCoarseToFine() || !mOptimizerParams.isRunning ||
-        mOptimizerParams.currentIteration - mCoarseToFine.levelStartIteration < mCoarseToFine.iterationsPerLevel)
+    if (!isCoarseToFine() || !mOptimizerParams.isRunning)
         return;
     try
     {
+        const uint32_t levelIteration = mOptimizerParams.currentIteration - mCoarseToFine.levelStartIteration;
+        if (mVoxelResolution == mCoarseToFine.targetResolution)
+        {
+            evaluateDeletionEvidence(pRenderContext);
+            const bool reachedLevelBudget = levelIteration >= mCoarseToFine.levelIterationBudget;
+            const uint32_t evidenceInterval = std::max(1u, mTopologySettings.evidenceInterval);
+            const uint32_t deletionInterval = std::max(1u, mTopologySettings.deletionInterval);
+            const uint32_t firstDeletionIteration = getDeletionEvidenceStartIteration() + 2u * evidenceInterval;
+            const bool periodicDeletionBoundary = mOptimizerParams.currentIteration >= firstDeletionIteration &&
+                                                  (mOptimizerParams.currentIteration - firstDeletionIteration) % deletionInterval == 0u;
+            const bool hadCandidatesAtBoundary = mTopologySettings.candidateCount > 0u;
+            if (hadCandidatesAtBoundary && (periodicDeletionBoundary || reachedLevelBudget))
+            {
+                try
+                {
+                    deleteAndCompactCandidates(pRenderContext);
+                }
+                catch (const std::exception& error)
+                {
+                    mTopologySettings.deletionStatus = std::string("Automatic compaction failed: ") + error.what();
+                    logError("{}", mTopologySettings.deletionStatus);
+                }
+            }
+            if (reachedLevelBudget)
+            {
+                mCoarseToFine.status =
+                    fmt::format("Complete: resolution {}, {} total rounds", mVoxelResolution, mOptimizerParams.currentIteration);
+                stopReconstruction();
+                if (!hadCandidatesAtBoundary)
+                    mTopologySettings.deletionStatus = "Target-level training complete; no additional confirmed candidates";
+                mSaveReconstructionRequested = true;
+            }
+            return;
+        }
+        if (levelIteration < mCoarseToFine.levelIterationBudget)
+            return;
         if (mVoxelResolution < mCoarseToFine.targetResolution)
         {
             if (mCoarseToFine.saveEachLevel)
@@ -94,13 +155,9 @@ void VoxelReconstructionNoLightTransport::advanceCoarseToFine(RenderContext* pRe
             }
             refineCoarseToFineGrid(pRenderContext);
             mCoarseToFine.levelStartIteration = mOptimizerParams.currentIteration;
-        }
-        else
-        {
-            mCoarseToFine.status =
-                fmt::format("Complete: resolution {}, {} total rounds", mVoxelResolution, mOptimizerParams.currentIteration);
-            stopReconstruction();
-            mSaveReconstructionRequested = true;
+            mCoarseToFine.levelIterationBudget = coarseToFineLevelBudget(mVoxelResolution);
+            if (mVoxelResolution == mCoarseToFine.targetResolution)
+                mTopologySettings.deletionStatus = "Collecting deletion evidence at the mode1 target level";
         }
     }
     catch (const std::exception& error)
@@ -230,7 +287,7 @@ void VoxelReconstructionNoLightTransport::renderUICoarseToFine(Gui::Widgets& wid
                 mCoarseToFine.startResolution = std::min(mCoarseToFine.startResolution, mCoarseToFine.targetResolution);
                 mCoarseToFine.initializationPending = true;
             }
-            widget.var("Iterations Per Level", mCoarseToFine.iterationsPerLevel, 1u, 100000u, 1u);
+            widget.var("Total Iterations", mCoarseToFine.totalIterations, 1u, 1000000u, 1u);
             widget.var("Refinement Parent Opacity Threshold", mCoarseToFine.parentOpacityThreshold, 0.0f, 0.99f, 0.001f);
             widget.tooltip(
                 "At refinement only: discard parents whose opacity SH upper bound is below this threshold. Zero disables filtering."
@@ -243,13 +300,15 @@ void VoxelReconstructionNoLightTransport::renderUICoarseToFine(Gui::Widgets& wid
     }
     if (isCoarseToFine())
     {
-        widget.text("mode1: no regular deletion, pruning, or neighbor growth; low-opacity filtering only at refinement.");
+        widget.text("mode1: deletion is enabled only at the target level; pruning and neighbor growth remain disabled.");
         widget.text(fmt::format(
-            "Current resolution: {}; target: {}; level rounds: {} / {}",
+            "Current resolution: {}; target: {}; level rounds: {} / {}; total: {} / {}",
             mVoxelResolution,
             mCoarseToFine.targetResolution,
             mOptimizerParams.currentIteration - mCoarseToFine.levelStartIteration,
-            mCoarseToFine.iterationsPerLevel
+            mCoarseToFine.levelIterationBudget,
+            mOptimizerParams.currentIteration,
+            mCoarseToFine.totalIterations
         ));
         widget.text(mCoarseToFine.status);
     }

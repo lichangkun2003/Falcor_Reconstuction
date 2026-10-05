@@ -379,8 +379,8 @@ bool VoxelReconstructionNoLightTransport::initializePointCloudVoxelData(RenderCo
         resetPointCloudOptimization(pRenderContext);
         mCoarseToFine.levelStartIteration = 0u;
         mCoarseToFine.initializationPending = false;
-        mCoarseToFine.status = fmt::format("Initialized at resolution {}; {} rounds per level", resolution,
-            mCoarseToFine.iterationsPerLevel);
+        mCoarseToFine.status = fmt::format("Initialized at resolution {}; {} total scheduled rounds", resolution,
+            mCoarseToFine.totalIterations);
         mPointCloud.initialized = true;
         mLoadedReconstructionForViewing = false;
         const auto& stats = points.statistics;

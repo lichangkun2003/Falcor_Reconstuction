@@ -2,6 +2,8 @@
 
 uint32_t VoxelReconstructionNoLightTransport::getDeletionEvidenceStartIteration() const
 {
+    if (isCoarseToFine())
+        return mCoarseToFine.levelStartIteration;
     return mUpdatePass.mOpacityWarmupIterations + mUpdatePass.mOpacityRampIterations;
 }
 
@@ -12,12 +14,10 @@ bool VoxelReconstructionNoLightTransport::shouldCollectDeletionEvidence() const
     // the training SPP. Repeated iterations improve 1-SPP coverage, while
     // per-view stamps still limit each camera to one foreground and one
     // background vote per evidence window.
-    const bool finalSppSample = mRayMarchingPass.mSpp > 0u &&
-        mRayMarchingPass.mSampleIndex == mRayMarchingPass.mSpp;
-    return !isCoarseToFine() && mTopologySettings.collectDeletionEvidence &&
-        mOptimizerParams.currentIteration >= start &&
-        finalSppSample &&
-        mGridResources.gridData.activeVoxelCount > 0;
+    const bool finalSppSample = mRayMarchingPass.mSpp > 0u && mRayMarchingPass.mSampleIndex == mRayMarchingPass.mSpp;
+    const bool deletionLevel = !isCoarseToFine() || mVoxelResolution == mCoarseToFine.targetResolution;
+    return deletionLevel && mTopologySettings.collectDeletionEvidence && mOptimizerParams.currentIteration >= start && finalSppSample &&
+           mGridResources.gridData.activeVoxelCount > 0;
 }
 
 void VoxelReconstructionNoLightTransport::createTopologyPassResource(RenderContext* pRenderContext)
@@ -28,11 +28,8 @@ void VoxelReconstructionNoLightTransport::createTopologyPassResource(RenderConte
     ProgramDesc resetDesc;
     resetDesc.addShaderLibrary(TopologyPassShaderFilePath).csEntry("resetEvidence");
     mpResetTopologyEvidencePass = ComputePass::create(mpDevice, resetDesc, getReconstructionDefines(), true);
-    mpTopologySummary = mpDevice->createStructuredBuffer(
-        sizeof(uint32_t),
-        4u,
-        ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess
-    );
+    mpTopologySummary =
+        mpDevice->createStructuredBuffer(sizeof(uint32_t), 4u, ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess);
     pRenderContext->clearUAV(mpTopologySummary->getUAV().get(), uint4(0));
 }
 
@@ -51,7 +48,7 @@ void VoxelReconstructionNoLightTransport::resetDeletionEvidence(RenderContext* p
     var["gGridDataParamBlock"] = mpGridBlock;
     var["CB"]["gPreserveGrowthProtection"] = preserveGrowthProtection;
     constexpr uint32_t batchSize = 65535u * 256u;
-    for (uint32_t offset = 0; offset < mGridResources.gridData.activeVoxelCount; )
+    for (uint32_t offset = 0; offset < mGridResources.gridData.activeVoxelCount;)
     {
         const uint32_t count = std::min(batchSize, mGridResources.gridData.activeVoxelCount - offset);
         var["CB"]["gSparseOffset"] = offset;
@@ -71,13 +68,13 @@ void VoxelReconstructionNoLightTransport::resetDeletionEvidence(RenderContext* p
 
 void VoxelReconstructionNoLightTransport::evaluateDeletionEvidence(RenderContext* pRenderContext)
 {
-    if (isCoarseToFine() || !mTopologySettings.collectDeletionEvidence || !mpTopologyPass || !mpTopologySummary)
+    if ((isCoarseToFine() && mVoxelResolution != mCoarseToFine.targetResolution) || !mTopologySettings.collectDeletionEvidence ||
+        !mpTopologyPass || !mpTopologySummary)
         return;
 
     const uint32_t start = getDeletionEvidenceStartIteration();
     const uint32_t interval = std::max(1u, mTopologySettings.evidenceInterval);
-    if (mOptimizerParams.currentIteration <= start ||
-        (mOptimizerParams.currentIteration - start) % interval != 0u)
+    if (mOptimizerParams.currentIteration <= start || (mOptimizerParams.currentIteration - start) % interval != 0u)
         return;
 
     pRenderContext->clearUAV(mpTopologySummary->getUAV().get(), uint4(0));
@@ -93,7 +90,7 @@ void VoxelReconstructionNoLightTransport::evaluateDeletionEvidence(RenderContext
     cb["gCurrentIteration"] = mOptimizerParams.currentIteration;
 
     constexpr uint32_t batchSize = 65535u * 256u;
-    for (uint32_t offset = 0; offset < mGridResources.gridData.activeVoxelCount; )
+    for (uint32_t offset = 0; offset < mGridResources.gridData.activeVoxelCount;)
     {
         const uint32_t count = std::min(batchSize, mGridResources.gridData.activeVoxelCount - offset);
         cb["gSparseOffset"] = offset;
@@ -119,6 +116,9 @@ void VoxelReconstructionNoLightTransport::evaluateDeletionEvidence(RenderContext
         "{} foreground-protected, {} weak background conflicts.",
         mTopologySettings.completedWindows,
         mOptimizerParams.currentIteration,
-        summary[0], summary[1], summary[2], summary[3]
+        summary[0],
+        summary[1],
+        summary[2],
+        summary[3]
     );
 }

@@ -355,10 +355,12 @@ public:
     {
         uint32_t startResolution = COARSE_TO_FINE_START_RESOLUTION;
         uint32_t targetResolution = GRID_RESOLUTION;
-        uint32_t iterationsPerLevel = COARSE_TO_FINE_ITERATIONS_PER_LEVEL;
+        uint32_t totalIterations = COARSE_TO_FINE_TOTAL_ITERATIONS;
         float parentOpacityThreshold = 0.01f;
         bool saveEachLevel = true;
+        uint32_t scheduleStartResolution = 0;
         uint32_t levelStartIteration = 0;
+        uint32_t levelIterationBudget = 0;
         bool initializationPending = false;
         std::string status = "Initialize from PLY to start the resolution pyramid";
     };
@@ -389,6 +391,7 @@ private:
     void advanceCoarseToFine(RenderContext* pRenderContext);
     void refineCoarseToFineGrid(RenderContext* pRenderContext);
     uint32_t coarseToFineRemainingLevels() const;
+    uint32_t coarseToFineLevelBudget(uint32_t resolution) const;
     GridData makeVoxelGrid(uint32_t resolution) const;
     static DefineList getReconstructionDefines();
     void updateOutputResolution();

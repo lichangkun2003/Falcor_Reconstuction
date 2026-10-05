@@ -9,7 +9,7 @@ uint32_t pageCountForEntries(uint32_t count)
 
 constexpr uint32_t kThreadsPerGroup = 256u;
 constexpr uint32_t kMaximumDispatchItems = 65535u * kThreadsPerGroup;
-}
+} // namespace
 
 void VoxelReconstructionNoLightTransport::createDeletionPassResources()
 {
@@ -28,7 +28,8 @@ void VoxelReconstructionNoLightTransport::createDeletionPassResources()
 
 void VoxelReconstructionNoLightTransport::deleteAndCompactCandidates(RenderContext* pRenderContext)
 {
-    if (isCoarseToFine()) return;
+    if (isCoarseToFine() && mVoxelResolution != mCoarseToFine.targetResolution)
+        return;
     const uint32_t oldActiveCount = mGridResources.gridData.activeVoxelCount;
     const uint32_t expectedCandidates = mTopologySettings.candidateCount;
     if (oldActiveCount == 0u || expectedCandidates == 0u)
@@ -62,7 +63,7 @@ void VoxelReconstructionNoLightTransport::deleteAndCompactCandidates(RenderConte
     buildCB["gListCapacity"] = listCapacity;
 
     barrierTopologyEvidence(pRenderContext);
-    for (uint32_t offset = 0; offset < oldActiveCount; )
+    for (uint32_t offset = 0; offset < oldActiveCount;)
     {
         const uint32_t count = std::min(kMaximumDispatchItems, oldActiveCount - offset);
         buildCB["gSparseOffset"] = offset;
@@ -76,12 +77,15 @@ void VoxelReconstructionNoLightTransport::deleteAndCompactCandidates(RenderConte
 
     uint32_t listCounts[3] = {};
     counters->getBlob(listCounts, 0, sizeof(listCounts));
-    if (listCounts[0] != expectedCandidates || listCounts[1] != listCounts[2] ||
-        listCounts[1] > listCapacity)
+    if (listCounts[0] != expectedCandidates || listCounts[1] != listCounts[2] || listCounts[1] > listCapacity)
     {
         mTopologySettings.deletionStatus = fmt::format(
             "Compaction aborted: evidence changed (expected {}, found {}, holes {}, donors {})",
-            expectedCandidates, listCounts[0], listCounts[1], listCounts[2]);
+            expectedCandidates,
+            listCounts[0],
+            listCounts[1],
+            listCounts[2]
+        );
         logError("{}", mTopologySettings.deletionStatus);
         return;
     }
@@ -91,16 +95,18 @@ void VoxelReconstructionNoLightTransport::deleteAndCompactCandidates(RenderConte
     clearIndexVar["gGridDataParamBlock"] = mpGridBlock;
     auto clearIndexCB = clearIndexVar["CB"];
     clearIndexCB["gOldActiveCount"] = oldActiveCount;
-    clearIndexCB["gCooldownUntilIteration"] = uint32_t(std::min<uint64_t>(kMaximumTopologyIteration,
-        uint64_t(mOptimizerParams.currentIteration) + mTopologySettings.deletionCooldownIterations));
-    for (uint32_t offset = 0; offset < oldActiveCount; )
+    clearIndexCB["gCooldownUntilIteration"] = uint32_t(std::min<uint64_t>(
+        kMaximumTopologyIteration, uint64_t(mOptimizerParams.currentIteration) + mTopologySettings.deletionCooldownIterations
+    ));
+    for (uint32_t offset = 0; offset < oldActiveCount;)
     {
         const uint32_t count = std::min(kMaximumDispatchItems, oldActiveCount - offset);
         clearIndexCB["gSparseOffset"] = offset;
         mpClearDeletionIndicesPass->execute(pRenderContext, uint3(count, 1, 1));
         offset += count;
     }
-    for (const auto& page : mGridResources.indexPages) pRenderContext->uavBarrier(page.get());
+    for (const auto& page : mGridResources.indexPages)
+        pRenderContext->uavBarrier(page.get());
     mGrowthCooldownPresent = true;
 
     if (moveCount > 0u)
@@ -113,7 +119,7 @@ void VoxelReconstructionNoLightTransport::deleteAndCompactCandidates(RenderConte
             moveVar["gGeometryAdamPages"][page] = mGridResources.adamPages[page];
         auto moveCB = moveVar["CB"];
         moveCB["gPairCount"] = moveCount;
-        for (uint32_t offset = 0; offset < moveCount; )
+        for (uint32_t offset = 0; offset < moveCount;)
         {
             const uint32_t count = std::min(kMaximumDispatchItems, moveCount - offset);
             moveCB["gPairOffset"] = offset;
@@ -122,18 +128,23 @@ void VoxelReconstructionNoLightTransport::deleteAndCompactCandidates(RenderConte
         }
     }
 
-    for (const auto& page : mGridResources.voxelPages) pRenderContext->uavBarrier(page.get());
-    for (const auto& page : mGridResources.adamPages) pRenderContext->uavBarrier(page.get());
-    for (const auto& page : mGridResources.radianceAdamIndexPages) pRenderContext->uavBarrier(page.get());
-    for (const auto& page : mGridResources.cellIndexPages) pRenderContext->uavBarrier(page.get());
-    for (const auto& page : mGridResources.indexPages) pRenderContext->uavBarrier(page.get());
+    for (const auto& page : mGridResources.voxelPages)
+        pRenderContext->uavBarrier(page.get());
+    for (const auto& page : mGridResources.adamPages)
+        pRenderContext->uavBarrier(page.get());
+    for (const auto& page : mGridResources.radianceAdamIndexPages)
+        pRenderContext->uavBarrier(page.get());
+    for (const auto& page : mGridResources.cellIndexPages)
+        pRenderContext->uavBarrier(page.get());
+    for (const auto& page : mGridResources.indexPages)
+        pRenderContext->uavBarrier(page.get());
 
     auto clearTailVar = mpClearDeletionTailPass->getRootVar();
     clearTailVar["gGridDataParamBlock"] = mpGridBlock;
     auto clearTailCB = clearTailVar["CB"];
     clearTailCB["gOldActiveCount"] = oldActiveCount;
     clearTailCB["gNewActiveCount"] = newActiveCount;
-    for (uint32_t offset = newActiveCount; offset < oldActiveCount; )
+    for (uint32_t offset = newActiveCount; offset < oldActiveCount;)
     {
         const uint32_t count = std::min(kMaximumDispatchItems, oldActiveCount - offset);
         clearTailCB["gSparseOffset"] = offset;
@@ -145,9 +156,7 @@ void VoxelReconstructionNoLightTransport::deleteAndCompactCandidates(RenderConte
     const uint32_t oldPoolPages = uint32_t(mGridResources.voxelPages.size());
     const uint32_t oldRadiancePages = uint32_t(mGridResources.radianceAdamPages.size());
     const uint32_t requiredPoolPages = pageCountForEntries(newActiveCount);
-    const uint32_t keepPoolPages = std::min(
-        oldPoolPages,
-        requiredPoolPages + (requiredPoolPages < oldPoolPages ? 1u : 0u));
+    const uint32_t keepPoolPages = std::min(oldPoolPages, requiredPoolPages + (requiredPoolPages < oldPoolPages ? 1u : 0u));
     const uint32_t desiredRadiancePages = pageCountForEntries(std::max(1u, newActiveCount / 8u));
     const uint32_t keepRadiancePages = std::max(1u, std::min(oldRadiancePages, desiredRadiancePages));
 
@@ -180,7 +189,8 @@ void VoxelReconstructionNoLightTransport::deleteAndCompactCandidates(RenderConte
     pRenderContext->clearUAV(mGridResources.radianceAdamCounter->getUAV().get(), uint4(0));
     clearSparseGradients(pRenderContext);
     resetDeletionEvidence(pRenderContext, true);
-    if (mpPathRecordBuffer) pRenderContext->clearUAV(mpPathRecordBuffer->getUAV().get(), uint4(0));
+    if (mpPathRecordBuffer)
+        pRenderContext->clearUAV(mpPathRecordBuffer->getUAV().get(), uint4(0));
     pRenderContext->submit(true);
 
     mTopologySettings.lastDeletedCount = expectedCandidates;
@@ -188,8 +198,12 @@ void VoxelReconstructionNoLightTransport::deleteAndCompactCandidates(RenderConte
     mTopologySettings.lastReleasedRadiancePages = oldRadiancePages - keepRadiancePages;
     mTopologySettings.deletionStatus = fmt::format(
         "Deleted {} voxels; active {} -> {}; released {} pool pages and {} radiance-Adam pages",
-        expectedCandidates, oldActiveCount, newActiveCount,
-        mTopologySettings.lastReleasedPoolPages, mTopologySettings.lastReleasedRadiancePages);
+        expectedCandidates,
+        oldActiveCount,
+        newActiveCount,
+        mTopologySettings.lastReleasedPoolPages,
+        mTopologySettings.lastReleasedRadiancePages
+    );
     mPointCloud.status = mTopologySettings.deletionStatus;
     mPointCloud.clearAccumulation = true;
     mRayMarchingPass.mDrawMode = uint32_t(ABSDFDrawMode::Default);

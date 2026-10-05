@@ -32,19 +32,30 @@ extern "C" FALCOR_API_EXPORT void registerPlugin(Falcor::PluginRegistry& registr
     registry.registerClass<RenderPass, VoxelReconstructionNoLightTransport>();
 }
 
-VoxelReconstructionNoLightTransport::VoxelReconstructionNoLightTransport(ref<Device> pDevice, const Properties& props) : RenderPass(pDevice) {
+VoxelReconstructionNoLightTransport::VoxelReconstructionNoLightTransport(ref<Device> pDevice, const Properties& props) : RenderPass(pDevice)
+{
     mpDevice = pDevice;
     for (const auto& [key, value] : props)
     {
-        if (key == "reconstructionMode") mReconstructionMode = value;
-        else if (key == "coarseStartResolution") mCoarseToFine.startResolution = value;
-        else if (key == "targetResolution") mCoarseToFine.targetResolution = value;
-        else if (key == "iterationsPerLevel") mCoarseToFine.iterationsPerLevel = value;
-        else if (key == "refinementParentOpacityThreshold") mCoarseToFine.parentOpacityThreshold = value;
-        else if (key == "saveEachRefinementLevel") mCoarseToFine.saveEachLevel = value;
+        if (key == "reconstructionMode")
+            mReconstructionMode = value;
+        else if (key == "coarseStartResolution")
+            mCoarseToFine.startResolution = value;
+        else if (key == "targetResolution")
+            mCoarseToFine.targetResolution = value;
+        else if (key == "totalIterations")
+            mCoarseToFine.totalIterations = value;
+        else if (key == "iterationsPerLevel")
+            mCoarseToFine.totalIterations = value; // Legacy graph compatibility.
+        else if (key == "refinementParentOpacityThreshold")
+            mCoarseToFine.parentOpacityThreshold = value;
+        else if (key == "saveEachRefinementLevel")
+            mCoarseToFine.saveEachLevel = value;
     }
-    if (mReconstructionMode > 1u) throw RuntimeError("Reconstruction mode must be 0 or 1.");
-    if (isCoarseToFine()) validateCoarseToFineSettings();
+    if (mReconstructionMode > 1u)
+        throw RuntimeError("Reconstruction mode must be 0 or 1.");
+    if (isCoarseToFine())
+        validateCoarseToFineSettings();
 
     mpPixelDebug = std::make_unique<PixelDebug>(mpDevice);
 
@@ -52,7 +63,6 @@ VoxelReconstructionNoLightTransport::VoxelReconstructionNoLightTransport(ref<Dev
     {
         // Lego
         mGridResources.gridData.solidVoxelCount = 0;
-
     }
 
     // Create Grid pass
@@ -81,7 +91,6 @@ VoxelReconstructionNoLightTransport::VoxelReconstructionNoLightTransport(ref<Dev
             ResourceBindFlags::UnorderedAccess | ResourceBindFlags::ShaderResource
         );
     }
-
 }
 
 Properties VoxelReconstructionNoLightTransport::getProperties() const
@@ -90,7 +99,7 @@ Properties VoxelReconstructionNoLightTransport::getProperties() const
     props["reconstructionMode"] = mReconstructionMode;
     props["coarseStartResolution"] = mCoarseToFine.startResolution;
     props["targetResolution"] = mCoarseToFine.targetResolution;
-    props["iterationsPerLevel"] = mCoarseToFine.iterationsPerLevel;
+    props["totalIterations"] = mCoarseToFine.totalIterations;
     props["refinementParentOpacityThreshold"] = mCoarseToFine.parentOpacityThreshold;
     props["saveEachRefinementLevel"] = mCoarseToFine.saveEachLevel;
     return props;
@@ -98,7 +107,6 @@ Properties VoxelReconstructionNoLightTransport::getProperties() const
 
 RenderPassReflection VoxelReconstructionNoLightTransport::reflect(const CompileData& compileData)
 {
-
     RenderPassReflection reflector;
 
     // Output
@@ -114,7 +122,6 @@ RenderPassReflection VoxelReconstructionNoLightTransport::reflect(const CompileD
         .bindFlags(ResourceBindFlags::UnorderedAccess | ResourceBindFlags::ShaderResource)
         .format(ResourceFormat::RGBA32Float)
         .texture2D(mRayMarchingPass.mOutputResolution.x, mRayMarchingPass.mOutputResolution.y, 1, 1);
-
 
     return reflector;
 }
@@ -149,7 +156,10 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
     needsTrainingData |= mPointCloud.startRequested;
     if ((needsTrainingData || mUseReferenceCamera || !mLoadedReconstructionForViewing) && mReferenceDataError.empty())
     {
-        try { loadReferenceImages(); }
+        try
+        {
+            loadReferenceImages();
+        }
         catch (const std::exception& e)
         {
             mReferenceDataError = e.what();
@@ -161,7 +171,7 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
         }
     }
     const bool referencesReady = !mReferenceCameras.empty() && mReferenceImages.size() == mReferenceCameras.size() &&
-        mOptimizerParams.viewsPerIteration == mReferenceCameras.size();
+                                 mOptimizerParams.viewsPerIteration == mReferenceCameras.size();
     if (needsTrainingData && !referencesReady)
     {
         if (mReferenceDataError.empty())
@@ -174,7 +184,8 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
         mOptimizerParams.isRunning = false;
         mInitVoxelData = false;
         mPointCloud.startRequested = false;
-        mReconstructionIOStatus = "Training/restore request cancelled: reference data is unavailable. The current grid remains available for viewing.";
+        mReconstructionIOStatus =
+            "Training/restore request cancelled: reference data is unavailable. The current grid remains available for viewing.";
     }
 
     bool pointCloudInitFailed = false;
@@ -212,7 +223,7 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
     }
 
     // test input
-    if(!mEnableReconstruction)
+    if (!mEnableReconstruction)
     {
         ref<Texture> pDummy = renderData.getTexture("dummy");
         ref<Texture> pRef = testIndex < mReferenceImages.size() ? mReferenceImages[testIndex] : nullptr;
@@ -221,7 +232,8 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
         {
             pRenderContext->blit(pRef->getSRV(), pDummy->getRTV());
         }
-        else if (pDummy) pRenderContext->clearRtv(pDummy->getRTV().get(), float4(0));
+        else if (pDummy)
+            pRenderContext->clearRtv(pDummy->getRTV().get(), float4(0));
     }
 
     bool isFirstSample = mRayMarchingPass.mSampleIndex == 0u;
@@ -231,7 +243,6 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
     bool hasResidualBaseline = mRayMarchingPass.mSpp <= 1u || !isFirstSample;
 
     rayMarchingPass(pRenderContext, renderData);
-
 
     if (mEnableReconstruction && mOptimizerParams.isRunning)
     {
@@ -257,7 +268,6 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
             runUpdatePass(pRenderContext, renderData);
             runReducePass(pRenderContext, renderData);
 
-
             mRayMarchingPass.mSampleIndex = 0;
             mOptimizerParams.currentView++;
             if (mOptimizerParams.currentView >= mOptimizerParams.viewsPerIteration)
@@ -275,8 +285,8 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
                         {
                             const uint32_t target = uint32_t(std::min<uint64_t>(
                                 mGridResources.gridData.activeVoxelCount,
-                                std::max<uint64_t>(uint64_t(capacity) + SPARSE_POOL_PAGE_SIZE,
-                                    uint64_t(capacity) * 6u / 5u)));
+                                std::max<uint64_t>(uint64_t(capacity) + SPARSE_POOL_PAGE_SIZE, uint64_t(capacity) * 6u / 5u)
+                            ));
                             reserveRadianceAdamCapacity(pRenderContext, target);
                         }
                         // Concurrent overflow attempts did not acquire a slot.
@@ -344,8 +354,6 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget)
     if (widget.checkbox("Render Background", mRayMarchingPass.mRenderBackGround))
         mRayMarchingPass.mOptionsChanged = true;
 
-
-
     if (widget.var("Alpha Loss Weight", mLossPass.alphaLossWeight, 0.0f, 10.0f, 0.01f))
     {
         // Restart the sample batch so accumulated gradients use a single loss weight.
@@ -369,11 +377,13 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget)
     }
     const uint32_t maxCameraIndex = mReferenceCameras.empty() ? 0u : uint32_t(mReferenceCameras.size() - 1);
     testIndex = std::min(testIndex, maxCameraIndex);
-    if (widget.slider("Camera Index", testIndex, 0u, maxCameraIndex)) mRayMarchingPass.mOptionsChanged = true;
+    if (widget.slider("Camera Index", testIndex, 0u, maxCameraIndex))
+        mRayMarchingPass.mOptionsChanged = true;
     if (!mReferenceDataError.empty())
     {
         widget.text("Reference data: " + mReferenceDataError);
-        if (widget.button("Retry loading reference data")) mReferenceDataError.clear();
+        if (widget.button("Retry loading reference data"))
+            mReferenceDataError.clear();
     }
     else if (!mReferenceCameras.empty() && mReferenceImages.size() < mReferenceCameras.size())
         widget.text(fmt::format("Loading reference images: {} / {}", mReferenceImages.size(), mReferenceCameras.size()));
@@ -384,8 +394,10 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget)
     // 高斯占位阈值，改动在下次 Init / Reset from PLY 时生效.
     widget.var("Gaussian Opacity Threshold", mPointCloud.opacityThreshold, 0.001f, 1.0f, 0.005f);
     widget.text(mPointCloud.status);
-    if (widget.button("Init / Reset from PLY")) mInitVoxelData = true;
-    if (!isCoarseToFine()) widget.var("Max Iteration", mOptimizerParams.maxIteration);
+    if (widget.button("Init / Reset from PLY"))
+        mInitVoxelData = true;
+    if (!isCoarseToFine())
+        widget.var("Max Iteration", mOptimizerParams.maxIteration);
     if (widget.checkbox("Enable Reconstruction", mEnableReconstruction))
     {
         if (mEnableReconstruction)
@@ -410,23 +422,26 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget)
     widget.text("Voxel Count: " + ToString((int3)mGridResources.gridData.voxelCount));
     widget.text("Grid Min: " + ToString(mGridResources.gridData.gridMin));
     widget.text("Solid Voxel Count: " + std::to_string(mGridResources.gridData.solidVoxelCount));
-    widget.text(fmt::format("Compact Pool: {} active / {} capacity ({} pages)",
+    widget.text(fmt::format(
+        "Compact Pool: {} active / {} capacity ({} pages)",
         mGridResources.gridData.activeVoxelCount,
         mGridResources.gridData.voxelCapacity,
-        mGridResources.voxelPages.size()));
+        mGridResources.voxelPages.size()
+    ));
     constexpr double bytesPerGiB = 1024.0 * 1024.0 * 1024.0;
-    const double poolGiB = double(mGridResources.gridData.voxelCapacity) *
-        double(sizeof(VoxelData) + sizeof(GradRecord) + sizeof(GeometryAdamState) +
-            sizeof(TopologyEvidence) + 2u * sizeof(uint32_t)) / bytesPerGiB;
+    const double poolGiB =
+        double(mGridResources.gridData.voxelCapacity) *
+        double(sizeof(VoxelData) + sizeof(GradRecord) + sizeof(GeometryAdamState) + sizeof(TopologyEvidence) + 2u * sizeof(uint32_t)) /
+        bytesPerGiB;
     const uint32_t radianceCapacity = uint32_t(mGridResources.radianceAdamPages.size()) * SPARSE_POOL_PAGE_SIZE;
     const double radianceGiB = double(radianceCapacity) * sizeof(RadianceAdamState) / bytesPerGiB;
     const auto& count = mGridResources.gridData.voxelCount;
     const double indexGiB = double(count.x) * double(count.y) * double(count.z) * sizeof(int32_t) / bytesPerGiB;
-    widget.text(fmt::format("Grid GPU storage: {:.2f} GiB pool + {:.2f} GiB radiance Adam + {:.2f} GiB index",
-        poolGiB, radianceGiB, indexGiB));
+    widget.text(
+        fmt::format("Grid GPU storage: {:.2f} GiB pool + {:.2f} GiB radiance Adam + {:.2f} GiB index", poolGiB, radianceGiB, indexGiB)
+    );
     widget.text(fmt::format("Radiance Adam capacity: {} slots", radianceCapacity));
-    widget.text(fmt::format("Spatial Index: {} page(s), {}^3 cells/page max",
-        mGridResources.indexPages.size(), SPARSE_INDEX_PAGE_EDGE));
+    widget.text(fmt::format("Spatial Index: {} page(s), {}^3 cells/page max", mGridResources.indexPages.size(), SPARSE_INDEX_PAGE_EDGE));
     widget.text(
         "Solid Rate: " + std::to_string(mGridResources.gridData.solidVoxelCount / (float)mGridResources.gridData.totalVoxelCount())
     );
@@ -443,7 +458,8 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget)
     if (auto group = widget.group("Reconstruction IO"))
     {
         widget.text("Directory: " + getReconstructionModeDirectory().string());
-        if (widget.button("Refresh Files")) mReconstructionFileListDirty = true;
+        if (widget.button("Refresh Files"))
+            mReconstructionFileListDirty = true;
         if (mReconstructionFileListDirty)
         {
             refreshReconstructionFileList();
@@ -473,7 +489,8 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget)
             widget.text("No reconstruction .bin files found.");
         }
 
-        if (!mReconstructionIOStatus.empty()) widget.text(mReconstructionIOStatus);
+        if (!mReconstructionIOStatus.empty())
+            widget.text(mReconstructionIOStatus);
         widget.textbox("Name Tag", mReconstructionNameTag);
         if (widget.button("Save Reconstruction"))
         {
@@ -543,18 +560,19 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget)
 
 void VoxelReconstructionNoLightTransport::renderUITopology(Gui::Widgets& widget)
 {
-    if (isCoarseToFine() && mTopologySettings.debugLayer != uint32_t(TopologyDebugLayer::Occupied))
+    const bool mode1Target = isCoarseToFine() && mVoxelResolution == mCoarseToFine.targetResolution;
+    if (isCoarseToFine() && !mode1Target && mTopologySettings.debugLayer != uint32_t(TopologyDebugLayer::Occupied))
     {
         mTopologySettings.debugLayer = uint32_t(TopologyDebugLayer::Occupied);
         mRayMarchingPass.mOptionsChanged = true;
     }
     auto group = widget.group("Topology", true);
-    if (!group) return;
+    if (!group)
+        return;
 
-    if (isCoarseToFine())
+    if (isCoarseToFine() && !mode1Target)
     {
-        group.text("mode1: coarse-to-fine refinement only.");
-        group.text("Deletion, deletion evidence, pruning, and neighbor growth are disabled at every level.");
+        group.text("mode1 coarse level: deletion evidence, deletion, pruning, and neighbor growth are disabled.");
         if (group.button("Show Occupied Grid"))
         {
             mRayMarchingPass.mDrawMode = uint32_t(ABSDFDrawMode::TopologyDebug);
@@ -569,6 +587,8 @@ void VoxelReconstructionNoLightTransport::renderUITopology(Gui::Widgets& widget)
     }
 
     group.text("Confirmed candidates are deleted and compacted periodically at complete iteration boundaries.");
+    if (mode1Target)
+        group.text("mode1 target level: deletion is enabled; pruning and neighbor growth remain disabled.");
     group.text("TopologyDebug is a viewing mode; training always renders with Default.");
 
     if (group.button("Show TopologyDebug"))
@@ -589,7 +609,8 @@ void VoxelReconstructionNoLightTransport::renderUITopology(Gui::Widgets& widget)
     }
     if (group.button(mEnableReconstruction ? "Stop and Show Grown Voxels" : "Show Grown Voxels"))
     {
-        if (mEnableReconstruction) stopReconstruction();
+        if (mEnableReconstruction)
+            stopReconstruction();
         mTopologySettings.debugLayer = uint32_t(TopologyDebugLayer::Growth);
         mRayMarchingPass.mDrawMode = uint32_t(ABSDFDrawMode::TopologyDebug);
         mRayMarchingPass.mOptionsChanged = true;
@@ -609,7 +630,7 @@ void VoxelReconstructionNoLightTransport::renderUITopology(Gui::Widgets& widget)
     group.text("Deletion evidence");
     group.checkbox("Collect Deletion Evidence", mTopologySettings.collectDeletionEvidence);
     group.text(fmt::format(
-        "Starts at iteration {} (opacity warm-up + ramp); window {} iterations; one evidence sample per view/iteration.",
+        "Starts at iteration {}; window {} iterations; one evidence sample per view/iteration.",
         getDeletionEvidenceStartIteration(),
         std::max(1u, mTopologySettings.evidenceInterval)
     ));
@@ -630,21 +651,37 @@ void VoxelReconstructionNoLightTransport::renderUITopology(Gui::Widgets& widget)
     group.text(fmt::format(
         "Automatic deletion starts at iteration {} and then runs every {} iterations when candidates exist.",
         getDeletionEvidenceStartIteration() + 2u * std::max(1u, mTopologySettings.evidenceInterval),
-        std::max(1u, mTopologySettings.deletionInterval)));
+        std::max(1u, mTopologySettings.deletionInterval)
+    ));
     group.text(mTopologySettings.deletionStatus);
     group.text(fmt::format(
         "Last compaction: {} voxels, {} pool pages, {} radiance-Adam pages released",
         mTopologySettings.lastDeletedCount,
         mTopologySettings.lastReleasedPoolPages,
-        mTopologySettings.lastReleasedRadiancePages));
+        mTopologySettings.lastReleasedRadiancePages
+    ));
+
+    if (mode1Target)
+    {
+        group.text("Neighbor growth remains disabled at the mode1 target level.");
+        return;
+    }
 
     group.text("Ellipsoid neighbor growth (parent retained)");
     group.checkbox("Enable Growth", mTopologySettings.enableGrowth);
     group.var("Growth Interval (iterations)", mTopologySettings.growthInterval, 1u, 100u, 1u);
-    group.text(fmt::format("Starts at iteration {}; one layer every {} full iterations, after deletion; no count budget.",
-        getDeletionEvidenceStartIteration(), std::max(1u, mTopologySettings.growthInterval)));
-    group.var("Growth Face Penetration (voxel widths)", mTopologySettings.growthFacePenetration, 0.0f,
-        float(GROWTH_MAX_FACE_PENETRATION_VOXELS), 0.01f);
+    group.text(fmt::format(
+        "Starts at iteration {}; one layer every {} full iterations, after deletion; no count budget.",
+        getDeletionEvidenceStartIteration(),
+        std::max(1u, mTopologySettings.growthInterval)
+    ));
+    group.var(
+        "Growth Face Penetration (voxel widths)",
+        mTopologySettings.growthFacePenetration,
+        0.0f,
+        float(GROWTH_MAX_FACE_PENETRATION_VOXELS),
+        0.01f
+    );
     group.text("Grow only when the ellipsoid extends beyond this depth inside the empty face neighbor; lower is more aggressive.");
     group.var("Child Scale Multiplier", mTopologySettings.growthShrink, 0.01f, 0.99f, 0.01f);
     group.var("Child Contact Offset (voxels)", mTopologySettings.growthContactOffset, 0.01f, 0.49f, 0.01f);
@@ -654,8 +691,9 @@ void VoxelReconstructionNoLightTransport::renderUITopology(Gui::Widgets& widget)
     group.var("Newborn Protection (iterations)", mTopologySettings.growthProtectionIterations, 1u, 100u, 1u);
     group.var("Deleted Cell Cooldown (iterations)", mTopologySettings.deletionCooldownIterations, 0u, 100u, 1u);
     group.text(mTopologySettings.growthStatus);
-    group.text(fmt::format("Last growth: {} voxels; {} pool pages added",
-        mTopologySettings.lastGrowthCount, mTopologySettings.lastGrowthPages));
+    group.text(
+        fmt::format("Last growth: {} voxels; {} pool pages added", mTopologySettings.lastGrowthCount, mTopologySettings.lastGrowthPages)
+    );
 }
 
 void VoxelReconstructionNoLightTransport::setScene(RenderContext* pRenderContext, const ref<Scene>& pScene)
@@ -669,13 +707,13 @@ void VoxelReconstructionNoLightTransport::setScene(RenderContext* pRenderContext
     mEnableReconstruction = false;
     mOptimizerParams.reset();
     mCoarseToFine.levelStartIteration = 0u;
-    if (isCoarseToFine()) mVoxelResolution = mCoarseToFine.startResolution;
-    else if (mCoarseToFine.initializationPending) mVoxelResolution = GRID_RESOLUTION;
+    if (isCoarseToFine())
+        mVoxelResolution = mCoarseToFine.startResolution;
+    else if (mCoarseToFine.initializationPending)
+        mVoxelResolution = GRID_RESOLUTION;
     mCoarseToFine.initializationPending = false;
     UpdateVoxelGrid(mVoxelResolution);
     setupGridResouce(pRenderContext, true);
-
-
 
     // RayMarching
     createRayMarchingPassResource(pRenderContext);
@@ -695,10 +733,7 @@ void VoxelReconstructionNoLightTransport::setScene(RenderContext* pRenderContext
 
     // Reduce Pass
     createReducePassResource(pRenderContext);
-
-
 }
-
 
 void VoxelReconstructionNoLightTransport::beginFrame(RenderContext* pRenderContext, bool forceReset)
 {
@@ -713,38 +748,38 @@ void VoxelReconstructionNoLightTransport::endFrame(RenderContext* pRenderContext
     mRayMarchingPass.mFrameIndex = mFrameCount;
 }
 
-//void VoxelReconstructionNoLightTransport::UpdateVoxelGrid(uint voxelResolution)
+// void VoxelReconstructionNoLightTransport::UpdateVoxelGrid(uint voxelResolution)
 //{
-//    float3 diag;
-//    float length;
-//    float3 center;
-//    if (scene)
-//    {
-//        AABB aabb = scene->getSceneBounds();
-//        diag = aabb.maxPoint - aabb.minPoint;
-//        length = std::max(diag.z, std::max(diag.x, diag.y));
-//        center = aabb.center();
-//        diag *= 1.02f;
-//        length *= 1.02f;
-//    }
-//    else
-//    {
-//        diag = float3(1);
-//        length = 1.f;
-//        center = float3(0);
-//    }
+//     float3 diag;
+//     float length;
+//     float3 center;
+//     if (scene)
+//     {
+//         AABB aabb = scene->getSceneBounds();
+//         diag = aabb.maxPoint - aabb.minPoint;
+//         length = std::max(diag.z, std::max(diag.x, diag.y));
+//         center = aabb.center();
+//         diag *= 1.02f;
+//         length *= 1.02f;
+//     }
+//     else
+//     {
+//         diag = float3(1);
+//         length = 1.f;
+//         center = float3(0);
+//     }
 //
-//    mGridResources.gridData.voxelSize = float3(length / voxelResolution);
-//    float3 temp = diag / mGridResources.gridData.voxelSize;
+//     mGridResources.gridData.voxelSize = float3(length / voxelResolution);
+//     float3 temp = diag / mGridResources.gridData.voxelSize;
 //
-//    mGridResources.gridData.voxelCount = uint3(
-//        (uint)math::ceil(temp.x / MinFactor.x) * MinFactor.x,
-//        (uint)math::ceil(temp.y / MinFactor.y) * MinFactor.y,
-//        (uint)math::ceil(temp.z / MinFactor.z) * MinFactor.z
-//    );
-//    mGridResources.gridData.gridMin = center - 0.5f * mGridResources.gridData.voxelSize * float3(mGridResources.gridData.voxelCount);
-//    // mGridResources.gridData.solidVoxelCount = 0;
-//}
+//     mGridResources.gridData.voxelCount = uint3(
+//         (uint)math::ceil(temp.x / MinFactor.x) * MinFactor.x,
+//         (uint)math::ceil(temp.y / MinFactor.y) * MinFactor.y,
+//         (uint)math::ceil(temp.z / MinFactor.z) * MinFactor.z
+//     );
+//     mGridResources.gridData.gridMin = center - 0.5f * mGridResources.gridData.voxelSize * float3(mGridResources.gridData.voxelCount);
+//     // mGridResources.gridData.solidVoxelCount = 0;
+// }
 
 void VoxelReconstructionNoLightTransport::UpdateVoxelGrid(uint voxelResolution)
 {
@@ -828,7 +863,6 @@ GridData VoxelReconstructionNoLightTransport::makeVoxelGrid(uint32_t voxelResolu
     return grid;
 }
 
-
 void VoxelReconstructionNoLightTransport::setupGridResouce(RenderContext* pRenderContext, bool forceReset)
 {
     if (!mpGridBlock || forceReset)
@@ -843,14 +877,11 @@ void VoxelReconstructionNoLightTransport::setupGridResouce(RenderContext* pRende
     return;
 }
 
-
-
 void VoxelReconstructionNoLightTransport::updateOutputResolution()
 {
     bool training = mEnableReconstruction || mOptimizerParams.isRunning;
     training |= mPointCloud.startRequested;
-    const uint2 resolution = training ? uint2(800, 800) :
-        (mViewingResolution == 0 ? uint2(800, 800) : uint2(1920, 1080));
+    const uint2 resolution = training ? uint2(800, 800) : (mViewingResolution == 0 ? uint2(800, 800) : uint2(1920, 1080));
     if (any(mRayMarchingPass.mOutputResolution != resolution))
     {
         mRayMarchingPass.mOutputResolution = resolution;
@@ -866,7 +897,6 @@ void VoxelReconstructionNoLightTransport::startReconstruction()
     updateOutputResolution();
     // GPU work and first-use initialization are performed at the next frame boundary.
     mPointCloud.startRequested = true;
-
 }
 
 void VoxelReconstructionNoLightTransport::stopReconstruction()
