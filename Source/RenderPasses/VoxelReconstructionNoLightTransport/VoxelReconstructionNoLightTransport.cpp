@@ -487,6 +487,27 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget)
             mReconstructionFileListDirty = false;
         }
 
+        if (!mViewedExperimentLabel.empty() && !mExperimentLevelFileIndices.empty())
+        {
+            widget.text("Viewed experiment: " + mViewedExperimentLabel);
+            if (!mOptimizerParams.isRunning && !mEnableReconstruction && !mPointCloud.startRequested)
+            {
+                Gui::DropdownList levels;
+                for (uint32_t i = 0u; i < mExperimentLevelFileIndices.size(); ++i)
+                    levels.push_back({i, fmt::format("{} - {}", mExperimentLevelResolutions[i],
+                        mReconstructionFilePaths[mExperimentLevelFileIndices[i]].filename().string())});
+                if (widget.dropdown("Experiment Level", levels, mSelectedExperimentLevel))
+                {
+                    mSelectedReconstructionFile = mExperimentLevelFileIndices[mSelectedExperimentLevel];
+                    mLoadReconstructionRequested = true;
+                }
+                widget.tooltip("Switch directly to a saved level of this experiment. Replaces the displayed grid; Adam and loss history reset.");
+                widget.text("Only saved levels are listed; enable Save Each Completed Level before training to retain coarse levels.");
+            }
+            else
+                widget.text("Experiment level viewing is available after training stops.");
+        }
+
         Gui::DropdownList fileList;
 
         for (uint32_t i = 0; i < mReconstructionFilePaths.size(); i++)

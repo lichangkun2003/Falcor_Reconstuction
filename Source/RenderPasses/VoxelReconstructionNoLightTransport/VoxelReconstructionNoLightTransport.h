@@ -161,6 +161,7 @@ public:
     void saveReconstruction(RenderContext* pRenderContext);
     void loadReconstruction(RenderContext* pRenderContext, const std::filesystem::path& path);
     void refreshReconstructionFileList();
+    void refreshExperimentLevels();
     void saveLossHistory(const std::filesystem::path& reconstructionPath) const;
     std::filesystem::path getReconstructionModeDirectory() const;
 
@@ -515,6 +516,12 @@ private:
     std::filesystem::path mReconstructionOutputRoot = ReconstructionDataDir;
     std::string mReconstructionExperimentKey;
     std::string mReconstructionExperimentPrefix;
+    // Viewing group is anchored to the last successfully saved/loaded result, not a file-list selection.
+    std::filesystem::path mViewedReconstructionPath;
+    std::string mViewedExperimentLabel;
+    std::vector<uint32_t> mExperimentLevelFileIndices;
+    std::vector<uint32_t> mExperimentLevelResolutions;
+    uint32_t mSelectedExperimentLevel = 0u;
 
 };
 

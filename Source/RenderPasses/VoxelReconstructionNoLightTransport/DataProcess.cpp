@@ -27,6 +27,7 @@
  **************************************************************************/
 #include "VoxelReconstructionNoLightTransport.h"
 #include <cmath>
+#include <regex>
 #include <limits>
 #include <map>
 #include <stdexcept>
@@ -410,6 +411,8 @@ void VoxelReconstructionNoLightTransport::loadSparseReconstruction(
     const uint32_t resolution = std::max(grid.voxelCount.x, std::max(grid.voxelCount.y, grid.voxelCount.z));
     commitSparseGrid(std::move(resources), block, resolution);
     resetLoadedReconstruction(pRenderContext);
+    mViewedReconstructionPath = path;
+    mReconstructionFileListDirty = true;
     mReconstructionIOStatus = fmt::format("Loaded sparse reconstruction: {} ({}x{}x{}, {} active voxels)",
         path.filename().string(), grid.voxelCount.x, grid.voxelCount.y, grid.voxelCount.z, activeCount);
     logInfo("{}", mReconstructionIOStatus);
@@ -426,6 +429,11 @@ void VoxelReconstructionNoLightTransport::saveReconstruction(RenderContext* pRen
     {
         const auto path = getDefaultReconstructionSavePath();
         saveSparseReconstruction(pRenderContext, path);
+        if (std::filesystem::is_regular_file(path))
+        {
+            mViewedReconstructionPath = path;
+            mReconstructionFileListDirty = true;
+        }
         mReconstructionIOStatus = "Saved sparse reconstruction: " + path.filename().string();
     }
     catch (const std::exception& error)
@@ -445,12 +453,16 @@ void VoxelReconstructionNoLightTransport::loadReconstruction(
     catch (const std::exception& error)
     {
         mReconstructionIOStatus = std::string("Load failed: ") + error.what();
+        mReconstructionFileListDirty = true; // Restore the level selection to the still-live grid.
         logError("{}", mReconstructionIOStatus);
     }
 }
 
 void VoxelReconstructionNoLightTransport::refreshReconstructionFileList()
 {
+    mExperimentLevelFileIndices.clear();
+    mExperimentLevelResolutions.clear();
+    mViewedExperimentLabel.clear();
     const std::filesystem::path selectedPath = mSelectedReconstructionFile < mReconstructionFilePaths.size() ?
         mReconstructionFilePaths[mSelectedReconstructionFile] : std::filesystem::path{};
     mReconstructionFilePaths.clear();
@@ -493,6 +505,63 @@ void VoxelReconstructionNoLightTransport::refreshReconstructionFileList()
             [&](const auto& path) { return samePathComponent(path, oldSelection); });
         if (selected != mReconstructionFilePaths.end())
             mSelectedReconstructionFile = uint32_t(std::distance(mReconstructionFilePaths.begin(), selected));
+    }
+    refreshExperimentLevels();
+}
+
+void VoxelReconstructionNoLightTransport::refreshExperimentLevels()
+{
+    mExperimentLevelFileIndices.clear();
+    mExperimentLevelResolutions.clear();
+    mViewedExperimentLabel.clear();
+    mSelectedExperimentLevel = 0u;
+    // Parse from the right: tags may contain underscores, numbers, or resolution-like text.
+    static const std::regex pattern(
+        R"(^(.+_recon[0-9]+_[0-9]+_E[0-9]+(?:_.*)?)_([0-9]+)_((?:radiance|opacity|center|shape|rotation|adam|none)(?:_(?:radiance|opacity|center|shape|rotation|adam|none))*)$)");
+    std::smatch anchor;
+    const std::string stem = mViewedReconstructionPath.stem().string();
+    if (!std::regex_match(stem, anchor, pattern)) return;
+    std::error_code error;
+    const auto anchorDirectory = std::filesystem::weakly_canonical(mViewedReconstructionPath.parent_path(), error);
+    if (error) return;
+    mViewedExperimentLabel = anchor[1].str();
+    for (uint32_t i = 0u; i < mReconstructionFilePaths.size(); ++i)
+    {
+        const auto& file = mReconstructionFilePaths[i];
+        std::smatch level;
+        const std::string levelStem = file.stem().string();
+        if (!samePathComponent(file.parent_path(), anchorDirectory) || !std::regex_match(levelStem, level, pattern) ||
+            level[1].str() != anchor[1].str()) continue;
+        try
+        {
+            const uint64_t resolution = std::stoull(level[2].str());
+            if (resolution == 0u || resolution > std::numeric_limits<uint32_t>::max()) continue;
+            mExperimentLevelFileIndices.push_back(i);
+        }
+        catch (const std::exception&) { continue; }
+    }
+    std::sort(mExperimentLevelFileIndices.begin(), mExperimentLevelFileIndices.end(), [&](uint32_t a, uint32_t b)
+    {
+        std::smatch left, right;
+        const auto leftStem = mReconstructionFilePaths[a].stem().string();
+        const auto rightStem = mReconstructionFilePaths[b].stem().string();
+        std::regex_match(leftStem, left, pattern);
+        std::regex_match(rightStem, right, pattern);
+        const auto l = std::stoull(left[2].str()), r = std::stoull(right[2].str());
+        return l == r ? a < b : l < r;
+    });
+    for (uint32_t i = 0u; i < mExperimentLevelFileIndices.size(); ++i)
+    {
+        const auto& file = mReconstructionFilePaths[mExperimentLevelFileIndices[i]];
+        std::smatch level;
+        const auto levelStem = file.stem().string();
+        std::regex_match(levelStem, level, pattern);
+        mExperimentLevelResolutions.push_back(uint32_t(std::stoull(level[2].str())));
+        if (samePathComponent(file, mViewedReconstructionPath))
+        {
+            mSelectedExperimentLevel = i;
+            mSelectedReconstructionFile = mExperimentLevelFileIndices[i];
+        }
     }
 }
 

@@ -414,7 +414,33 @@ struct CoarseToFineTestAccess
         pass->refineCoarseToFineGrid(ctx);
         const auto fine = pass->getDefaultReconstructionSavePath();
         require(fine.filename().string().find("_E0_naming_32_") != std::string::npos, "One run's levels did not share E0");
-        pass->saveSparseReconstruction(ctx, fine);
+        pass->mPointCloud.initialized = true;
+        pass->saveReconstruction(ctx);
+        pass->refreshReconstructionFileList();
+        require(pass->mViewedReconstructionPath == fine && pass->mSelectedExperimentLevel == 1u &&
+            pass->mExperimentLevelResolutions == std::vector<uint32_t>({16u, 32u}),
+            "Final save did not expose the current experiment's completed levels");
+        // Loading any one level discovers the other checkpoints of the same experiment.
+        pass->loadSparseReconstruction(ctx, fine);
+        pass->refreshReconstructionFileList();
+        require(pass->mExperimentLevelResolutions == std::vector<uint32_t>({16u, 32u}) &&
+            pass->mSelectedExperimentLevel == 1u, "Loaded fine result did not discover/order its coarse checkpoint");
+        const auto coarseFile = pass->mReconstructionFilePaths[pass->mExperimentLevelFileIndices[0u]];
+        pass->loadSparseReconstruction(ctx, coarseFile);
+        pass->refreshReconstructionFileList();
+        require(pass->mVoxelResolution == 16u && pass->mSelectedExperimentLevel == 0u &&
+            pass->mExperimentLevelResolutions.size() == 2u, "Switching coarse lost the experiment's fine level");
+        const auto fineFile = pass->mReconstructionFilePaths[pass->mExperimentLevelFileIndices[1u]];
+        pass->loadSparseReconstruction(ctx, fineFile);
+        pass->refreshReconstructionFileList();
+        require(pass->mVoxelResolution == 32u && pass->mSelectedExperimentLevel == 1u,
+            "Could not return to the saved finest level");
+        const auto viewed = pass->mViewedReconstructionPath;
+        pass->loadReconstruction(ctx, directory / "missing.bin");
+        pass->refreshReconstructionFileList();
+        require(pass->mViewedReconstructionPath == viewed && pass->mSelectedExperimentLevel == 1u && pass->mVoxelResolution == 32u,
+            "Failed level load changed the live grid/viewing experiment");
+        pass->mReduceLossPass.iterationLossHistory = {0.2f, 0.1f};
         const auto repeated = pass->getDefaultReconstructionSavePath();
         require(repeated.filename().string().find("_E1_naming_32_") != std::string::npos, "Repeated save would overwrite E0");
         pass->saveSparseReconstruction(ctx, repeated);
@@ -435,6 +461,31 @@ struct CoarseToFineTestAccess
         const auto tenPosition = std::find_if(files.begin(), files.end(), [&](const auto& path) { return path.filename() == ten.filename(); });
         require(twoPosition != files.end() && tenPosition != files.end() && twoPosition < tenPosition,
             "File list sorts E10 before E2");
+        require(pass->mExperimentLevelResolutions == std::vector<uint32_t>({16u, 32u}),
+            "Another E-numbered experiment leaked into the viewing levels");
+        pass->mReconstructionMode = 0u;
+        pass->refreshReconstructionFileList();
+        require(pass->mExperimentLevelFileIndices.empty(), "Viewing levels leaked between mode directories");
+        pass->mReconstructionMode = 1u;
+        pass->refreshReconstructionFileList();
+        require(pass->mExperimentLevelResolutions.size() == 2u, "Returning to mode1 did not restore the viewing group");
+        const auto realViewed = pass->mViewedReconstructionPath;
+        const auto modeDirectory = pass->getReconstructionModeDirectory();
+        pass->mViewedReconstructionPath = modeDirectory / "ship_recon10_5_E0_tag_128_alpha_64_radiance_adam.bin";
+        pass->mReconstructionFilePaths = {
+            modeDirectory / "ship_recon10_5_E0_tag_128_alpha_512_radiance_adam.bin",
+            pass->mViewedReconstructionPath,
+            modeDirectory / "ship_recon10_5_E0_tag_128_alpha_128_radiance_adam.bin",
+            modeDirectory / "ship_recon10_6_E0_tag_128_alpha_256_radiance_adam.bin",
+            modeDirectory / "ship_recon10_5_E1_tag_128_alpha_256_radiance_adam.bin",
+            modeDirectory / "ship_recon10_5_E0_other_256_radiance_adam.bin",
+        };
+        pass->refreshExperimentLevels();
+        require(pass->mExperimentLevelResolutions == std::vector<uint32_t>({64u, 128u, 512u}) &&
+            pass->mSelectedExperimentLevel == 0u, "Resolution-like name tags/dates mixed experiments or corrupted numeric sorting");
+        pass->mViewedReconstructionPath = realViewed;
+        pass->refreshReconstructionFileList();
+        std::cout << "PASS: experiment-level discovery, numeric resolution order, coarse/fine load switching, failed-load retention, E/mode isolation\n";
         auto restarted = VoxelReconstructionNoLightTransport::create(device, {});
         restarted->mReconstructionOutputRoot = directory;
         restarted->mReconstructionMode = 1u;
