@@ -114,20 +114,16 @@ struct CoarseToFineTestAccess
             std::memcpy(&mapped, bytes.data() + expectedCell * sizeof(int32_t), sizeof(mapped));
             require(mapped == int32_t(id), "Spatial map disagrees with compact child ID");
             require(
-                child.occupied == 1u && all(child.ellipsoid.center == parent.ellipsoid.center) &&
-                    all(child.ellipsoid.rotation == parent.ellipsoid.rotation),
-                "Child lost local center or rotation"
+                child.occupied == 1u && all(child.ellipsoid.center == float3(0.5f)) && all(child.ellipsoid.rotation == float4(1, 0, 0, 0)),
+                "Interior child did not use centered PLY geometry"
             );
             require(
-                all(abs(child.ellipsoid.logScale - parent.ellipsoid.logScale + float3(std::log(2.0f))) < float3(1e-6f)),
-                "Child world semi-axes did not halve"
+                all(abs(exp(child.ellipsoid.logScale) - 0.3f * grid.voxelSize) < float3(1e-6f)),
+                "Child world semi-axes did not use PLY initialization"
             );
             require(std::memcmp(&child.radiance, &parent.radiance, sizeof(parent.radiance)) == 0, "Refinement reset radiance");
-            auto opacity = child.opacity;
-            const float alpha = opacity.calcOpacity(float3(0, 0, 1));
             require(
-                std::abs(1.0f - (1.0f - alpha) * (1.0f - alpha) - 0.4f) < 1e-5f,
-                "Refinement did not preserve two-child constant-opacity transmittance"
+                std::memcmp(&child.opacity, &parent.opacity, sizeof(parent.opacity)) == 0, "Refinement did not fully inherit opacity SH"
             );
             const auto adam = read<GeometryAdamState>(pass->mGridResources.adamPages, id);
             const GeometryAdamState zero = {};
@@ -298,6 +294,23 @@ struct CoarseToFineTestAccess
             pass->uploadSparseBatch(ctx, block, 0, cells.data(), parents, data.data());
             pass->barrierSparseVoxels(ctx);
             ctx->submit(true);
+            if (expectedMask == 0u)
+            {
+                bool rejected = false;
+                try
+                {
+                    pass->refineCoarseToFineGrid(ctx);
+                }
+                catch (const std::exception& error)
+                {
+                    rejected = std::string(error.what()).find("No eligible refinement children") != std::string::npos;
+                }
+                require(rejected, "Transparent parent was not filtered");
+                require(
+                    pass->mVoxelResolution == 16u && pass->mpGridBlock == block, "All-filtered refinement did not retain the previous grid"
+                );
+                return;
+            }
             pass->refineCoarseToFineGrid(ctx);
             const auto bytes = ctx->readTextureSubresource(pass->mGridResources.indexPages[0].get(), 0);
             std::vector<bool> seen(pass->mGridResources.gridData.activeVoxelCount, false);
@@ -328,6 +341,32 @@ struct CoarseToFineTestAccess
                         inherited.occupied == 1u && std::memcmp(&inherited.radiance, &parent.radiance, sizeof(parent.radiance)) == 0,
                         "Filtered child did not inherit parent appearance"
                     );
+                    require(
+                        std::memcmp(&inherited.opacity, &parent.opacity, sizeof(parent.opacity)) == 0,
+                        "Directional opacity SH was modified during refinement"
+                    );
+                    require(
+                        all(abs(exp(inherited.ellipsoid.logScale) - 0.3f * size) < float3(1e-6f)) &&
+                            all(inherited.ellipsoid.rotation == float4(1, 0, 0, 0)),
+                        "Child did not use PLY axes/rotation"
+                    );
+                    // Independent center check for the identity-rotation fixtures.
+                    if (all(parent.ellipsoid.rotation == float4(1, 0, 0, 0)))
+                    {
+                        float3 bits(float(child & 1u), float((child >> 1u) & 1u), float((child >> 2u) & 1u));
+                        float3 point = (0.5f * (bits + 0.5f) - parent.ellipsoid.center) * size / exp(parent.ellipsoid.logScale);
+                        float3 expected(0.5f);
+                        if (dot(point, point) > 1.0f + 1e-5f)
+                        {
+                            float3 direction = 2.0f * parent.ellipsoid.center - bits - 0.5f;
+                            float largest = std::max(std::abs(direction.x), std::max(std::abs(direction.y), std::abs(direction.z)));
+                            expected += direction * std::min(1.0f, 0.49f / std::max(largest, 1e-8f));
+                        }
+                        require(
+                            all(abs(inherited.ellipsoid.center - expected) < float3(1e-6f)),
+                            "Child center did not follow interior/boundary initialization"
+                        );
+                    }
                 }
             require(occupied == seen.size(), "Compact refinement retained unused/rejected child slots");
             if (parents == 9u)
@@ -341,6 +380,17 @@ struct CoarseToFineTestAccess
         sphere.ellipsoid.logScale = float3(std::log(0.1f));
         check(sphere, float3(1), 0x01u);     // Ellipsoid wholly inside one child, with no corner inside it.
         check(sphere, float3(1), 0x01u, 9u); // Worst-case 72 > 64 slots; actual nine children must fit.
+        sphere.opacity.coefficients[0] = std::log(0.001f / 0.999f) / calcSH(0u, float3(0, 0, 1));
+        check(sphere, float3(1), 0u); // Transparent in every direction; rollback if all parents are rejected.
+        pass->mCoarseToFine.parentOpacityThreshold = 0.0f;
+        check(sphere, float3(1), 0x01u); // Zero explicitly disables filtering.
+        pass->mCoarseToFine.parentOpacityThreshold = 0.01f;
+#if SH_OPACITY_COUNT > 1
+        sphere.opacity.coefficients[1] = 20.0f;
+        check(sphere, float3(1), 0x01u); // Low DC does not imply transparency in every direction.
+        sphere.opacity.coefficients[1] = 0.0f;
+#endif
+        sphere.opacity.coefficients[0] = 0.0f;
         sphere.ellipsoid.logScale = float3(std::log(0.249f));
         check(sphere, float3(1), 0x01u);
         sphere.ellipsoid.logScale = float3(std::log(0.25f));

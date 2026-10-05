@@ -1,5 +1,4 @@
 #include "../Voxel/VoxelGrid.slang"
-#include "../Math/LebedevQuadrature.slang"
 
 ParameterBlock<GridData> gCoarseGrid;
 RWStructuredBuffer<uint2> gChildRanges; // Occupancy mask, compact output offset.
@@ -8,7 +7,21 @@ cbuffer CB
 {
     uint gParentOffset;
     uint gParentCount;
+    float gParentOpacityThreshold;
 };
+
+// Conservative SH bound: reject only parents transparent in every direction.
+bool retainRefinementParent(SphericalHarmonicsOpacity opacity)
+{
+    if (gParentOpacityThreshold <= 0.0f) return true;
+    float upper = opacity.coefficients[0] * calcSH(0u, float3(0, 0, 1));
+    for (uint i = 1u; i < SH_OPACITY_COUNT; ++i)
+    {
+        uint degree = uint(sqrt(float(i)));
+        upper += abs(opacity.coefficients[i]) * sqrt(float(2u * degree + 1u) / (4.0f * 3.14159265359f));
+    }
+    return upper >= log(gParentOpacityThreshold / (1.0f - gParentOpacityThreshold));
+}
 
 // Closed ellipsoid/AABB intersection, in parent-cell coordinates. The minimum
 // of the ellipsoid quadratic is at its center, a face interior, an edge, or
@@ -70,7 +83,7 @@ void countChildren(uint3 threadID : SV_DispatchThreadID)
     VoxelData parent = gCoarseGrid.voxelPages[NonUniformResourceIndex(parentID / SPARSE_POOL_PAGE_SIZE)]
         [parentID % SPARSE_POOL_PAGE_SIZE];
     uint mask = 0u;
-    if (parent.occupied != 0u)
+    if (parent.occupied != 0u && retainRefinementParent(parent.opacity))
         for (uint child = 0u; child < 8u; ++child)
         {
             uint3 bits = uint3(child & 1u, (child >> 1u) & 1u, (child >> 2u) & 1u);
@@ -79,29 +92,6 @@ void countChildren(uint3 threadID : SV_DispatchThreadID)
     uint offset;
     InterlockedAdd(gChildCounter[0], countbits(mask), offset);
     gChildRanges[parentID] = uint2(mask, offset);
-}
-
-float refinementSoftplus(float x)
-{
-    return max(x, 0.0f) + log(1.0f + exp(-abs(x)));
-}
-
-// Halve optical thickness: alphaChild = 1 - sqrt(1 - alphaParent).
-// Project the nonlinear logit correction back to SH. For constant opacity
-// this is exact; directional opacity and oblique multi-cell rays are approximate.
-SphericalHarmonicsOpacity refineOpacity(SphericalHarmonicsOpacity parent)
-{
-    SphericalHarmonicsOpacity result = parent;
-    for (uint sample = 0u; sample < LEBEDEV_DIRECTION_COUNT; ++sample)
-    {
-        float3 direction = LebedevSamples[sample].direction;
-        float logit = parent.calcLogit(direction);
-        float correction = -refinementSoftplus(0.5f * refinementSoftplus(logit));
-        float weighted = correction * (4.0f * 3.14159265359f * LebedevSamples[sample].weight);
-        for (uint i = 0u; i < SH_OPACITY_COUNT; ++i)
-            result.coefficients[i] += weighted * calcSH(i, direction);
-    }
-    return result;
 }
 
 [numthreads(256, 1, 1)]
@@ -116,15 +106,23 @@ void main(uint3 threadID : SV_DispatchThreadID)
     VoxelData data = gCoarseGrid.voxelPages[NonUniformResourceIndex(page)][offset];
     uint parentCellIndex = gCoarseGrid.cellIndexPages[NonUniformResourceIndex(page)][offset];
     uint3 parentCell = uint3(IndexToCell(int(parentCellIndex), gCoarseGrid.voxelCount));
-    // Preserve local center, rotation, and axis ratios in each finer cell.
-    // The selection above uses the original parent, before shrinking. Geometry
-    // inheritance remains a local-shape initialization, not exact surface remeshing.
-    data.ellipsoid.logScale -= float3(log(2.0f));
-    data.opacity = refineOpacity(data.opacity);
+    GaussianEllipsoid parentEllipsoid = data.ellipsoid;
+    // PLY geometry initialization; radiance and opacity SH remain unchanged.
+    data.ellipsoid.logScale = log(max(0.6f * gGridDataParamBlock.voxelSize, float3(1e-8f)));
+    data.ellipsoid.rotation = float4(1, 0, 0, 0);
     for (uint child = 0u; child < 8u; ++child)
     {
         if ((range.x & (1u << child)) == 0u) continue;
         uint3 bits = uint3(child & 1u, (child >> 1u) & 1u, (child >> 2u) & 1u);
+        data.ellipsoid.center = float3(0.5f);
+        float3 parentLocalCenter = 0.5f * (float3(bits) + 0.5f);
+        if (gaussianEllipsoidImplicit(parentEllipsoid, parentLocalCenter, gCoarseGrid.voxelSize) > 1e-5f)
+        {
+            float3 direction = 2.0f * parentEllipsoid.center - float3(bits) - 0.5f;
+            float maxComponent = max(abs(direction.x), max(abs(direction.y), abs(direction.z)));
+            // Approach the parent along a straight line, respecting optimizer center bounds.
+            data.ellipsoid.center += direction * min(1.0f, 0.49f / max(maxComponent, 1e-8f));
+        }
         uint3 cell = parentCell * 2u + bits;
         uint id = range.y + countbits(range.x & ((1u << child) - 1u));
         VOXEL_DATA(id) = data;

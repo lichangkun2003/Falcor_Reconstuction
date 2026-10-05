@@ -1,4 +1,5 @@
 #include "VoxelReconstructionNoLightTransport.h"
+#include <cmath>
 
 namespace
 {
@@ -14,6 +15,9 @@ void VoxelReconstructionNoLightTransport::validateCoarseToFineSettings() const
         mCoarseToFine.startResolution > mCoarseToFine.targetResolution || mCoarseToFine.targetResolution > 1024u ||
         mCoarseToFine.iterationsPerLevel == 0u || mCoarseToFine.iterationsPerLevel > 100000u)
         throw RuntimeError("Coarse-to-fine requires power-of-two resolutions, start <= target <= 1024, and 1..100000 rounds per level.");
+    if (!std::isfinite(mCoarseToFine.parentOpacityThreshold) || mCoarseToFine.parentOpacityThreshold < 0.0f ||
+        mCoarseToFine.parentOpacityThreshold > 0.99f)
+        throw RuntimeError("Refinement parent opacity threshold must be in [0, 0.99].");
 }
 
 uint32_t VoxelReconstructionNoLightTransport::coarseToFineRemainingLevels() const
@@ -118,6 +122,7 @@ void VoxelReconstructionNoLightTransport::refineCoarseToFineGrid(RenderContext* 
         var["gChildRanges"] = ranges;
         var["gChildCounter"] = counter;
         var["CB"]["gParentCount"] = parents;
+        var["CB"]["gParentOpacityThreshold"] = mCoarseToFine.parentOpacityThreshold;
         constexpr uint32_t batchSize = 65535u * 256u;
         for (uint32_t offset = 0; offset < parents;)
         {
@@ -136,7 +141,9 @@ void VoxelReconstructionNoLightTransport::refineCoarseToFineGrid(RenderContext* 
     uint32_t children = 0u;
     counter->getBlob(&children, 0, sizeof(children));
     // Check and allocate the actual intersecting population, not parents * 8.
-    if (children == 0u || children > uint64_t(SPARSE_POOL_PAGE_SIZE) * SPARSE_POOL_MAX_PAGES)
+    if (children == 0u)
+        throw RuntimeError("No eligible refinement children. Check parent geometry or lower Refinement Parent Opacity Threshold.");
+    if (children > uint64_t(SPARSE_POOL_PAGE_SIZE) * SPARSE_POOL_MAX_PAGES)
         throw RuntimeError(
             fmt::format("Refinement needs {} cells; pool limit is {}", children, uint64_t(SPARSE_POOL_PAGE_SIZE) * SPARSE_POOL_MAX_PAGES)
         );
@@ -209,13 +216,17 @@ void VoxelReconstructionNoLightTransport::renderUICoarseToFine(Gui::Widgets& wid
                 mCoarseToFine.initializationPending = true;
             }
             widget.var("Iterations Per Level", mCoarseToFine.iterationsPerLevel, 1u, 100000u, 1u);
+            widget.var("Refinement Parent Opacity Threshold", mCoarseToFine.parentOpacityThreshold, 0.0f, 0.99f, 0.001f);
+            widget.tooltip(
+                "At refinement only: discard parents whose opacity SH upper bound is below this threshold. Zero disables filtering."
+            );
         }
         if (mCoarseToFine.initializationPending)
             widget.text("Next Enable or Init / Reset reloads the PLY with the selected mode/resolution.");
     }
     if (isCoarseToFine())
     {
-        widget.text("mode1: no deletion, pruning, or neighbor growth at any level.");
+        widget.text("mode1: no regular deletion, pruning, or neighbor growth; low-opacity filtering only at refinement.");
         widget.text(fmt::format(
             "Current resolution: {}; target: {}; level rounds: {} / {}",
             mVoxelResolution,
