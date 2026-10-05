@@ -25,6 +25,9 @@ void VoxelReconstructionNoLightTransport::validateCoarseToFineSettings() const
     if (!std::isfinite(mCoarseToFine.opacityOpticalDepthScale) || mCoarseToFine.opacityOpticalDepthScale <= 0.0f ||
         mCoarseToFine.opacityOpticalDepthScale > 1.0f)
         throw RuntimeError("Refinement opacity optical-depth scale must be in (0, 1].");
+    if (!std::isfinite(mCoarseToFine.childFaceOverlap) || mCoarseToFine.childFaceOverlap < 0.0f ||
+        mCoarseToFine.childFaceOverlap > 0.2f)
+        throw RuntimeError("Refinement child face overlap must be in [0, 0.2] fine-voxel widths.");
     if (!std::isfinite(mCoarseToFine.coarseGrowthFacePenetration) || mCoarseToFine.coarseGrowthFacePenetration < 0.0f ||
         mCoarseToFine.coarseGrowthFacePenetration > float(GROWTH_MAX_FACE_PENETRATION_VOXELS) ||
         mCoarseToFine.coarseGrowthInterval == 0u)
@@ -217,6 +220,7 @@ void VoxelReconstructionNoLightTransport::refineCoarseToFineGrid(RenderContext* 
         var["CB"]["gParentCount"] = parents;
         var["CB"]["gParentOpacityThreshold"] = mCoarseToFine.parentOpacityThreshold;
         var["CB"]["gOpacityOpticalDepthScale"] = mCoarseToFine.opacityOpticalDepthScale;
+        var["CB"]["gChildFaceOverlap"] = mCoarseToFine.childFaceOverlap;
         constexpr uint32_t batchSize = 65535u * 256u;
         for (uint32_t offset = 0; offset < parents;)
         {
@@ -318,6 +322,8 @@ void VoxelReconstructionNoLightTransport::renderUICoarseToFine(Gui::Widgets& wid
             widget.tooltip(
                 "Attenuate child opacity at every refinement in optical-depth space. 1 keeps parent opacity; 0.65 reduces stacking."
             );
+            widget.var("Refinement Child Face Overlap (voxels)", mCoarseToFine.childFaceOverlap, 0.0f, 0.2f, 0.01f);
+            widget.tooltip("Maximum extent beyond each fine-cell face. Parent ellipsoid containment is retained. Zero disables overlap.");
             widget.checkbox("Enable Coarse Growth", mCoarseToFine.enableCoarseGrowth);
             widget.var(
                 "Coarse Growth Face Penetration",

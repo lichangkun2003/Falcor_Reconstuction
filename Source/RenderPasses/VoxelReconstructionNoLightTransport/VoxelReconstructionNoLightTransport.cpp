@@ -51,6 +51,8 @@ VoxelReconstructionNoLightTransport::VoxelReconstructionNoLightTransport(ref<Dev
             mCoarseToFine.parentOpacityThreshold = value;
         else if (key == "refinementOpacityOpticalDepthScale")
             mCoarseToFine.opacityOpticalDepthScale = value;
+        else if (key == "refinementChildFaceOverlap")
+            mCoarseToFine.childFaceOverlap = value;
         else if (key == "coarseGrowthEnabled")
             mCoarseToFine.enableCoarseGrowth = value;
         else if (key == "coarseGrowthFacePenetration")
@@ -110,6 +112,7 @@ Properties VoxelReconstructionNoLightTransport::getProperties() const
     props["totalIterations"] = mCoarseToFine.totalIterations;
     props["refinementParentOpacityThreshold"] = mCoarseToFine.parentOpacityThreshold;
     props["refinementOpacityOpticalDepthScale"] = mCoarseToFine.opacityOpticalDepthScale;
+    props["refinementChildFaceOverlap"] = mCoarseToFine.childFaceOverlap;
     props["coarseGrowthEnabled"] = mCoarseToFine.enableCoarseGrowth;
     props["coarseGrowthFacePenetration"] = mCoarseToFine.coarseGrowthFacePenetration;
     props["coarseGrowthInterval"] = mCoarseToFine.coarseGrowthInterval;

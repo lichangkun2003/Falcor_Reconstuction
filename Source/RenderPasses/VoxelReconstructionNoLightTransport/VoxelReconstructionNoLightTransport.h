@@ -358,6 +358,7 @@ public:
         uint32_t totalIterations = COARSE_TO_FINE_TOTAL_ITERATIONS;
         float parentOpacityThreshold = 0.0f;
         float opacityOpticalDepthScale = 0.65f;
+        float childFaceOverlap = 0.1f;
         bool enableCoarseGrowth = true;
         float coarseGrowthFacePenetration = 2.0f;
         uint32_t coarseGrowthInterval = 20u;

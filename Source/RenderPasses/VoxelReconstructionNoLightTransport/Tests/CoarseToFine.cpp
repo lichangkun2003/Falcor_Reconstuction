@@ -20,7 +20,8 @@ struct CoarseToFineTestAccess
         return result;
     }
 
-    static void checkGeometry(const GaussianEllipsoid& parent, const GaussianEllipsoid& child, float3 size, uint3 bits)
+    static void checkGeometry(const GaussianEllipsoid& parent, const GaussianEllipsoid& child, float3 size, uint3 bits,
+        float overlap = 0.1f)
     {
         require(all(child.rotation == parent.rotation), "Refinement changed parent rotation");
         const float3 axes = exp(parent.logScale);
@@ -43,7 +44,8 @@ struct CoarseToFineTestAccess
         for (uint32_t axis = 0; axis < 3; ++axis)
         {
             const float extent = length(rows[axis] * childAxes) / (0.5f * size[axis]);
-            require(extent <= std::min(child.center[axis], 1.0f - child.center[axis]) + 3e-5f, "Child protrudes outside its own cell");
+            require(extent <= std::min(child.center[axis], 1.0f - child.center[axis]) + overlap + 3e-5f,
+                "Child exceeds the bounded face overlap");
         }
         require(all(childAxes >= max(0.5f * size * 1e-4f, float3(1e-8f)) * 0.999f), "Child below optimizer minimum scale");
     }
@@ -170,7 +172,8 @@ struct CoarseToFineTestAccess
             std::memcpy(&mapped, bytes.data() + expectedCell * sizeof(int32_t), sizeof(mapped));
             require(mapped == int32_t(id), "Spatial map disagrees with compact child ID");
             require(child.occupied == 1u, "Child unoccupied");
-            checkGeometry(parent.ellipsoid, child.ellipsoid, grid.voxelSize, uint3(id & 1u, (id >> 1u) & 1u, (id >> 2u) & 1u));
+            checkGeometry(parent.ellipsoid, child.ellipsoid, grid.voxelSize,
+                uint3(id & 1u, (id >> 1u) & 1u, (id >> 2u) & 1u), pass->mCoarseToFine.childFaceOverlap);
             require(std::memcmp(&child.radiance, &parent.radiance, sizeof(parent.radiance)) == 0, "Refinement reset radiance");
             require(
                 std::abs(child.opacity.coefficients[0] - attenuatedOpacityDC(parent.opacity, pass->mCoarseToFine.opacityOpticalDepthScale)) <
@@ -444,7 +447,8 @@ struct CoarseToFineTestAccess
                             inherited.opacity.coefficients[coefficient] == parent.opacity.coefficients[coefficient],
                             "Directional opacity SH was modified during refinement"
                         );
-                    checkGeometry(parent.ellipsoid, inherited.ellipsoid, size, uint3(child & 1u, (child >> 1u) & 1u, (child >> 2u) & 1u));
+                    checkGeometry(parent.ellipsoid, inherited.ellipsoid, size,
+                        uint3(child & 1u, (child >> 1u) & 1u, (child >> 2u) & 1u), pass->mCoarseToFine.childFaceOverlap);
                 }
             require(occupied == seen.size(), "Compact refinement retained unused/rejected child slots");
             if (parents == 9u)
@@ -482,6 +486,42 @@ struct CoarseToFineTestAccess
         check(sphere, float3(1), 0x7fu); // Edge overlaps but the diagonally opposite corner is outside.
         sphere.ellipsoid.logScale = float3(std::log(2.0f));
         check(sphere, float3(1), 0xffu); // All children wholly inside the parent volume.
+        for (uint32_t id = 0u; id < 8u; ++id)
+        {
+            const auto child = read<VoxelData>(pass->mGridResources.voxelPages, id);
+            require(all(abs(child.ellipsoid.center - float3(0.5f)) < float3(1e-5f)),
+                "Fully interior child was pulled toward the parent center");
+            require(all(abs(exp(child.ellipsoid.logScale) - float3(0.3f)) < float3(2e-5f)),
+                "Interior child did not reach the fine-grid overlap size");
+        }
+        pass->mCoarseToFine.childFaceOverlap = 0.0f;
+        check(sphere, float3(1), 0xffu);
+        require(all(abs(exp(read<VoxelData>(pass->mGridResources.voxelPages, 0u).ellipsoid.logScale) - float3(0.25f)) < float3(2e-5f)),
+            "Zero overlap did not restore cell-sized interior initialization");
+        pass->mCoarseToFine.childFaceOverlap = 0.1f;
+        sphere.ellipsoid.center = float3(0.5f);
+        sphere.ellipsoid.logScale = float3(std::log(0.5f));
+        // These centers are inside, but their boxes cross the parent's curved
+        // boundary. They must use the inward-shifted boundary path.
+        check(sphere, float3(1), 0xffu);
+        for (uint32_t id = 0u; id < 8u; ++id)
+        {
+            const auto child = read<VoxelData>(pass->mGridResources.voxelPages, id);
+            require(length(child.ellipsoid.center - float3(0.5f)) > 0.1f,
+                "Boundary cell was misclassified using only its center");
+            require(all(exp(child.ellipsoid.logScale) > float3(0.2f)),
+                "Relaxed boundary fit still has the old strictly-inscribed size");
+        }
+        const auto overlapChild = read<VoxelData>(pass->mGridResources.voxelPages, 0u).ellipsoid;
+        const float overlapCoverage = length((float3(1.0f, 0.5f, 0.5f) - overlapChild.center) * 0.5f / exp(overlapChild.logScale));
+        require(overlapCoverage < 1.0f, "Refinement overlap did not cover a representative interior face gap");
+        pass->mCoarseToFine.childFaceOverlap = 0.0f;
+        check(sphere, float3(1), 0xffu);
+        const auto strictChild = read<VoxelData>(pass->mGridResources.voxelPages, 0u).ellipsoid;
+        const float strictCoverage = length((float3(1.0f, 0.5f, 0.5f) - strictChild.center) * 0.5f / exp(strictChild.logScale));
+        require(strictCoverage > 1.0f, "Coverage regression fixture does not reproduce the strict-fit gap");
+        pass->mCoarseToFine.childFaceOverlap = 0.1f;
+        sphere.ellipsoid.center = float3(0.25f);
         sphere.ellipsoid.logScale = float3(std::log(0.05f), std::log(0.1f), std::log(0.15f));
         check(sphere, float3(0.5f, 1.0f, 1.5f), 0x01u);
         sphere.ellipsoid.center = float3(0.25f, 0.75f, 0.25f);
@@ -494,8 +534,8 @@ struct CoarseToFineTestAccess
         }
         sphere.ellipsoid.logScale = float3(std::log(1e-6f));
         check(sphere, float3(1), 0u); // Never inflate unrepresentable geometry to the optimizer minimum.
-        std::cout << "PASS: refinement volume containment, face/edge/tangent overlap, rotated thin-shape rejection, non-cubic cells, "
-                     "actual-count allocation; inherited rotation/ratios and parent/cell containment\n";
+        std::cout << "PASS: refinement interior/boundary classification, bounded face overlap, inward boundary centers, "
+                     "parent containment, face/edge/tangent overlap, thin-shape rejection, non-cubic cells, compact allocation\n";
     }
 };
 

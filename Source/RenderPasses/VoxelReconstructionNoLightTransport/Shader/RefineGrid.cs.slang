@@ -9,6 +9,7 @@ cbuffer CB
     uint gParentCount;
     float gParentOpacityThreshold;
     float gOpacityOpticalDepthScale;
+    float gChildFaceOverlap;
 };
 
 // Opacity SH stores logits. A uniform DC shift lowers every directional
@@ -123,19 +124,47 @@ bool fitRefinementChild(GaussianEllipsoid parent, float3 voxelSize, uint3 bits,
     // Never inflate a fitted child afterward: reject unrepresentable slivers instead.
     float3 minimumRatio = max(fineSize * 1e-4f, float3(1e-8f)) / axes;
     float lo = max(minimumRatio.x, max(minimumRatio.y, minimumRatio.z));
-    float3 boxLimit = 0.25f / extent;
+    // The renderer clips every primitive to its owning cell's DDA segment.
+    // Bounded overlap improves coverage inside that cell without spawning
+    // occupied cells beyond the parent's eight addresses.
+    float overlap = 0.5f * clamp(gChildFaceOverlap, 0.0f, 0.2f);
+    float3 boxLimit = (0.25f + overlap) / extent;
     float hi = min(1.0f, min(boxLimit.x, min(boxLimit.y, boxLimit.z)));
-    float3 inset = max(float3(0.005f), lo * extent);
+    const float margin = 1e-5f;
+    // A convex quadratic reaches its box maximum at a corner. All eight
+    // corners inside proves the whole child cell is inside the parent volume.
+    bool interior = true;
+    for (uint corner = 0u; corner < 8u; ++corner)
+    {
+        float3 cornerBits = float3(corner & 1u, (corner >> 1u) & 1u, (corner >> 2u) & 1u);
+        float3 point = lower + 0.5f * cornerBits;
+        float3 unit = mul(transpose(rotation), point * voxelSize) / axes;
+        interior = interior && dot(unit, unit) <= 1.0f;
+    }
+    if (interior)
+    {
+        // Interior cells retain a centered shape, sized to the fine grid
+        // rather than the potentially huge parent's original axes.
+        float3 middle = lower + 0.25f;
+        float3 unit = mul(transpose(rotation), middle * voxelSize) / axes;
+        float factor = min(hi, 1.0f - margin - length(unit));
+        if (factor < lo) return false;
+        child.center = float3(0.5f);
+        child.logScale = log(axes * factor);
+        return true;
+    }
+    // Boundary centers stay inside their original cell. Only the ellipsoid
+    // extent may cross a face, and the parent-volume containment remains exact.
+    float3 inset = max(float3(0.005f), lo * extent - overlap);
     float3 best;
     if (lo > hi || any(lower + inset > upper - inset)) return false;
     float value = closestParentPoint(parent, voxelSize, lower + inset, upper - inset, best);
-    const float margin = 1e-5f;
     if (sqrt(max(value, 0.0f)) + lo > 1.0f - margin) return false;
     // Monotone feasibility: increasing scale shrinks both permissible center sets.
     for (uint iteration = 0u; iteration < 18u; ++iteration)
     {
         float candidate = 0.5f * (lo + hi);
-        inset = max(float3(0.005f), candidate * extent);
+        inset = max(float3(0.005f), candidate * extent - overlap);
         float3 point;
         value = closestParentPoint(parent, voxelSize, lower + inset, upper - inset, point);
         if (sqrt(max(value, 0.0f)) + candidate <= 1.0f - margin)
@@ -144,6 +173,28 @@ bool fitRefinementChild(GaussianEllipsoid parent, float3 voxelSize, uint3 bits,
             best = point;
         }
         else hi = candidate;
+    }
+    // Prefer a small shift along the inward world-space surface normal when
+    // it preserves at least 90% of the maximum feasible size. Thin boundary
+    // slivers may need the deeper, box-constrained center found above.
+    float3 middle = lower + 0.25f;
+    float3 principal = mul(transpose(rotation), middle * voxelSize);
+    float3 normal = mul(rotation, principal / (axes * axes));
+    float normalLength = length(normal);
+    if (normalLength > 1e-20f)
+    {
+        float step = 0.1f * min(fineSize.x, min(fineSize.y, fineSize.z));
+        float3 preferred = clamp(middle - (step / normalLength) * normal / voxelSize,
+            lower + 0.005f, upper - 0.005f);
+        float3 unit = mul(transpose(rotation), preferred * voxelSize) / axes;
+        float factor = min(1.0f, 1.0f - margin - length(unit));
+        float3 faceLimit = (min(preferred - lower, upper - preferred) + overlap) / extent;
+        factor = min(factor, min(faceLimit.x, min(faceLimit.y, faceLimit.z)));
+        if (factor >= max(minimumRatio.x, max(minimumRatio.y, minimumRatio.z)) && factor >= 0.9f * hi)
+        {
+            lo = factor;
+            best = preferred;
+        }
     }
     child.center = 2.0f * (parent.center + best) - float3(bits);
     child.logScale = log(axes * lo);
