@@ -62,6 +62,8 @@ struct NeighborGrowthTestAccess
         pass.mOptimizerParams.currentIteration = 50u;
         pass.mTopologySettings.enableGrowth = true;
         pass.mTopologySettings.growthFacePenetration = 0.05f;
+        // Geometry/lifecycle fixtures explicitly retain per-round scheduling.
+        pass.mTopologySettings.growthInterval = 1u;
         pass.mTopologySettings.growthWaitIterations = 5u;
         pass.mGrowthCooldownPresent = false;
         pass.resetDeletionEvidence(ctx);
@@ -381,6 +383,55 @@ struct NeighborGrowthTestAccess
         require(pass.mTopologySettings.lastGrowthCount == 6u, "Deletion protection prevented an otherwise mature parent from growing");
     }
 
+    static void checkGrowthInterval(VoxelReconstructionNoLightTransport& pass, RenderContext* ctx)
+    {
+        auto sphere = parentVoxel();
+        sphere.ellipsoid.rotation = float4(1, 0, 0, 0);
+        sphere.ellipsoid.logScale = float3(std::log(2.0f));
+        seed(pass, ctx, {cell(3, 3, 3)}, {sphere});
+        pass.mTopologySettings.growthFacePenetration = 1.0f;
+        pass.mTopologySettings.growthInterval = 10u;
+        pass.mOptimizerParams.currentIteration = 49u;
+        pass.growNeighborVoxels(ctx);
+        require(pass.mGridResources.gridData.activeVoxelCount == 1u, "Interval allowed growth before warm-up ended");
+        pass.mOptimizerParams.currentIteration = 50u;
+        pass.growNeighborVoxels(ctx);
+        require(pass.mTopologySettings.lastGrowthCount == 6u, "First scheduled delta-1 growth did not run at round 50");
+        const auto firstMap = indices(pass, ctx);
+        const auto firstStatus = pass.mTopologySettings.growthStatus;
+        // Even an enlarged child that passes the depth and five-round age
+        // gates must wait until the next global ten-round boundary.
+        write(pass.mGridResources.voxelPages, 1, sphere);
+        pass.barrierSparseVoxels(ctx);
+        for (uint32_t iteration = 51u; iteration < 60u; ++iteration)
+        {
+            pass.mOptimizerParams.currentIteration = iteration;
+            pass.growNeighborVoxels(ctx);
+            require(pass.mGridResources.gridData.activeVoxelCount == 7u, "Growth ran between scheduled boundaries");
+            require(pass.mTopologySettings.lastGrowthCount == 6u && pass.mTopologySettings.growthStatus == firstStatus,
+                "Skipped round erased the last growth result");
+        }
+        require(indices(pass, ctx) == firstMap, "Skipped growth rounds modified spatial indices");
+        pass.mOptimizerParams.currentIteration = 60u;
+        pass.growNeighborVoxels(ctx);
+        require(pass.mGridResources.gridData.activeVoxelCount > 7u, "Child did not grow after ten complete rounds");
+        for (uint32_t id = 7u; id < pass.mGridResources.gridData.activeVoxelCount; ++id)
+            require(read<TopologyEvidence>(pass.mGridResources.topologyEvidencePages, id).growthWaitStartIterationPlusOne == 61u,
+                "Scheduled newborn has an incorrect birth clock");
+
+        // Changing the UI interval keeps its phase anchored to warm-up, not
+        // absolute iteration multiples (53 is 50 + 3).
+        seed(pass, ctx, {cell(3, 3, 3)}, {sphere});
+        pass.mTopologySettings.growthInterval = 3u;
+        pass.mTopologySettings.growthFacePenetration = 1.0f;
+        pass.mOptimizerParams.currentIteration = 52u;
+        pass.growNeighborVoxels(ctx);
+        require(pass.mGridResources.gridData.activeVoxelCount == 1u, "Changed interval grew off cadence");
+        pass.mOptimizerParams.currentIteration = 53u;
+        pass.growNeighborVoxels(ctx);
+        require(pass.mGridResources.gridData.activeVoxelCount == 7u, "Changed interval lost its warm-up anchor");
+    }
+
     static void checkGrowthPreview(VoxelReconstructionNoLightTransport& pass, RenderContext* ctx)
     {
         auto voxel = parentVoxel();
@@ -470,7 +521,8 @@ struct NeighborGrowthTestAccess
             auto device = make_ref<Device>(desc);
             auto ctx = device->getRenderContext();
             auto pass = VoxelReconstructionNoLightTransport::create(device, {});
-            require(pass->mTopologySettings.growthFacePenetration == 2.0f, "Default growth depth is not delta 2");
+            require(pass->mTopologySettings.growthFacePenetration == 1.0f, "Default growth depth is not delta 1");
+            require(pass->mTopologySettings.growthInterval == 10u, "Default growth interval is not ten full rounds");
             pass->mUpdatePass.init();
             pass->createTopologyPassResource(ctx);
             pass->createDeletionPassResources();
@@ -480,6 +532,8 @@ struct NeighborGrowthTestAccess
             checkGrowthWaiting(*pass, ctx);
             std::cout << "PASS: newborn wait blocks unstable children, expires after full rounds, resets per generation, supports UI "
                          "changes, independent of deletion\n";
+            checkGrowthInterval(*pass, ctx);
+            std::cout << "PASS: delta-1 growth at rounds 50/60, no growth in between, last-result retention, configurable cadence\n";
             const auto parent = parentVoxel();
             const uint32_t origin = cell(3, 3, 3);
             seed(*pass, ctx, {origin}, {parent});

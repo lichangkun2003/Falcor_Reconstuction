@@ -597,8 +597,9 @@ void VoxelReconstructionNoLightTransport::renderUITopology(Gui::Widgets& widget)
 
     group.text("Ellipsoid neighbor growth (parent retained)");
     group.checkbox("Enable Growth", mTopologySettings.enableGrowth);
-    group.text(fmt::format("Starts at iteration {}; one layer per full iteration, after deletion; no count budget.",
-        getDeletionEvidenceStartIteration()));
+    group.var("Growth Interval (iterations)", mTopologySettings.growthInterval, 1u, 100u, 1u);
+    group.text(fmt::format("Starts at iteration {}; one layer every {} full iterations, after deletion; no count budget.",
+        getDeletionEvidenceStartIteration(), std::max(1u, mTopologySettings.growthInterval)));
     group.var("Growth Face Penetration (voxel widths)", mTopologySettings.growthFacePenetration, 0.0f,
         float(GROWTH_MAX_FACE_PENETRATION_VOXELS), 0.01f);
     group.text("Grow only when the ellipsoid extends beyond this depth inside the empty face neighbor; lower is more aggressive.");

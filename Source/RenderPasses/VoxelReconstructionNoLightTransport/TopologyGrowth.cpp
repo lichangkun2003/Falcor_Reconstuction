@@ -45,7 +45,13 @@ void VoxelReconstructionNoLightTransport::resetGrowthCooldown(RenderContext* pRe
 
 void VoxelReconstructionNoLightTransport::growNeighborVoxels(RenderContext* pRenderContext)
 {
-    if (!mTopologySettings.enableGrowth || mOptimizerParams.currentIteration < getDeletionEvidenceStartIteration())
+    const uint32_t start = getDeletionEvidenceStartIteration();
+    const uint32_t interval = std::max(1u, mTopologySettings.growthInterval);
+    if (!mTopologySettings.enableGrowth || mOptimizerParams.currentIteration < start)
+        return;
+    // Anchor the cadence to the end of opacity warm-up + ramp. Skipped rounds
+    // keep the last growth result visible and never claim/allocate new cells.
+    if ((mOptimizerParams.currentIteration - start) % interval != 0u)
         return;
     mTopologySettings.lastGrowthCount = 0u;
     mTopologySettings.lastGrowthPages = 0u;
