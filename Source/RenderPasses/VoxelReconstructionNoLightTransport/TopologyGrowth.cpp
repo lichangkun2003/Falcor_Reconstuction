@@ -43,15 +43,21 @@ void VoxelReconstructionNoLightTransport::resetGrowthCooldown(RenderContext* pRe
     mGrowthCooldownPresent = false;
 }
 
+float VoxelReconstructionNoLightTransport::getEffectiveGrowthFacePenetration() const
+{
+    if (!isCoarseToFine()) return mTopologySettings.growthFacePenetration;
+    // A restart at a finer level must not reactivate the coarsest-level threshold.
+    return mVoxelResolution == mCoarseToFine.startResolution
+        ? mCoarseToFine.coarsestGrowthFacePenetration : mCoarseToFine.coarseGrowthFacePenetration;
+}
+
 void VoxelReconstructionNoLightTransport::growNeighborVoxels(RenderContext* pRenderContext)
 {
-    const bool mode1CoarseLevel = isCoarseToFine() && mVoxelResolution < mCoarseToFine.targetResolution;
-    if (isCoarseToFine() && !mode1CoarseLevel)
-        return;
+    const bool mode1Growth = isCoarseToFine(); // All mode1 levels, including the target.
     const uint32_t start = getDeletionEvidenceStartIteration();
-    const bool enabled = mode1CoarseLevel ? mCoarseToFine.enableCoarseGrowth : mTopologySettings.enableGrowth;
+    const bool enabled = mode1Growth ? mCoarseToFine.enableCoarseGrowth : mTopologySettings.enableGrowth;
     const uint32_t interval =
-        std::max(1u, mode1CoarseLevel ? mCoarseToFine.coarseGrowthInterval : mTopologySettings.growthInterval);
+        std::max(1u, mode1Growth ? mCoarseToFine.coarseGrowthInterval : mTopologySettings.growthInterval);
     if (!enabled || mOptimizerParams.currentIteration < start)
         return;
     // Anchor the cadence to the end of opacity warm-up + ramp. Skipped rounds
@@ -111,7 +117,7 @@ void VoxelReconstructionNoLightTransport::growNeighborVoxels(RenderContext* pRen
                 kMaximumTopologyIteration, uint64_t(mOptimizerParams.currentIteration) + mTopologySettings.growthProtectionIterations
             ));
             const float facePenetration =
-                mode1CoarseLevel ? mCoarseToFine.coarseGrowthFacePenetration : mTopologySettings.growthFacePenetration;
+                getEffectiveGrowthFacePenetration();
             cb["gFacePenetration"] = std::clamp(facePenetration, 0.0f, float(GROWTH_MAX_FACE_PENETRATION_VOXELS));
             cb["gShrink"] = std::clamp(mTopologySettings.growthShrink, 0.01f, 0.99f);
             cb["gContactOffset"] = std::clamp(mTopologySettings.growthContactOffset, 0.01f, 0.49f);
@@ -209,7 +215,7 @@ void VoxelReconstructionNoLightTransport::growNeighborVoxels(RenderContext* pRen
         }
         // Capacity/memory exhaustion must not silently drop part of the layer.
         // Existing reconstruction can continue if the rollback succeeded.
-        if (mode1CoarseLevel)
+        if (mode1Growth)
             mCoarseToFine.enableCoarseGrowth = false;
         else
             mTopologySettings.enableGrowth = false;

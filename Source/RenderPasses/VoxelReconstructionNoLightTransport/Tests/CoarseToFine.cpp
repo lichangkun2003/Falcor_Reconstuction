@@ -102,7 +102,17 @@ struct CoarseToFineTestAccess
         pass.mCoarseToFine.scheduleStartResolution = 64u;
         pass.mCoarseToFine.targetResolution = 512u;
         pass.mCoarseToFine.totalIterations = 700u;
-        const uint32_t expected[4] = {120u, 140u, 190u, 250u};
+        const uint32_t weights[4] = COARSE_TO_FINE_LEVEL_WEIGHTS;
+        const uint64_t weightSum = uint64_t(weights[0]) + weights[1] + weights[2] + weights[3];
+        uint32_t expected[4];
+        uint64_t cumulativeWeight = 0u, previousBudget = 0u;
+        for (uint32_t index = 0u; index < 4u; ++index)
+        {
+            cumulativeWeight += weights[index];
+            const uint64_t budget = 696u * cumulativeWeight / weightSum;
+            expected[index] = uint32_t(1u + budget - previousBudget);
+            previousBudget = budget;
+        }
         for (uint32_t index = 0u; index < 4u; ++index)
             require(pass.coarseToFineLevelBudget(64u << index) == expected[index], "64-start experiment ratios are incorrect");
         for (uint32_t levels = 1u; levels <= 7u; ++levels)
@@ -206,10 +216,12 @@ struct CoarseToFineTestAccess
                 std::filesystem::remove(file, error);
             }
         } checkpointCleanup{levelCheckpoint};
-        pass->mOptimizerParams.currentIteration = 2u;
+        const uint32_t firstBoundary = pass->coarseToFineLevelBudget(16u);
+        const uint32_t secondBoundary = firstBoundary + pass->coarseToFineLevelBudget(32u);
+        pass->mOptimizerParams.currentIteration = firstBoundary - 1u;
         pass->advanceCoarseToFine(ctx);
         require(pass->mVoxelResolution == 16u, "Extra coarse round was skipped");
-        pass->mOptimizerParams.currentIteration = 3u;
+        pass->mOptimizerParams.currentIteration = firstBoundary;
         pass->advanceCoarseToFine(ctx);
         require(std::filesystem::is_regular_file(levelCheckpoint), "Completed coarse level was not checkpointed before refinement");
         pass->mCoarseToFine.saveEachLevel = false;
@@ -224,7 +236,7 @@ struct CoarseToFineTestAccess
             "Refinement moved the world grid bounds"
         );
         require(
-            pass->mOptimizerParams.currentIteration == 3u && pass->getEffectiveOpacityLearningRate() == beforeLr,
+            pass->mOptimizerParams.currentIteration == firstBoundary && pass->getEffectiveOpacityLearningRate() == beforeLr,
             "Refinement reset the training clock or opacity schedule"
         );
         const auto bytes = ctx->readTextureSubresource(pass->mGridResources.indexPages[0].get(), 0);
@@ -298,10 +310,10 @@ struct CoarseToFineTestAccess
         );
         std::cout << "PASS: mode1 gates topology; eight-child transfer, opacity, fresh Adam, production optimizer rebinding\n";
 
-        pass->mOptimizerParams.currentIteration = 5u;
+        pass->mOptimizerParams.currentIteration = secondBoundary - 1u;
         pass->advanceCoarseToFine(ctx);
         require(pass->mVoxelResolution == 32u, "Second level did not receive its own optimization time");
-        pass->mOptimizerParams.currentIteration = 6u;
+        pass->mOptimizerParams.currentIteration = secondBoundary;
         pass->advanceCoarseToFine(ctx);
         require(
             pass->mVoxelResolution == 64u && pass->mGridResources.gridData.activeVoxelCount > 8u &&

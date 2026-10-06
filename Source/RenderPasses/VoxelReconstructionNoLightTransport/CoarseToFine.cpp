@@ -28,7 +28,9 @@ void VoxelReconstructionNoLightTransport::validateCoarseToFineSettings() const
     if (!std::isfinite(mCoarseToFine.childFaceOverlap) || mCoarseToFine.childFaceOverlap < 0.0f ||
         mCoarseToFine.childFaceOverlap > 0.2f)
         throw RuntimeError("Refinement child face overlap must be in [0, 0.2] fine-voxel widths.");
-    if (!std::isfinite(mCoarseToFine.coarseGrowthFacePenetration) || mCoarseToFine.coarseGrowthFacePenetration < 0.0f ||
+    if (!std::isfinite(mCoarseToFine.coarsestGrowthFacePenetration) || mCoarseToFine.coarsestGrowthFacePenetration < 0.0f ||
+        mCoarseToFine.coarsestGrowthFacePenetration > float(GROWTH_MAX_FACE_PENETRATION_VOXELS) ||
+        !std::isfinite(mCoarseToFine.coarseGrowthFacePenetration) || mCoarseToFine.coarseGrowthFacePenetration < 0.0f ||
         mCoarseToFine.coarseGrowthFacePenetration > float(GROWTH_MAX_FACE_PENETRATION_VOXELS) ||
         mCoarseToFine.coarseGrowthInterval == 0u)
         throw RuntimeError("Coarse growth requires a valid face penetration and a nonzero interval.");
@@ -110,9 +112,7 @@ bool VoxelReconstructionNoLightTransport::prepareReconstruction(RenderContext* p
                 mCoarseToFine.levelIterationBudget,
                 mCoarseToFine.totalIterations
             );
-            mTopologySettings.growthStatus = mVoxelResolution == mCoarseToFine.targetResolution
-                                                 ? "Disabled at the mode1 target level"
-                                                 : "Coarse growth waiting for its scheduled boundary";
+            mTopologySettings.growthStatus = "Mode1 growth waiting for its scheduled boundary";
             mTopologySettings.deletionStatus = mVoxelResolution == mCoarseToFine.targetResolution ? "Enabled at the mode1 target level"
                                                                                                   : "Waiting for the mode1 target level";
         }
@@ -156,6 +156,8 @@ void VoxelReconstructionNoLightTransport::advanceCoarseToFine(RenderContext* pRe
                     logError("{}", mTopologySettings.deletionStatus);
                 }
             }
+            if (!reachedLevelBudget && mOptimizerParams.isRunning)
+                growNeighborVoxels(pRenderContext); // After deletion; never grow on the final save boundary.
             if (reachedLevelBudget)
             {
                 mCoarseToFine.status =
@@ -196,7 +198,7 @@ void VoxelReconstructionNoLightTransport::advanceCoarseToFine(RenderContext* pRe
             mTopologySettings.lastGrowthPages = 0u;
             if (mVoxelResolution == mCoarseToFine.targetResolution)
             {
-                mTopologySettings.growthStatus = "Disabled at the mode1 target level";
+                mTopologySettings.growthStatus = "Target-level growth waiting for its scheduled boundary";
                 mTopologySettings.deletionStatus = "Collecting deletion evidence at the mode1 target level";
             }
             else
@@ -345,7 +347,10 @@ void VoxelReconstructionNoLightTransport::renderUICoarseToFine(Gui::Widgets& wid
             );
             widget.var("Refinement Child Face Overlap (voxels)", mCoarseToFine.childFaceOverlap, 0.0f, 0.2f, 0.01f);
             widget.tooltip("Maximum extent beyond each fine-cell face. Parent ellipsoid containment is retained. Zero disables overlap.");
-            widget.checkbox("Enable Coarse Growth", mCoarseToFine.enableCoarseGrowth);
+            widget.checkbox("Enable Mode1 Growth (all levels)", mCoarseToFine.enableCoarseGrowth);
+            widget.var("Coarsest Growth Face Penetration", mCoarseToFine.coarsestGrowthFacePenetration,
+                0.0f, float(GROWTH_MAX_FACE_PENETRATION_VOXELS), 0.05f);
+            widget.tooltip("Only Coarse Start Resolution uses this threshold; finer levels use Coarse Growth Face Penetration.");
             widget.var(
                 "Coarse Growth Face Penetration",
                 mCoarseToFine.coarseGrowthFacePenetration,
@@ -362,7 +367,7 @@ void VoxelReconstructionNoLightTransport::renderUICoarseToFine(Gui::Widgets& wid
     }
     if (isCoarseToFine())
     {
-        widget.text("mode1: coarse levels may grow; target-level deletion is enabled; pruning remains disabled.");
+        widget.text("mode1: growth is available at all levels; deletion only at target; pruning disabled.");
         widget.text(fmt::format(
             "Current resolution: {}; target: {}; level rounds: {} / {}; total: {} / {}",
             mVoxelResolution,

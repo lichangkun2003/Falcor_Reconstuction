@@ -473,7 +473,42 @@ struct NeighborGrowthTestAccess
         pass.mCoarseToFine.levelStartIteration = 40u;
         pass.mOptimizerParams.currentIteration = 60u;
         pass.growNeighborVoxels(ctx);
-        require(pass.mGridResources.gridData.activeVoxelCount == 1u, "Mode1 growth remained enabled at the target level");
+        require(pass.mTopologySettings.lastGrowthCount == 6u, "Mode1 target level did not grow using its configured cadence/threshold");
+        const auto originalStart = pass.mCoarseToFine.startResolution;
+        sphere.ellipsoid.logScale = float3(std::log(2.0f)); // 1.5 voxel widths of outward depth.
+        pass.mCoarseToFine.coarsestGrowthFacePenetration = 1.3f;
+        pass.mCoarseToFine.startResolution = 8u;
+        pass.mCoarseToFine.targetResolution = 16u;
+        seed(pass, ctx, {origin}, {sphere});
+        pass.mCoarseToFine.levelStartIteration = 40u;
+        pass.mOptimizerParams.currentIteration = 60u;
+        pass.growNeighborVoxels(ctx);
+        require(pass.mTopologySettings.lastGrowthCount == 6u, "Coarsest level did not use the aggressive 1.3 threshold");
+        seed(pass, ctx, {origin}, {sphere});
+        pass.mCoarseToFine.startResolution = 4u; // Current 8 is now a finer level.
+        pass.mCoarseToFine.scheduleStartResolution = 8u; // Also simulate restart/load at 8.
+        pass.mCoarseToFine.levelStartIteration = 40u;
+        pass.mOptimizerParams.currentIteration = 60u;
+        pass.growNeighborVoxels(ctx);
+        require(pass.mTopologySettings.lastGrowthCount == 0u, "Finer/restarted level incorrectly reused threshold 1.3");
+        sphere.ellipsoid.logScale = float3(std::log(2.6f));
+        seed(pass, ctx, {origin}, {sphere});
+        pass.mCoarseToFine.targetResolution = 8u;
+        pass.mCoarseToFine.levelStartIteration = 40u;
+        pass.mCoarseToFine.levelIterationBudget = 40u;
+        pass.mOptimizerParams.isRunning = true;
+        pass.mOptimizerParams.currentIteration = 60u;
+        pass.advanceCoarseToFine(ctx);
+        require(pass.mTopologySettings.lastGrowthCount == 6u && pass.mGridResources.gridData.activeVoxelCount == 7u,
+            "Production target-level scheduler did not grow after deletion");
+        seed(pass, ctx, {origin}, {sphere});
+        pass.mOptimizerParams.currentIteration = 80u;
+        pass.advanceCoarseToFine(ctx);
+        require(pass.mGridResources.gridData.activeVoxelCount == 1u && !pass.mOptimizerParams.isRunning &&
+            pass.mSaveReconstructionRequested, "Target-level final boundary grew an unoptimized layer");
+        pass.mSaveReconstructionRequested = false;
+        pass.mCoarseToFine.startResolution = originalStart;
+        std::cout << "PASS: coarsest-only delta 1.3, finer-level delta 2, finer restart does not reactivate aggressive growth\n";
         pass.mReconstructionMode = 0u;
     }
 
@@ -699,7 +734,7 @@ struct NeighborGrowthTestAccess
             std::cout << "PASS: face-depth trigger, strict thresholds, per-face direction, occupied neighbors, non-cubic widths, rotated "
                          "footprint\n";
             checkCoarseModeGrowth(*pass, ctx);
-            std::cout << "PASS: mode1 grows every twenty level-local rounds at delta 2 and stops growth at the target\n";
+            std::cout << "PASS: mode1 grows at every level including target; production target cadence and final-save growth suppression\n";
             checkGrowthWaiting(*pass, ctx);
             std::cout << "PASS: newborn wait blocks unstable children, expires after full rounds, resets per generation, supports UI "
                          "changes, independent of deletion\n";

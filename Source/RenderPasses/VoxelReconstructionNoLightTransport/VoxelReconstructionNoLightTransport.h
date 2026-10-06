@@ -366,7 +366,8 @@ public:
         float opacityOpticalDepthScale = 0.65f;
         float childFaceOverlap = 0.1f;
         bool enableCoarseGrowth = true;
-        float coarseGrowthFacePenetration = 2.0f;
+        float coarsestGrowthFacePenetration = COARSEST_GROWTH_FACE_PENETRATION;
+        float coarseGrowthFacePenetration = COARSE_GROWTH_FACE_PENETRATION;
         uint32_t coarseGrowthInterval = 20u;
         bool saveEachLevel = true;
         uint32_t scheduleStartResolution = 0;
@@ -441,6 +442,7 @@ private:
     void createGrowthPassResources();
     void resetGrowthCooldown(RenderContext* pRenderContext);
     void growNeighborVoxels(RenderContext* pRenderContext);
+    float getEffectiveGrowthFacePenetration() const;
     bool initializePointCloudVoxelData(RenderContext* pRenderContext, const std::filesystem::path& source = {});
     void resetPointCloudOptimization(RenderContext* pRenderContext);
     GridResources allocateSparseGrid(RenderContext* pRenderContext, const GridData& grid, uint32_t capacity);

@@ -58,6 +58,8 @@ VoxelReconstructionNoLightTransport::VoxelReconstructionNoLightTransport(ref<Dev
             mCoarseToFine.enableCoarseGrowth = value;
         else if (key == "coarseGrowthFacePenetration")
             mCoarseToFine.coarseGrowthFacePenetration = value;
+        else if (key == "coarsestGrowthFacePenetration")
+            mCoarseToFine.coarsestGrowthFacePenetration = value;
         else if (key == "coarseGrowthInterval")
             mCoarseToFine.coarseGrowthInterval = value;
         else if (key == "saveEachRefinementLevel")
@@ -116,6 +118,7 @@ Properties VoxelReconstructionNoLightTransport::getProperties() const
     props["refinementChildFaceOverlap"] = mCoarseToFine.childFaceOverlap;
     props["coarseGrowthEnabled"] = mCoarseToFine.enableCoarseGrowth;
     props["coarseGrowthFacePenetration"] = mCoarseToFine.coarseGrowthFacePenetration;
+    props["coarsestGrowthFacePenetration"] = mCoarseToFine.coarsestGrowthFacePenetration;
     props["coarseGrowthInterval"] = mCoarseToFine.coarseGrowthInterval;
     props["saveEachRefinementLevel"] = mCoarseToFine.saveEachLevel;
     return props;
@@ -629,8 +632,10 @@ void VoxelReconstructionNoLightTransport::renderUITopology(Gui::Widgets& widget)
             mRayMarchingPass.mDrawMode = uint32_t(ABSDFDrawMode::Default);
             mRayMarchingPass.mOptionsChanged = true;
         }
-        group.checkbox("Enable Coarse Growth", mCoarseToFine.enableCoarseGrowth);
+        group.checkbox("Enable Mode1 Growth (all levels)", mCoarseToFine.enableCoarseGrowth);
         group.var("Coarse Growth Interval (iterations)", mCoarseToFine.coarseGrowthInterval, 1u, 100u, 1u);
+        group.var("Coarsest Growth Face Penetration (voxel widths)", mCoarseToFine.coarsestGrowthFacePenetration,
+            0.0f, float(GROWTH_MAX_FACE_PENETRATION_VOXELS), 0.05f);
         group.var(
             "Coarse Growth Face Penetration (voxel widths)",
             mCoarseToFine.coarseGrowthFacePenetration,
@@ -639,6 +644,7 @@ void VoxelReconstructionNoLightTransport::renderUITopology(Gui::Widgets& widget)
             0.05f
         );
         group.text("One layer per scheduled boundary; the final boundary before refinement is skipped.");
+        group.text(fmt::format("Current level growth threshold: {} voxel widths", getEffectiveGrowthFacePenetration()));
         group.text(mTopologySettings.growthStatus);
         group.text(fmt::format(
             "Last growth: {} voxels; {} pool pages added",
@@ -650,7 +656,7 @@ void VoxelReconstructionNoLightTransport::renderUITopology(Gui::Widgets& widget)
 
     group.text("Confirmed candidates are deleted and compacted periodically at complete iteration boundaries.");
     if (mode1Target)
-        group.text("mode1 target level: deletion is enabled; pruning and neighbor growth remain disabled.");
+        group.text("mode1 target level: deletion and neighbor growth are enabled; pruning remains disabled.");
     group.text("TopologyDebug is a viewing mode; training always renders with Default.");
 
     if (group.button("Show TopologyDebug"))
@@ -725,7 +731,18 @@ void VoxelReconstructionNoLightTransport::renderUITopology(Gui::Widgets& widget)
 
     if (mode1Target)
     {
-        group.text("Neighbor growth remains disabled at the mode1 target level.");
+        group.checkbox("Enable Mode1 Growth (all levels)", mCoarseToFine.enableCoarseGrowth);
+        group.var("Mode1 Growth Interval (iterations)", mCoarseToFine.coarseGrowthInterval, 1u, 100u, 1u);
+        group.var("Coarse Growth Face Penetration (voxel widths)", mCoarseToFine.coarseGrowthFacePenetration,
+            0.0f, float(GROWTH_MAX_FACE_PENETRATION_VOXELS), 0.05f);
+        group.var("Newborn Growth Wait (iterations)", mTopologySettings.growthWaitIterations, 0u, 100u, 1u);
+        group.var("Newborn Protection (iterations)", mTopologySettings.growthProtectionIterations, 1u, 100u, 1u);
+        group.var("Deleted Cell Cooldown (iterations)", mTopologySettings.deletionCooldownIterations, 0u, 100u, 1u);
+        group.text(fmt::format("Current level growth threshold: {} voxel widths", getEffectiveGrowthFacePenetration()));
+        group.text("Growth runs after deletion; skipped on the final save boundary.");
+        group.text(mTopologySettings.growthStatus);
+        group.text(fmt::format("Last growth: {} voxels; {} pool pages added",
+            mTopologySettings.lastGrowthCount, mTopologySettings.lastGrowthPages));
         return;
     }
 
