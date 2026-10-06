@@ -367,7 +367,7 @@ public:
         float childFaceOverlap = 0.1f;
         bool enableCoarseGrowth = true;
         float coarsestGrowthFacePenetration = COARSEST_GROWTH_FACE_PENETRATION;
-        float coarseGrowthFacePenetration = COARSE_GROWTH_FACE_PENETRATION;
+        float growthFinerLevelMultiplier = FINER_GROWTH_THRESHOLD_MULTIPLIER;
         uint32_t coarseGrowthInterval = 20u;
         bool saveEachLevel = true;
         uint32_t scheduleStartResolution = 0;

@@ -30,8 +30,8 @@ void VoxelReconstructionNoLightTransport::validateCoarseToFineSettings() const
         throw RuntimeError("Refinement child face overlap must be in [0, 0.2] fine-voxel widths.");
     if (!std::isfinite(mCoarseToFine.coarsestGrowthFacePenetration) || mCoarseToFine.coarsestGrowthFacePenetration < 0.0f ||
         mCoarseToFine.coarsestGrowthFacePenetration > float(GROWTH_MAX_FACE_PENETRATION_VOXELS) ||
-        !std::isfinite(mCoarseToFine.coarseGrowthFacePenetration) || mCoarseToFine.coarseGrowthFacePenetration < 0.0f ||
-        mCoarseToFine.coarseGrowthFacePenetration > float(GROWTH_MAX_FACE_PENETRATION_VOXELS) ||
+        !std::isfinite(mCoarseToFine.growthFinerLevelMultiplier) || mCoarseToFine.growthFinerLevelMultiplier < 0.0f ||
+        mCoarseToFine.coarsestGrowthFacePenetration * mCoarseToFine.growthFinerLevelMultiplier > float(GROWTH_MAX_FACE_PENETRATION_VOXELS) ||
         mCoarseToFine.coarseGrowthInterval == 0u)
         throw RuntimeError("Coarse growth requires a valid face penetration and a nonzero interval.");
 }
@@ -348,14 +348,14 @@ void VoxelReconstructionNoLightTransport::renderUICoarseToFine(Gui::Widgets& wid
             widget.var("Refinement Child Face Overlap (voxels)", mCoarseToFine.childFaceOverlap, 0.0f, 0.2f, 0.01f);
             widget.tooltip("Maximum extent beyond each fine-cell face. Parent ellipsoid containment is retained. Zero disables overlap.");
             widget.checkbox("Enable Mode1 Growth (all levels)", mCoarseToFine.enableCoarseGrowth);
-            widget.var("Coarsest Growth Face Penetration", mCoarseToFine.coarsestGrowthFacePenetration,
+            widget.var("Growth Base Threshold", mCoarseToFine.coarsestGrowthFacePenetration,
                 0.0f, float(GROWTH_MAX_FACE_PENETRATION_VOXELS), 0.05f);
-            widget.tooltip("Only Coarse Start Resolution uses this threshold; finer levels use Coarse Growth Face Penetration.");
+            widget.tooltip("Coarse Start Resolution uses the base; all finer levels use base times multiplier (not cumulative).");
             widget.var(
-                "Coarse Growth Face Penetration",
-                mCoarseToFine.coarseGrowthFacePenetration,
+                "Finer Growth Threshold Multiplier",
+                mCoarseToFine.growthFinerLevelMultiplier,
                 0.0f,
-                float(GROWTH_MAX_FACE_PENETRATION_VOXELS),
+                float(GROWTH_MAX_FACE_PENETRATION_VOXELS) / std::max(mCoarseToFine.coarsestGrowthFacePenetration, 0.01f),
                 0.05f
             );
             widget.var("Coarse Growth Interval", mCoarseToFine.coarseGrowthInterval, 1u, 100u, 1u);

@@ -459,7 +459,7 @@ struct NeighborGrowthTestAccess
         pass.mCoarseToFine.targetResolution = 16u;
         pass.mCoarseToFine.levelStartIteration = 40u;
         pass.mCoarseToFine.enableCoarseGrowth = true;
-        pass.mCoarseToFine.coarseGrowthFacePenetration = 2.0f;
+        pass.mCoarseToFine.growthFinerLevelMultiplier = 2.0f / 1.3f; // Explicit historical delta-2 fixture.
         pass.mCoarseToFine.coarseGrowthInterval = 20u;
         pass.mOptimizerParams.currentIteration = 59u;
         pass.growNeighborVoxels(ctx);
@@ -721,11 +721,38 @@ struct NeighborGrowthTestAccess
             require(pass->mTopologySettings.growthFacePenetration == 1.0f, "Default growth depth is not delta 1");
             require(pass->mTopologySettings.growthInterval == 10u, "Default growth interval is not ten full rounds");
             require(
-                pass->mCoarseToFine.enableCoarseGrowth && pass->mCoarseToFine.coarseGrowthFacePenetration == 2.0f &&
+                pass->mCoarseToFine.enableCoarseGrowth && pass->mCoarseToFine.growthFinerLevelMultiplier == 2.0f &&
                     pass->mCoarseToFine.coarseGrowthInterval == 20u,
                 "Default mode1 coarse-growth settings are incorrect"
             );
             pass->mUpdatePass.init();
+            const auto originalResolution = pass->mVoxelResolution;
+            const auto originalStartResolution = pass->mCoarseToFine.startResolution;
+            pass->mReconstructionMode = 1u;
+            pass->mCoarseToFine.startResolution = 64u;
+            for (uint32_t resolution : {64u, 128u, 256u, 512u})
+            {
+                pass->mVoxelResolution = resolution;
+                const float expected = resolution == 64u ? 1.3f : 2.6f;
+                require(std::abs(pass->getEffectiveGrowthFacePenetration() - expected) < 1e-5f,
+                    "Base/multiplier thresholds accumulated across levels or did not include target");
+            }
+            pass->mCoarseToFine.coarsestGrowthFacePenetration = 1.0f;
+            require(pass->getEffectiveGrowthFacePenetration() == 2.0f, "Changing base did not update the finer threshold");
+            pass->mCoarseToFine.coarsestGrowthFacePenetration = 1.3f;
+            pass->mVoxelResolution = originalResolution;
+            pass->mCoarseToFine.startResolution = originalStartResolution;
+            pass->mReconstructionMode = 0u;
+            auto roundtrip = VoxelReconstructionNoLightTransport::create(device, pass->getProperties());
+            require(roundtrip->mCoarseToFine.growthFinerLevelMultiplier == 2.0f,
+                "Graph properties did not preserve the growth multiplier");
+            Properties legacy;
+            legacy["coarsestGrowthFacePenetration"] = 1.3f;
+            legacy["coarseGrowthFacePenetration"] = 2.0f;
+            auto migrated = VoxelReconstructionNoLightTransport::create(device, legacy);
+            require(std::abs(migrated->mCoarseToFine.growthFinerLevelMultiplier * 1.3f - 2.0f) < 1e-5f,
+                "Legacy absolute-threshold migration changed the experiment");
+            std::cout << "PASS: base 1.3, fixed finer multiplier 2 (2.6), live base changes, graph roundtrip/legacy migration\n";
             pass->createTopologyPassResource(ctx);
             pass->createDeletionPassResources();
             checkDeletionVoteRatio(*pass, ctx);

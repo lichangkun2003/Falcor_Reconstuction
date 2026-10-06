@@ -47,8 +47,9 @@ float VoxelReconstructionNoLightTransport::getEffectiveGrowthFacePenetration() c
 {
     if (!isCoarseToFine()) return mTopologySettings.growthFacePenetration;
     // A restart at a finer level must not reactivate the coarsest-level threshold.
-    return mVoxelResolution == mCoarseToFine.startResolution
-        ? mCoarseToFine.coarsestGrowthFacePenetration : mCoarseToFine.coarseGrowthFacePenetration;
+    const float threshold = mCoarseToFine.coarsestGrowthFacePenetration *
+        (mVoxelResolution == mCoarseToFine.startResolution ? 1.0f : mCoarseToFine.growthFinerLevelMultiplier);
+    return std::clamp(threshold, 0.0f, float(GROWTH_MAX_FACE_PENETRATION_VOXELS));
 }
 
 void VoxelReconstructionNoLightTransport::growNeighborVoxels(RenderContext* pRenderContext)

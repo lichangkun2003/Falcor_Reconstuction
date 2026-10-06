@@ -36,6 +36,8 @@ extern "C" FALCOR_API_EXPORT void registerPlugin(Falcor::PluginRegistry& registr
 VoxelReconstructionNoLightTransport::VoxelReconstructionNoLightTransport(ref<Device> pDevice, const Properties& props) : RenderPass(pDevice)
 {
     mpDevice = pDevice;
+    bool hasMultiplier = false, hasLegacyThreshold = false;
+    float legacyThreshold = 0.0f;
     for (const auto& [key, value] : props)
     {
         if (key == "reconstructionMode")
@@ -56,8 +58,16 @@ VoxelReconstructionNoLightTransport::VoxelReconstructionNoLightTransport(ref<Dev
             mCoarseToFine.childFaceOverlap = value;
         else if (key == "coarseGrowthEnabled")
             mCoarseToFine.enableCoarseGrowth = value;
+        else if (key == "growthFinerLevelMultiplier")
+        {
+            mCoarseToFine.growthFinerLevelMultiplier = value;
+            hasMultiplier = true;
+        }
         else if (key == "coarseGrowthFacePenetration")
-            mCoarseToFine.coarseGrowthFacePenetration = value;
+        {
+            legacyThreshold = value;
+            hasLegacyThreshold = true;
+        }
         else if (key == "coarsestGrowthFacePenetration")
             mCoarseToFine.coarsestGrowthFacePenetration = value;
         else if (key == "coarseGrowthInterval")
@@ -67,6 +77,14 @@ VoxelReconstructionNoLightTransport::VoxelReconstructionNoLightTransport(ref<Dev
     }
     if (mReconstructionMode > 1u)
         throw RuntimeError("Reconstruction mode must be 0 or 1.");
+    if (hasLegacyThreshold && !hasMultiplier)
+    {
+        if (mCoarseToFine.coarsestGrowthFacePenetration <= 0.0f)
+            throw RuntimeError("Legacy growth threshold requires a positive base; use growthFinerLevelMultiplier instead.");
+        mCoarseToFine.growthFinerLevelMultiplier = legacyThreshold / mCoarseToFine.coarsestGrowthFacePenetration;
+        logWarning("Legacy coarseGrowthFacePenetration converted to multiplier {}. Set growthFinerLevelMultiplier to 2 for the new experiment.",
+            mCoarseToFine.growthFinerLevelMultiplier);
+    }
     if (isCoarseToFine())
         validateCoarseToFineSettings();
 
@@ -117,7 +135,7 @@ Properties VoxelReconstructionNoLightTransport::getProperties() const
     props["refinementOpacityOpticalDepthScale"] = mCoarseToFine.opacityOpticalDepthScale;
     props["refinementChildFaceOverlap"] = mCoarseToFine.childFaceOverlap;
     props["coarseGrowthEnabled"] = mCoarseToFine.enableCoarseGrowth;
-    props["coarseGrowthFacePenetration"] = mCoarseToFine.coarseGrowthFacePenetration;
+    props["growthFinerLevelMultiplier"] = mCoarseToFine.growthFinerLevelMultiplier;
     props["coarsestGrowthFacePenetration"] = mCoarseToFine.coarsestGrowthFacePenetration;
     props["coarseGrowthInterval"] = mCoarseToFine.coarseGrowthInterval;
     props["saveEachRefinementLevel"] = mCoarseToFine.saveEachLevel;
@@ -634,13 +652,13 @@ void VoxelReconstructionNoLightTransport::renderUITopology(Gui::Widgets& widget)
         }
         group.checkbox("Enable Mode1 Growth (all levels)", mCoarseToFine.enableCoarseGrowth);
         group.var("Coarse Growth Interval (iterations)", mCoarseToFine.coarseGrowthInterval, 1u, 100u, 1u);
-        group.var("Coarsest Growth Face Penetration (voxel widths)", mCoarseToFine.coarsestGrowthFacePenetration,
+        group.var("Growth Base Threshold (voxel widths)", mCoarseToFine.coarsestGrowthFacePenetration,
             0.0f, float(GROWTH_MAX_FACE_PENETRATION_VOXELS), 0.05f);
         group.var(
-            "Coarse Growth Face Penetration (voxel widths)",
-            mCoarseToFine.coarseGrowthFacePenetration,
+            "Finer Growth Threshold Multiplier",
+            mCoarseToFine.growthFinerLevelMultiplier,
             0.0f,
-            float(GROWTH_MAX_FACE_PENETRATION_VOXELS),
+            float(GROWTH_MAX_FACE_PENETRATION_VOXELS) / std::max(mCoarseToFine.coarsestGrowthFacePenetration, 0.01f),
             0.05f
         );
         group.text("One layer per scheduled boundary; the final boundary before refinement is skipped.");
@@ -733,8 +751,10 @@ void VoxelReconstructionNoLightTransport::renderUITopology(Gui::Widgets& widget)
     {
         group.checkbox("Enable Mode1 Growth (all levels)", mCoarseToFine.enableCoarseGrowth);
         group.var("Mode1 Growth Interval (iterations)", mCoarseToFine.coarseGrowthInterval, 1u, 100u, 1u);
-        group.var("Coarse Growth Face Penetration (voxel widths)", mCoarseToFine.coarseGrowthFacePenetration,
+        group.var("Growth Base Threshold (voxel widths)", mCoarseToFine.coarsestGrowthFacePenetration,
             0.0f, float(GROWTH_MAX_FACE_PENETRATION_VOXELS), 0.05f);
+        group.var("Finer Growth Threshold Multiplier", mCoarseToFine.growthFinerLevelMultiplier,
+            0.0f, float(GROWTH_MAX_FACE_PENETRATION_VOXELS) / std::max(mCoarseToFine.coarsestGrowthFacePenetration, 0.01f), 0.05f);
         group.var("Newborn Growth Wait (iterations)", mTopologySettings.growthWaitIterations, 0u, 100u, 1u);
         group.var("Newborn Protection (iterations)", mTopologySettings.growthProtectionIterations, 1u, 100u, 1u);
         group.var("Deleted Cell Cooldown (iterations)", mTopologySettings.deletionCooldownIterations, 0u, 100u, 1u);
