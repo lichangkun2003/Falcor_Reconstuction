@@ -271,10 +271,6 @@ public:
         uint32_t mOpacityWarmupIterations;
         uint32_t mOpacityRampIterations;
 
-        // Prune Ellipsoid
-        float mEllipsoidPruneThreshold;
-        bool mEnableEllipsoidPruning;
-
         void init()
         {
             mpComputePass = nullptr;
@@ -293,8 +289,6 @@ public:
             mOpacityWarmupIterations = 20u;
             mOpacityRampIterations = 30u;
 
-            mEllipsoidPruneThreshold = 0.03f;
-            mEnableEllipsoidPruning = false;
         }
     };
 

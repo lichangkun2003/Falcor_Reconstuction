@@ -367,7 +367,7 @@ void VoxelReconstructionNoLightTransport::renderUICoarseToFine(Gui::Widgets& wid
     }
     if (isCoarseToFine())
     {
-        widget.text("mode1: growth is available at all levels; deletion only at target; pruning disabled.");
+widget.text("mode1: growth is available at all levels; deletion only at target.");
         widget.text(fmt::format(
             "Current resolution: {}; target: {}; level rounds: {} / {}; total: {} / {}",
             mVoxelResolution,

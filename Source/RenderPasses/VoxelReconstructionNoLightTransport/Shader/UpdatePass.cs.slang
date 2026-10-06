@@ -27,8 +27,6 @@ cbuffer CB {
     // reference background pixels.
     float gBackgroundCarveAdamMultiplier;
 
-    float gEllipsoidPruneThreshold;
-    bool gEnableEllipsoidPruning;
     uint gSparseUpdateOffset;
     uint gRadianceAdamCapacity;
 
@@ -225,24 +223,6 @@ void updateOpacitySHAdam(
 }
 
 
-float calcEllipsoidVoxelVolumeRatio(GaussianEllipsoid ellipsoid)
-{
-    float3 scale = gaussianEllipsoidScale(ellipsoid);
-    float voxelVolume = gGridDataParamBlock.voxelSize.x *
-        gGridDataParamBlock.voxelSize.y * gGridDataParamBlock.voxelSize.z;
-
-    if (isBadFloat3(scale) || voxelVolume <= 1e-30f)
-        return -1.0f;
-
-    // 局部体素为 [0,1]^3，体积为 1
-    float ratio = (4.0f * PI / 3.0f) * scale.x * scale.y * scale.z / voxelVolume;
-
-    if (isBadFloat(ratio))
-        return -1.0f;
-
-    return ratio;
-}
-
 [numthreads(256, 1, 1)]
 void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
     uint index = gSparseUpdateOffset + dispatchThreadId.x;
@@ -256,7 +236,7 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
     bool updateAppearance = appearanceValid > 0u && (gLrRadiance > 0.0f || gLrOpacity > 0.0f);
     bool updateGeometry = geometryValid > 0u &&
         (gLrCenter > 0.0f || gLrShape > 0.0f || gLrRotation > 0.0f);
-    if (!updateAppearance && !updateGeometry && !gEnableEllipsoidPruning)
+    if (!updateAppearance && !updateGeometry)
         return;
 
 
@@ -325,12 +305,6 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
         VOXEL_DATA(index).ellipsoid = ellipsoid;
     }
 
-    if (gEnableEllipsoidPruning)
-    {
-        if (calcEllipsoidVoxelVolumeRatio(VOXEL_DATA(index).ellipsoid) < gEllipsoidPruneThreshold &&
-            calcEllipsoidVoxelVolumeRatio(VOXEL_DATA(index).ellipsoid) >= 0.0f)
-            VOXEL_DATA(index).occupied = 0;
-    }
 
 
 }

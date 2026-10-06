@@ -630,7 +630,7 @@ void VoxelReconstructionNoLightTransport::renderUITopology(Gui::Widgets& widget)
 
     if (isCoarseToFine() && !mode1Target)
     {
-        group.text("mode1 coarse level: deletion and pruning are disabled; conservative neighbor growth is enabled.");
+group.text("mode1 coarse level: deletion is disabled; conservative neighbor growth is enabled.");
         if (group.button("Show Occupied Grid"))
         {
             mTopologySettings.debugLayer = uint32_t(TopologyDebugLayer::Occupied);
@@ -674,7 +674,7 @@ void VoxelReconstructionNoLightTransport::renderUITopology(Gui::Widgets& widget)
 
     group.text("Confirmed candidates are deleted and compacted periodically at complete iteration boundaries.");
     if (mode1Target)
-        group.text("mode1 target level: deletion and neighbor growth are enabled; pruning remains disabled.");
+        group.text("mode1 target level: deletion and neighbor growth are enabled.");
     group.text("TopologyDebug is a viewing mode; training always renders with Default.");
 
     if (group.button("Show TopologyDebug"))

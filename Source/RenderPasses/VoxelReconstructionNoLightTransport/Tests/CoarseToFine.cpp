@@ -299,7 +299,6 @@ struct CoarseToFineTestAccess
         cb["gLrCenter"] = 0.0f;
         cb["gLrShape"] = 0.0f;
         cb["gLrRotation"] = 0.0f;
-        cb["gEnableEllipsoidPruning"] = false;
         cb["gRadianceAdamCapacity"] = uint32_t(pass->mGridResources.radianceAdamPages.size()) * SPARSE_POOL_PAGE_SIZE;
         update->execute(ctx, uint3(8u, 1, 1));
         pass->barrierSparseVoxels(ctx);

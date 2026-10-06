@@ -67,14 +67,6 @@ void VoxelReconstructionNoLightTransport::runUpdatePass(RenderContext* pRenderCo
     //mUpdatePass.mpComputePass->addDefine("CHECK_VISIBILITY", mRayMarchingPass.mCheckVisibility ? "1" : "0");
     //mUpdatePass.mpComputePass->addDefine("CHECK_COVERAGE", mRayMarchingPass.mCheckCoverage ? "1" : "0");
 
-    // prune 默认关闭. pruneEllipsoid 直接写 occupied = 0.
-    // 而全工程只有初始化阶段会写回 1，被删的体素本次运行里永远回不来.
-    if ((mOptimizerParams.currentIteration) % 10 == 0)
-    {
-        //mUpdatePass.mEnableEllipsoidPruning = true;
-    }
-
-
     auto var = mUpdatePass.mpComputePass->getRootVar();
 
 
@@ -91,8 +83,6 @@ void VoxelReconstructionNoLightTransport::runUpdatePass(RenderContext* pRenderCo
     cb["gRadianceAdamCapacity"] = uint32_t(mGridResources.radianceAdamPages.size()) * SPARSE_POOL_PAGE_SIZE;
     cb["gLrOpacity"] = getEffectiveOpacityLearningRate();
     cb["gBackgroundCarveAdamMultiplier"] = mUpdatePass.mBackgroundCarveAdamMultiplier;
-    cb["gEllipsoidPruneThreshold"] = mUpdatePass.mEllipsoidPruneThreshold;
-    cb["gEnableEllipsoidPruning"] = !isCoarseToFine() && mUpdatePass.mEnableEllipsoidPruning;
 
     //mpPixelDebug->prepareProgram(mUpdatePass.mpComputePass->getProgram(), mUpdatePass.mpComputePass->getRootVar());
 
@@ -108,7 +98,6 @@ void VoxelReconstructionNoLightTransport::runUpdatePass(RenderContext* pRenderCo
     barrierSparseVoxels(pRenderContext);
     for (const auto& page : mGridResources.adamPages) pRenderContext->uavBarrier(page.get());
 
-    mUpdatePass.mEnableEllipsoidPruning = false;
 }
 
 void VoxelReconstructionNoLightTransport::renderUIUpdatePass(Gui::Widgets& widget)
@@ -143,6 +132,5 @@ void VoxelReconstructionNoLightTransport::renderUIUpdatePass(Gui::Widgets& widge
     group.var("Background Carve Adam Multiplier", mUpdatePass.mBackgroundCarveAdamMultiplier, 1.0f, 20.0f, 0.25f);
     group.text("Step limits: center 0.02 voxel/axis; log scale 0.02/axis; rotation 0.02 rad.");
 
-    group.var("Ellipsoid Prune Threshold", mUpdatePass.mEllipsoidPruneThreshold, 0.0f, 1.0f, 1e-7f);
 
 }
