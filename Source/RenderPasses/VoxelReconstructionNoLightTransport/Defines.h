@@ -13,7 +13,7 @@
 #endif
 #define COARSE_TO_FINE_START_RESOLUTION 64
 #define COARSEST_GROWTH_FACE_PENETRATION 1.3f
-#define FINER_GROWTH_THRESHOLD_MULTIPLIER 2.0f
+#define FINER_GROWTH_THRESHOLD_MULTIPLIER 3.0f
 #define COARSE_TO_FINE_TOTAL_ITERATIONS 1000
 // Four active levels use these relative weights (coarse -> fine).
 // Other level counts interpolate the same curve across the active schedule.
