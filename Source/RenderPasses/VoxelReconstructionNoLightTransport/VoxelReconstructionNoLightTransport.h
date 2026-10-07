@@ -79,12 +79,12 @@ inline std::string kAccumulateOutputColor = "AccuColor";
 
 // Relative paths are rooted at the Falcor source project, independently of the process working directory.
 inline std::string ReconstructionDataDir = "Reconstruction_Output";
-inline std::string ReferenceImageDir = "Reconstruction_Input/lego";
-inline std::string ReferenceCameraFile = "Reconstruction_Input/lego/transforms_train.json";
+inline std::string ReferenceImageDir = "Reconstruction_Input/ship";
+inline std::string ReferenceCameraFile = "Reconstruction_Input/ship/transforms_train.json";
 // Use the sparse point cloud that was supplied to 3DGS. The optimized 3DGS
 // output remains available as "point_cloud.ply" for comparison experiments.
-//inline std::string InitializationPointCloudFile = "init_points.ply";
-inline std::string InitializationPointCloudFile = "point_cloud.ply";
+inline std::string InitializationPointCloudFile = "init_points.ply";
+//inline std::string InitializationPointCloudFile = "point_cloud.ply";
 
 inline std::filesystem::path resolveReconstructionPath(const std::filesystem::path& path)
 {
