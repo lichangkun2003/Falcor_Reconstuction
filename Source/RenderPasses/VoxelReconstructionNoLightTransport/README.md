@@ -1,97 +1,401 @@
-# VoxelReconstructionNoLightTransport
+# VoxelReconstructionNoLightTransport：理论与实现
 
-After loading an E-numbered experiment result, or after the current reconstruction finishes saving, **Reconstruction IO / Experiment Level** lists that experiment's saved resolutions in numeric order. Changing this dropdown immediately loads the selected level for viewing, including switching back to the finest saved result. It groups by scene/date/E number/name tag within the same directory, not by E number alone. Enable **Save Each Completed Level** before training to retain coarse checkpoints; missing levels cannot be recovered from the finest file. Level switching is disabled during training and uses the existing grid replacement/loading path (fresh Adam and cleared loss history); this is saved-result viewing, not an in-memory training-state cache. Legacy files without an E-numbered experiment name remain loadable through **Reconstruction File**, but cannot be safely grouped automatically.
+本 Pass 使用多视角 RGBA 图像和相机位姿，把输入点云重建为稀疏体素网格中的可优化椭球。系统联合优化几何、方向相关 radiance 和 opacity，并通过邻域生长补充占据位置、通过多视角证据删除错误几何。
 
-In both modes, each complete training iteration visits every reference camera exactly once in a newly shuffled order. All SPP samples for one camera finish before advancing. The camera, reference image, and deletion-evidence ID use the same original dataset index; evidence is never keyed by the shuffled traversal position. The viewing Camera Index remains in original dataset order.
+名称中的 NoLightTransport 表示当前训练直接拟合椭球的出射颜色，不求解光照、材质与多次反射。虽然使用了 GaussianEllipsoid 类型，当前前向是椭球硬相交后的 alpha 合成，不是 3DGS 的屏幕空间高斯投影，也不是沿椭球密度积分的体渲染。
 
-Deletion evidence uses separate exact foreground/background camera bitsets per active voxel. A physical camera may vote once per class per evidence window, even across interleaved cameras, repeated training rounds, or concurrent pixels. Window rollover and explicit evidence reset clear both sets; growth/compaction retain protection and lineage as before. `TOPOLOGY_EVIDENCE_MAX_VIEWS` in `Defines.h` defaults to 128 (48 bytes per evidence record, up from 24). Training rejects datasets above this capacity instead of silently aliasing/ignoring votes; increase the definition and rebuild for larger datasets. Camera counts are now genuinely independent-view counts, so the unchanged thresholds may behave more conservatively than the old repeated-vote implementation. Reconstruction files do not store this transient evidence and retain their existing format.
+本文描述当前实现；参数表是源码默认值，UI 和渲染图属性可以覆盖它们。只修改本文不会改变训练行为。
 
-This pass initializes a voxel reconstruction from a point cloud and optimizes its occupied voxels. `RECONSTRUCTION_MODE` in `Defines.h` selects the default: `0` retains fixed-resolution training, and `1` enables the coarse-to-fine experiment. The UI can select either mode before training. `GRID_RESOLUTION` sets mode0's initial resolution and mode1's default target. The old full-grid `RECON_MODE_ORIGINAL` implementation remains removed.
+## 1. 数据表示与输入初始化
 
-## Coarse-to-fine experiment (mode1)
+### 1.1 一个占据体素对应一个椭球
 
-Select **Reconstruction Mode: mode1: coarse to fine**, then **Init / Reset from PLY** or **Enable Reconstruction**. The default start is 16, the target is `GRID_RESOLUTION` (512), and **Total Iterations** defaults to 700 complete training rounds. `COARSE_TO_FINE_LEVEL_WEIGHTS` in `Defines.h` sets the coarse-to-fine weight curve, default `{12, 14, 19, 25}`. Four active levels use these weights directly; other level counts interpolate the curve at equally spaced positions using integer arithmetic. After reserving one round per level, cumulative weighted rounding distributes the remainder while preserving the exact total. Starting at 64 with 700 rounds gives **120, 140, 190, 250** rounds at **64, 128, 256, 512**, providing more early optimization/growth opportunities than the old 70-round first level. The default 16 -> 32 -> 64 -> 128 -> 256 -> 512 schedule becomes 80, 89, 100, 121, 143, and 167 rounds. A single active target level receives the full total. Mode1 uses this total instead of mode0's **Max Iteration**. Mode/start/target/total settings are editable while stopped; changing mode/start/target makes the next Enable/Init reload the PLY. Resolutions must be powers of two, start <= target <= 1024, and the total must be at least the number of levels. Render-graph properties are `reconstructionMode`, `coarseStartResolution`, `targetResolution`, `totalIterations`, `refinementParentOpacityThreshold`, `refinementOpacityOpticalDepthScale`, `refinementChildFaceOverlap`, `coarseGrowthEnabled`, `coarseGrowthFacePenetration`, `coarseGrowthInterval`, and `saveEachRefinementLevel`. The old `iterationsPerLevel` property is accepted as a compatibility alias but is interpreted as the total.
+每个活跃体素保存：
 
-Mode1 disables deletion evidence and deletion/compaction on every coarse level. They become active only after reaching the target resolution. Neighbor growth is enabled at all mode1 levels, including the target. At the target, scheduled growth runs after deletion; the final save boundary never grows an unoptimized layer. Geometry, opacity, and radiance optimization continue normally. Refinement runs only at a complete-round boundary. Each eligible occupied coarse cell considers its eight fine subcells and retains only those whose closed boxes intersect the **original parent ellipsoid volume**, before geometry reinitialization. This includes children wholly inside the ellipsoid and ellipsoids wholly inside a child; fully outside children remain empty. The rotated ellipsoid/box test checks the constrained quadratic minimum over face interiors and edges/corners, not just child centers, corners, or an ellipsoid AABB. A candidate must contain a representable fitted child: pure tangency and slivers below the existing optimizer's center/axis limits are rejected rather than inflated. Unoccupied coarse regions remain unoccupied, and world grid bounds stay fixed.
+- 占据标记和紧凑体素 ID。
+- 体素局部中心 center、世界空间半轴的 logScale、旋转四元数。
+- radiance RGB 球谐系数与 opacity logit 球谐系数。
+- 梯度、Adam 状态、删除证据和生长生命周期信息。
 
-At refinement, **Refinement Parent Opacity Threshold** defaults to `0`, disabling intermediate opacity-based filtering so low-opacity geometry survives to the target-level deletion stage. Setting the graph property `refinementParentOpacityThreshold` above zero filters parents only when a conservative analytic SH upper bound is below the threshold in every direction. Rejected parents have no children and disappear on successful grid replacement; this is separate from target-level evidence deletion. If no children remain, refinement stops and retains the previous grid rather than replacing it with an empty grid.
+椭球隐式函数可写为：
 
-Each fine cell fully copies the parent's radiance. **Refinement Opacity Optical-Depth Scale** defaults to `0.65`: refinement converts the DC-only parent opacity to optical depth, multiplies it by this scale, and shifts the opacity SH DC coefficient while retaining all directional coefficients. A value of `1` disables attenuation. This reduces the opacity stacking caused when one parent hit becomes multiple child hits, but it is an initialization approximation rather than exact per-ray transmittance preservation.
+```text
+q(x) = || diag(1/a) · Rᵀ · (x - c) ||² - 1
+a = exp(logScale)
+```
 
-Geometry preserves the parent's rotation and semi-axis ratios while distinguishing interior and boundary child cells. All eight corners inside the parent quadratic prove that the entire child cell is interior; these children are centered at `(0.5, 0.5, 0.5)` and scaled to the fine grid. Boundary children use an 18-step feasible-size search with a box-constrained quadratic center search, moving inward rather than squeezing the whole shape strictly inside the child cell. When a small inward surface-normal shift (one tenth of the shortest fine-cell width) retains at least 90% of the maximum feasible size, it is preferred over deeper recentering. **Refinement Child Face Overlap (voxels)** defaults to `0.1` (`refinementChildFaceOverlap` graph property, range `[0, 0.2]`): the rotated shape may extend this fraction of the fine-cell width beyond each face. An unconstrained interior sphere therefore has radius `0.6 * fineVoxelSize`, rather than `0.5 * fineVoxelSize`; size is still capped in every world-grid axis. Zero disables face overlap. The whole child ellipsoid remains inside the original parent ellipsoid: in parent-unit-sphere coordinates the exact condition is `length(centerOffset) + scale <= 1`. Centers remain in their own cell within `[0.01, 0.99]`, and sub-minimum slivers are rejected. Occupancy remains restricted to the original parent's eight child addresses; DDA clips each primitive to its owning cell's ray segment, so cross-face parameters do not render into unoccupied neighboring cells. These are initialization constraints, not permanent optimization constraints. Bounded overlap improves coverage but does not exactly tile the parent's volume or guarantee identical per-ray alpha. All Adam state, gradients, and topology records start fresh at refinement; global iteration/loss history continues. Mode1 uses the configured opacity learning rate immediately, without warm-up or ramp. Setting it to zero still disables opacity updates.
+其中 x、c 转换到统一的世界空间后计算；q < 0 表示椭球内部。中心限制在所属体素局部 [0.01, 0.99]，但形状可以越过体素面。每个半轴的优化上限为对应 voxelSize 分量的 4 倍；这不是生长阈值。
 
-Each parent retains **at most eight** children. A GPU count pass records intersection masks and compact offsets; allocation and capacity checks use the actual selected count rather than `parents * 8`. Children outside the parent ellipsoid consume no parameter slots. The next grid is allocated and initialized separately before replacing the live grid; peak memory includes both levels and the temporary child-mask/offset buffer. Pool-limit/allocation failure stops training and retains the last complete grid for viewing/manual saving. Refinement never silently drops a subset of selected children. Successful completion optimizes the final level before saving. Mode1 saves under `Reconstruction_Output/mode1`; fixed-resolution mode0 saves under `Reconstruction_Output/mode0`. Historical fixed-resolution results formerly stored in `mode1` belong in `mode0`, including their `Loss` subdirectory.
+方向外观为：
 
-Stopping and re-enabling without changing mode/start/target keeps the current level's geometry and starts a fresh schedule from that level, using the full configured total distributed over the remaining levels. Re-enabling at the target therefore spends the full total at the target. **Init / Reset from PLY** restarts at the coarse level. Sparse v3 files retain the current grid and appearance, not pyramid progress or Adam state; loading one in mode1 and enabling trains from its saved resolution if compatible with the selected target.
+```text
+radiance(v) = max(Σ RGB_SH[k] · Yk(v), 0)
+opacity(v)  = sigmoid(Σ opacity_SH[k] · Yk(v))
+```
 
-## Inputs and initialization
+当前 SH_COUNT 和 SH_OPACITY_COUNT 均为 9。体素的形状、占据位置、方向颜色和透明度是不同概念，不能把低 opacity 直接等同于空体素。
 
-Set `ReferenceImageDir` and `ReferenceCameraFile` in `VoxelReconstructionNoLightTransport.h` to the same scene. Relative paths resolve from the Falcor project root. By default the sparse point cloud supplied to 3DGS is read from `ReferenceImageDir/init_points.ply`; `InitializationPointCloudFile` can be changed to `point_cloud.ply` for comparison with the optimized 3DGS output. Training images and camera poses come from the reference data directory and JSON. `Reconstruction_Input` and `Reconstruction_Output` are ignored by Git.
+### 1.2 稀疏属性池与完整位置索引
 
-The PLY loader accepts ASCII and binary little-endian files. An XYZ-only input such as `init_points.ply` marks the cell containing each point; **Gaussian Opacity Threshold** does not affect this path. If the selected PLY contains Gaussian opacity, scale, and rotation attributes, those Gaussians instead mark every intersected grid cell occupied, subject to that threshold. Point-cloud color and SH coefficients do not initialize voxel radiance. Each occupied voxel starts with black radiance, `opacity.init()` (alpha 0.5), and a centered ellipsoid with world-space semi-axes `0.6 * voxelSize`. The coordinate transform for the NeRF data is `(x, z, -y)`.
+空间查询使用分页 R32Int 三维纹理，保存 cell → compact ID；仅占据体素分配参数记录。反向 cellIndex 保存 compact ID → cell，供梯度、生长和压缩使用。
 
-Click **Init / Reset from PLY** to initialize without training, or enable reconstruction to initialize and train. Reinitialization clears the previous optimizer and loss state. Training renders at 800×800; when training is stopped, **Viewing Resolution** selects 800×800 or 1920×1080.
+512³ 的位置索引使用一张页面，1024³ 使用八张 512³ 页面。属性页默认每页 2¹⁸ 条记录，最多 256 页。radiance Adam 独立按需分配，不预先为所有活跃体素铺满其状态。
 
-## Storage and limits
+位置索引并非完全稀疏；稀疏化的是体素参数、梯度和优化状态。UI 显存估计不包含图像、PathRecord、渲染目标和场景等全部资源。
 
-The full spatial lookup is stored in paged `R32Int` 3D textures. Only occupied cells receive a compact voxel ID and entries in segmented buffers for voxel data, gradients, Adam state, and cell indices. Radiance Adam state is allocated separately as needed. `512^3` uses one spatial-index page; `1024^3` uses eight `512^3` pages. Attribute pages contain `SPARSE_POOL_PAGE_SIZE` entries, and the pool is limited by `SPARSE_POOL_MAX_PAGES`. The UI reports active voxels, allocated capacity, and estimated pool/index/radiance-Adam memory. The estimate excludes render targets, path records, reference images, and scene resources.
+### 1.3 输入与初值
 
-The initialization error reports when the Gaussian coverage exceeds the pool limit or available GPU memory. Reducing the opacity threshold increases coverage and memory use. Pool pages are allocated according to the occupied count and extended on demand during growth, retaining the existing pages and their optimizer state. Each allocated voxel slot carries a 24-byte topology record, including deletion-protection expiry, growth-wait birth clock, and persistent growth lineage. There is no artificial growth-count budget; the page limit and available GPU memory still bound growth.
+路径定义在 VoxelReconstructionNoLightTransport.h，相对路径以 Falcor 项目目录为根：
 
-`MAX_CONTRIBUTING_VOXELS_PER_RAY` and `MAX_CANDIDATES` in `Defines.h` limit the stored hard-hit and near-miss records. They do not change the grid resolution. A compile-time assertion checks the D3D12 structured-buffer stride limit.
+- ReferenceImageDir：参考图像及点云所在目录。
+- ReferenceCameraFile：训练相机 JSON。
+- InitializationPointCloudFile：默认 init_points.ply，即输入 3DGS 的原始稀疏点云；point_cloud.ply 可用于对比优化后的 3DGS 输出。
+- ReconstructionDataDir：默认 Reconstruction_Output。
 
-## Optimization
+PLY 支持 ASCII 和 binary little-endian。XYZ 点云仅占据每个点落入的 cell；带 opacity、scale、rotation 的 Gaussian PLY 则按高斯覆盖的相交 cell 初始化，并受 Gaussian Opacity Threshold 筛选。该阈值不影响纯 XYZ 输入。NeRF 数据坐标变换为 (x, z, -y)。
 
-Gradients are computed explicitly in `Shader/GradientPass.cs.slang` and accumulated in the sparse `GradRecord` buffers; this pass does not use Slang automatic differentiation or Falcor's `SceneGradients` interfaces.
+每个占据体素的初始中心为 (0.5, 0.5, 0.5)，半轴为 0.6 × voxelSize，radiance 为黑色，opacity logit 为零，即 alpha = 0.5。点云颜色和 SH 不直接复制到初始化 radiance。
 
-Forward rendering uses hard ellipsoid intersections within each voxel. Geometry backward uses a continuous world-distance proxy for the hit/miss boundary, with **Geometry Tau (voxels)** converted to world units using the current voxel width. RGB and alpha losses can contribute to geometry gradients; **Alpha Geometry Weight** controls the extra alpha-to-geometry term, while **Alpha Loss Weight** controls the alpha image loss and its derivative. Center, log-scale, rotation, radiance, and opacity use separate Adam state and UI learning rates. Opacity warm-up/ramp applies only to mode0; mode1 uses the target learning rate immediately and hides those schedule controls. Training updates after each view's SPP batch, then advances to the next view. **Max Iteration** counts complete passes over the reference views.
+## 2. 前向渲染与损失
 
-## Deletion-candidate evidence
+### 2.1 DDA 与硬相交
 
-In mode0, deletion evidence starts after the opacity warm-up and ramp. In mode1, it remains disabled on coarse levels and starts from a fresh local clock when the target level is reached. For each real hard hit, the gradient pass computes the local RGB-plus-alpha loss change that would result from removing that hit while holding the rest of the recorded path fixed. A reliable foreground pixel casts a support vote when removal increases loss; a reliable background pixel casts a conflict vote when removal decreases loss. The final SPP sample of every view in every iteration of an evidence window may contribute evidence, so the number of evidence observations is independent of the training SPP. A voxel receives at most one vote of each kind from each physical camera per window, regardless of pixel or iteration count. Repeated iterations give 1-SPP runs multiple jittered chances without giving multi-SPP runs extra voting weight. Anti-aliased reference pixels between the foreground and background alpha thresholds do not vote.
+RayMarchingPass.ps.slang 用 DDA 遍历射线经过的 cell；在占据 cell 内测试椭球，只把真正相交的椭球作为 hard-hit 参与前向合成。相交范围裁剪到所属 cell 的射线区间，不能仅因为椭球参数越界，就让它在未占据邻居里贡献颜色。
 
-At each evidence-window boundary, a voxel qualifies when background-conflict views reach the configured minimum (default `5`) and are at least the configured multiple of foreground-support views (default `3`). Zero foreground votes require only the background minimum; equality at the ratio boundary qualifies. Two qualifying windows confirm a deletion candidate, even if empty or weak windows intervene. One incidental foreground vote no longer vetoes deletion. A window clears the first strike and any latched candidate only when foreground support reaches `max(2, ceil(minConflictViews / ratio))` and background conflicts are below `ratio * foregroundViews`; with defaults, at least two support views are needed to cancel history. Empty and sparse windows preserve history for stochastic 1-SPP coverage. Confirmed candidates remain latched until a deletion boundary unless reliable foreground evidence cancels them. `TopologyDebug -> Deletion candidates` renders candidates red and optional occupied context gray. The UI exposes the conflict minimum and background/foreground ratio, and reports candidates, pending background strikes, protected voxels, and weak-conflict counts. Evidence alone never changes the grid. Evidence and candidate flags are reset by PLY initialization or by restarting optimization, and are not saved in v3 bins.
+按前到后的命中顺序：
 
-With the mode0 defaults (evidence starts at iteration 50, a 5-iteration evidence window, and a 10-iteration deletion interval), the first automatic deletion runs at iteration 60 and subsequent deletion checks run at 70, 80, 90, 100, and so on whenever confirmed candidates exist. Mode1 applies the same window and interval lengths relative to the target-level start, so coarse-level history cannot immediately delete newly refined voxels. Each operation runs only at a complete iteration boundary. The final iteration also checks for candidates before the automatic bin save. The GPU builds compact hole/donor ID lists, marks deleted spatial-index entries empty with a cooldown expiry, moves live tail voxels into prefix holes, updates moved indices, and releases complete trailing pages while retaining one page of growth headroom. Voxel coefficients and geometry/opacity Adam state survive the move. Radiance coefficients also survive, but the independent radiance-Adam mappings and moments are reset and shrunk to reclaim orphaned slots. Evidence is reset after every compaction, so the next deletion requires two fresh evidence windows; newborn protection expiries survive both moves and evidence resets.
+```text
+T₁ = 1
+C  = Σ Tᵢ · αᵢ · Lᵢ + T_end · C_background
+Tᵢ₊₁ = Tᵢ · (1 - αᵢ)
+A  = 1 - T_end
+```
 
-## Ellipsoid neighbor growth
+PathRecord 保存反传所需的命中外观、透射率及几何信息；near-miss 记录用于已有椭球的几何代理梯度，不是空体素生长候选。hard-hit 与 near-miss 记录默认各限制为 16 条；过长路径或提前终止会限制可获得的梯度与证据。
 
-In mode0, **Enable Growth** is enabled by default and **Growth Interval (iterations)** defaults to 10 complete training rounds, anchored to the end of opacity warm-up + ramp. In mode1, **Enable Coarse Growth** defaults on, its interval defaults to 20 rounds relative to the start of each coarse level, and it is disabled at the target level. Growth scans only the existing active prefix and adds at most one layer. Skipped rounds preserve the last growth result shown in the UI. A level's final boundary skips growth so a completely unoptimized layer is never refined immediately. The parent remains unchanged: this is neighbor growth, not a replacement split.
+### 2.2 RGB 与 alpha 监督
 
-A parent triggers per face when its rotated ellipsoid crosses the finite shared face and extends strictly more than **Growth Face Penetration (voxel widths)** toward that empty neighbor. Mode0 retains its `1.0` default; mode1 uses `1.3` only at the configured **Coarse Start Resolution**, then base times a fixed multiplier (`1.3 * 2 = 2.6`) at all finer levels, including the target; this is NOT cumulative doubling. These defaults are `COARSEST_GROWTH_FACE_PENETRATION` (base) and `FINER_GROWTH_THRESHOLD_MULTIPLIER` (multiplier) in `Defines.h`; UI controls are **Growth Base Threshold** and **Finer Growth Threshold Multiplier**, and graph properties are `coarsestGrowthFacePenetration` and `growthFinerLevelMultiplier`. Loading/restarting at a finer level does not reapply the coarsest threshold. The target level also grows with the mode1 cadence and enable flag; only its final save boundary skips growth. Both UI and GPU upload allow `[0, 4]`, using the shared `GROWTH_MAX_FACE_PENETRATION_VOXELS` bound. Smaller values are more aggressive, and zero still requires a genuine face intersection (mere tangency does not qualify). The threshold is outward **depth**, not a semi-axis length. At delta 1, a centered sphere needs radius strictly greater than `1.5 * voxelSize`; at delta 2 it must exceed `2.5 * voxelSize`. The cadence gives a new layer optimization time before the next scheduled growth, but does not guarantee stability or validate geometry. Depths above one extend beyond the immediate neighbor, while each operation still adds only the empty face neighbor, never multiple layers. The old semi-axis trigger has been removed; `ELLIPSOID_MAX_SCALE_VOXELS = 4` remains only the geometry optimizer's scale clamp.
+LossPass.cs.slang 把参考 RGBA 与白底合成，再计算平方误差：
 
-The depth test minimizes the ellipsoid's quadratic over a finite face-sized section shifted by the threshold into the neighbor. The tangential coordinates remain inside `[0, 1]`, so an AABB extremum outside the neighbor's footprint cannot masquerade as sufficient penetration. The shared face is also checked, and its contact point still determines the child's initialization. Depth is normalized by the voxel width along the face normal, including non-cubic voxels. A small implicit-value tolerance rejects tangent/numerically marginal intersections. Empty neighbors outside the grid or inside deletion cooldown are rejected. GPU atomic claims deduplicate shared cells; the winning parent supplies the child. Newborns never become parents in the same operation.
+```text
+R = reference.rgb · reference.alpha + white · (1 - reference.alpha)
+L = ||C - R||² + λ_alpha · (A - reference.alpha)²
+```
 
-Children inherit rotation, semi-axis proportions, and radiance. Their center follows the face-contact region with **Child Contact Offset** into the new cell (default 0.2 voxel). A uniform scale multiplier (default 0.7) is further reduced to keep the entire rotated ellipsoid inside the other five faces, with a small margin. The contact face is exempt: crossing it is permitted, not required. These are initialization constraints, not permanent geometry clamps.
+Alpha Loss Weight 默认 0.5。alpha 监督约束前景覆盖和背景透明，但不能单独决定哪个体素应保留。
 
-Opacity retains its directional pattern when possible, with DC adjusted to keep alpha between one tenth of **Child Max Initial Opacity** and that maximum (default 0.01 to 0.1). Very strong directional coefficients are uniformly attenuated first to make this interval feasible, avoiding nearly zero, untrainable opacity. New geometry/opacity Adam, gradients, and evidence are zeroed; radiance Adam is allocated fresh on demand.
+背景 carve 是额外的几何优化信号；它不是独立计入当前显示 loss 的项。gBinaryOpacityWeight 虽仍上传，但对应二值 opacity 梯度已注释，当前未实际参与优化。
 
-**Newborn Growth Wait (iterations)** independently defaults to five complete training rounds. A child born at the end of round 50 satisfies the age gate at boundary 55, but with the default ten-round global interval it can first be a growth parent at boundary 60, after rounds 51-60 have optimized it. Both the global cadence and the newborn age gate must pass. Geometry, opacity, and radiance optimization continue normally while it waits, and no permanent face clamps are added. Initialized/preexisting voxels are not subject to this newborn wait; each new generation receives a fresh birth clock. The UI setting is applied to current birth ages, so changing it also affects already-created children in the current training clock. Zero disables the additional age gate, not the global cadence or frozen-parent rule. Stopping/viewing does not age or erase the wait, and deletion compaction preserves it along with the moved voxel.
+### 2.3 spp、视角和迭代的区别
 
-**Newborn Protection** independently defaults to five complete training rounds. During this time gradients still optimize the child, but it cannot collect deletion evidence or qualify for deletion; changing the growth wait does not change deletion protection. **Deleted Cell Cooldown** defaults to five rounds and is stored by spatial cell, independently of compact voxel IDs. Restarting optimization clears cooldown, deletion protection, and transient growth-wait birth clocks on the existing grid, while preserving growth lineage for visualization. Sparse v3 checkpoints keep geometry/appearance but not these transient topology states or lineage.
+一次完整迭代表示遍历全部训练相机一次，不是一个 GPU 帧，也不是一次 Adam 更新：
 
-Growth counts unique cells before reserving sufficient parameter pages. It initializes a full layer before publishing positive spatial indices. Page-limit/allocation failure cancels the layer, clears its temporary claims, and disables growth with an explanatory UI status; existing optimization continues if rollback succeeds. The UI reports the last added voxel/page counts. This first version intentionally does not use alpha-deficit or multi-view growth evidence; inspect whether growth fills holes or thickens the surface during scene testing.
+```text
+一轮：随机打乱所有相机
+  每个相机：完成 N 个 spp → 累计梯度 → 更新参数一次
+所有相机完成：结算该轮 loss → 拓扑操作或升层
+```
 
-### Viewing grown voxels
+每轮每个相机恰好访问一次，同一视角的 spp 连续完成。实际相机、参考图像和证据 ID 使用相同的原始数据编号；currentView 只表示本轮遍历位置。查看用 Camera Index 仍按原始编号排列。
 
-On coarse mode1 levels the Topology panel exposes coarse-growth cadence/penetration controls and occupied/grown-cell visualization, while deletion controls remain hidden. At the mode1 target level, deletion evidence settings and candidate visualization become available along with mode1 growth controls and newborn protection/wait/cooldown controls. Refinement creates fresh topology records, so coarse-level green growth markers are not propagated to the next resolution.
+多 spp 时，第 0 个样本提供基线，不反传；之后每个样本用不包含自身的前缀平均计算上游残差，再反传当前 PathRecord，以减轻残差与同一个随机样本耦合产生的偏差。1 spp 时直接使用本帧残差。这不意味着硬几何的代理梯度是精确无偏梯度。
 
-In **Topology**, click **Stop and Show Grown Voxels** while training, or **Show Grown Voxels** after training has stopped. Alternatively, with reconstruction disabled select **Draw Mode: TopologyDebug** and **Debug Layer: Grown voxels**. Surviving voxels created in any growth round are green; optional occupied context is gray. Disable **Show Occupied Context** to see only grown cells, including those behind original geometry. This debug view shows occupied **cells**, independently of the ellipsoid's opacity or shape, not the normal shaded ellipsoid surface. **Show Default** returns to normal rendering.
+显示的轮次 loss 是各视角最后一次 loss 计算的平均，不是额外完整重渲染的评估指标；多 spp 下也不应直接把它视为最终 N-spp 合成图的精确误差。跨实验比较要固定视角、spp、参考数据和评估方式。
 
-Every child stores its birth round plus one (zero denotes an initialized voxel). This marker survives parameter optimization, protection expiry, evidence resets, deletion compaction, stopping training, and restarting optimization on the same grid. Deleted voxels no longer appear. **Init / Reset from PLY** clears lineage by replacing the grid. Markers are session-local: sparse v3 bins do not store them, so loading a saved reconstruction cannot distinguish originally initialized and grown voxels. `Last growth` remains the most recent operation's count, not a cumulative count.
+## 3. 梯度与 Adam
 
-### GPU regression test
+### 3.1 外观梯度与几何代理
 
-The IO roundtrip test saves a filtered refined grid in an isolated temporary directory under each mode, loads it through the production v3 reader, compares voxel parameters byte-for-byte and the full sparse index (including empty cells), and verifies mode1 restarts from the saved resolution. Temporary test files are removed afterward; existing experiment files are untouched.
+梯度在 GradientPass.cs.slang 中手工计算，不依赖 Slang 自动微分或 Falcor SceneGradients。
 
-The same executable also runs `Tests/CoarseToFine.cpp`: coarse PLY initialization, coarse-level deletion gates, target-only evidence and compaction, exact-total weighted scheduling, selected-child spatial indexing and parameter transfer, containment in both directions, face/edge overlaps and tangent rejection, rotated thin-shape AABB false positives, non-cubic cells, actual-count allocation, opacity optical-depth attenuation with directional SH preservation, rotation/axis-ratio inheritance and analytic child/parent containment, all-direction opacity filtering and disabling it, all-filtered rollback, fresh Adam state, real optimizer updates after rebinding, the 16 -> 32 -> 64 schedule including final-level training, and capacity-failure preservation of the old grid. It uses the one-point `Tests/CoarseSeed.ply` fixture; no scene dataset is needed.
+外观梯度沿 alpha 合成路径反向累积。几何前向仍是硬相交，反向用世界距离代理：
 
-Configure with `-DVOXEL_RECONSTRUCTION_BUILD_GROWTH_TESTS=ON`, build `VoxelNeighborGrowthTests`, and run the executable from the Debug/Release runtime directory (use `FALCOR_DEVMODE=1` to resolve shaders from source). The headless D3D12 test uses small parameter pages and synthetic voxels to exercise face-depth threshold boundaries/tangency, positive/negative per-face directions, non-cubic voxel-width normalization, rotated finite-footprint penetration, newborn parent-wait boundaries/UI changes and independence from deletion protection, rotated initialization, single-layer growth, shared-neighbor deduplication, inherited data/fresh Adam, page extension, pool-overflow rollback, newborn clocks through compaction/restart, spatial cooldown expiry, and persistent growth lineage. It also renders the production forward shader to verify green grown cells despite negligible opacity, original-cell filtering, optional gray context, and the occupied/deletion debug layers. No training dataset is required.
+```text
+w = sigmoid(-distanceWorld / tau)
+dw / dd = -w · (1 - w) / tau
+```
 
-## Save and load
+Geometry Tau 默认 0.12 个体素宽度，由 CPU 转换为世界长度。代理作用于 hard-hit 和已有占据体素中的 near-miss，推动 center、logScale 和 rotation。Alpha Geometry Weight 默认 0.1，仅额外缩放 alpha 对几何的代理贡献，不替代图像损失中的 Alpha Loss Weight。
 
-Results are saved under `Reconstruction_Output/mode0` for fixed-resolution training and `Reconstruction_Output/mode1` for coarse-to-fine training. The bin filename begins with the last directory component of `ReferenceImageDir`; **Name Tag** can distinguish experiments. In mode1, **Save Each Completed Level** is enabled by default: the current level is saved immediately before every refinement, while the target level is saved at normal completion. Since the resolution is part of the filename, a 16 -> 32 -> ... -> 512 run produces separate loadable v3 files for every completed level rather than one multi-level container. Checkpoint write failure is reported but does not stop refinement. Disable the option to retain final-only automatic saving. The UI can also save the current reconstruction manually. Loss CSV files are saved under the selected mode's `Loss` subdirectory.
+明确背景像素的处理不是只调透明度：
 
-Automatic filenames include an experiment number: `ship_recon10_5_E0_512_radiance_opacity_center_shape_rotation.bin`, or `ship_recon10_5_E0_<NameTag>_512_...bin`. On the first save of a run, the current mode directory (including its `Loss` subdirectory) is scanned for the same scene/date prefix; the next number is the maximum existing `E` index plus one, starting at `E0`. Name tags and resolutions share this sequence, while mode0/mode1 have independent sequences. All levels of a run reuse its experiment number. Re-enabling optimization or loading a reconstruction starts a new naming session; repeated saves of an already saved level also advance the number rather than overwrite it. Loss CSVs use the exact bin stem with a `.csv` extension, retaining separate histories per experiment and level. The file list uses numeric ordering (`E2` before `E10`). Legacy files without experiment numbers remain loadable and are not renamed.
+- 禁止 radiance 用改变颜色来拟合背景，背景 hard-hit 的 radiance 梯度置零。
+- opacity 仍接受 RGB 和 alpha 梯度，可变得透明。
+- 已命中的几何接受 carve 与 alpha 几何信号，可移动、收缩。
+- GradientPass.cpp 当前上传 gBackgroundCarveWeight = 0.01。
 
-The current bin format is sparse **v3**: grid metadata followed by `(cellIndex, VoxelData)` for each active voxel. The **Reconstruction IO** panel lists files in the selected mode's directory; **Load Selected Reconstruction** loads a v3 file for viewing and stops training. A loaded reconstruction does not require the PLY until it is explicitly reinitialized. Adam moments are not stored in the bin, so subsequent training starts with fresh optimizer state. Legacy dense v2 and earlier bins are no longer loaded by this pass.
+radiance 在非正颜色区域保留能把颜色推回正区间的梯度，避免黑色初始化后无法恢复。
+
+### 3.2 优化状态与默认值
+
+每个参数组独立保存 Adam 一阶矩、二阶矩和步数；没有更新的组不递增其步数。默认 β₁ = 0.9、β₂ = 0.999、epsilon = 1e-8。梯度在稀疏缓冲中原子累计，默认按有效计数归一化。
+
+| 参数 | 默认学习率 |
+|---|---:|
+| radiance | 0.001 |
+| opacity | 0.0005 |
+| center | 0.001 |
+| logScale | 0.001 |
+| rotation | 0.0005 |
+
+单次几何步长限制为 center 每轴 0.02 个体素、logScale 每轴 0.02、rotation 0.02 rad。Background Carve Adam Multiplier 默认 5，在 Adam 归一化之后，按背景几何样本比例放大几何更新；它不是 gBackgroundCarveWeight。
+
+mode0 的 opacity 前 20 轮冻结，随后 30 轮线性恢复到目标学习率；mode1 每个层级从第一轮就使用目标学习率，没有这段 warm-up/ramp。
+
+旧的“按椭球体积比例直接清空 occupied”逻辑已移除，包括体积计算、CPU 参数、shader 分支和 UI。正常参数更新不再按体积阈值删除体素。
+
+## 4. 两种训练模式与层级调度
+
+| 模式 | 分辨率流程 | 生长 | 多视角删除 |
+|---|---|---|---|
+| mode0 | 固定分辨率，默认 512 | 默认每 10 轮，δ = 1 | opacity 恢复结束后开启 |
+| mode1 | 起始分辨率逐次翻倍到目标 | 所有层级默认每 20 轮 | 仅目标层级开启 |
+
+RECONSTRUCTION_MODE 默认 1。GRID_RESOLUTION 默认 512；COARSE_TO_FINE_START_RESOLUTION 默认 16。实际实验从 64 开始时，应在 UI 设置 Coarse Start Resolution = 64；不能把实验习惯与源码默认值混淆。
+
+mode1 的总轮数由 COARSE_TO_FINE_TOTAL_ITERATIONS 定义，当前为 1000。权重 COARSE_TO_FINE_LEVEL_WEIGHTS 当前为 {19, 12, 14, 25}。
+
+四个活跃层级直接用四个权重；其他层级数在四个控制点之间插值。先为每层保留一轮，再累计加权取整分配剩余轮数，保证总和严格等于总预算。从 64 开始、目标 512、总轮数 1000 时：
+
+| 层级 | 优化轮数 |
+|---|---:|
+| 64 | 271 |
+| 128 | 172 |
+| 256 | 200 |
+| 512 | 357 |
+
+默认从 16 开始的六层预算为 184、143、120、132、179、242。UI 或宏修改后会重新计算，以上不是硬编码表。
+
+分辨率必须为 2 的幂，起始不大于目标，目标不超过 1024，总轮数不小于活跃层数。mode1 使用 Total Iterations；mode0 使用 Max Iteration。改变模式、起始或目标分辨率会要求下一次初始化重新读取 PLY。
+
+每层的升层/完成边界跳过生长，避免把完全未优化的新一层立刻细分或最终保存。其他完整轮次按层级局部时钟执行生长；目标层级先删除，再生长。
+
+## 5. 升层分裂：粗网格到细网格
+
+这里的“分裂”是替换网格，不同于保留父体素的邻域生长。
+
+### 5.1 只考虑父 cell 对应的八个子 cell
+
+每个父体素最多产生八个子体素；不会因为父椭球很大，就在父 cell 范围外额外生成子 cell。
+
+子 cell 的闭包盒必须与原始父椭球相交。判定使用旋转椭球二次型在盒内的约束最小值，包含面、边、角情况；不是只测试子中心，也不是只测试 AABB。内部子 cell 和边界相交子 cell 都可以保留，完全不相交者为空。纯相切或无法容纳最小可表示子椭球的薄碎片会被拒绝。
+
+Refinement Parent Opacity Threshold 默认 0，表示不按父 opacity 过滤。若提高阈值，使用方向 opacity 的保守 SH 上界筛选父体素；这一筛选与多视角证据删除不同。若全部父体素被过滤，停止升层并保留旧网格。
+
+### 5.2 子椭球初始化
+
+所有保留的子椭球继承父旋转与三轴比例，但尺寸不只是固定等比缩小：
+
+- 八个角都在父椭球内部的子 cell：中心放在子 cell 中心，根据旋转后实际范围缩放。
+- 边界子 cell：用可行尺寸搜索和约束中心搜索向父椭球内部靠近；当小幅向内移动能保留足够尺寸时，优先小幅移动。
+- 默认允许越过子 cell 面 0.1 个子体素宽度，UI 范围 [0, 0.2]；中心球的半径上限因此约为 0.6 × 子体素宽度。
+- 整个子椭球仍须在原始父椭球内部。在父单位球坐标中，同旋转、同轴比的子椭球满足 ||centerOffset|| + scale <= 1。
+
+这些是初始化约束，不是后续优化的永久限制。它们也不能保证子椭球精确铺满父体积或升层前后图像完全一致。
+
+### 5.3 外观与状态继承
+
+radiance 完全复制。opacity 使用默认 0.65 的光学厚度衰减：
+
+```text
+alpha_DC = sigmoid(parentOpacityDC · Y0)
+tau_DC   = -log(1 - alpha_DC)
+childAlpha_DC = 1 - exp(-0.65 · tau_DC)
+```
+
+再调整 opacity SH 的 DC 系数，保留其他方向系数；倍率设为 1 可禁用衰减。这只是减轻多个子命中叠加的初始化近似，不是逐射线透射率守恒的精确分裂。
+
+新网格的 Adam、梯度和拓扑记录初始化，训练的全局轮数和 loss 历史继续。粗层级的生长绿色标记不会继承到细层级。
+
+先统计实际选中的子体素，再分配新网格并初始化，成功后替换旧网格。升层峰值显存包含新旧网格和临时掩码/偏移缓冲。超出容量或分配失败时停止训练、保留原网格，不静默丢掉部分子体素。
+
+## 6. 邻域生长：可撤销的几何探索
+
+### 6.1 触发条件与阈值
+
+生长保留父体素，只扫描本次操作开始时的活跃父集合，向空的 6 面邻居增加一层。本轮新生体素不能立刻继续生长。没有人为的新增数量预算，但受网格范围、属性页上限和显存约束。
+
+父椭球必须真实穿过共享面，并在邻居切向范围内达到指定外伸深度。算法先检查共享面，再把有限面截面向邻居平移 δ × voxelSize，求椭球二次型约束最小值。这样避免旋转椭球 AABB 在邻居范围之外的极值误触发。
+
+δ 是外伸深度，不是半轴长度；不相交、近似相切、已有占据邻居、删除冷却位置和待删除父体素都不能触发生长。一个父体素可同时向多个满足条件的空邻居生长，最多六个；相邻父体素争用同一空 cell 时用原子 claim 去重，获胜父体素提供初始化数据。
+
+mode1 的两个默认控制量位于 Defines.h：
+
+```cpp
+#define COARSEST_GROWTH_FACE_PENETRATION 1.3f
+#define FINER_GROWTH_THRESHOLD_MULTIPLIER 2.0f
+```
+
+配置的最粗层级使用基础值 1.3，其余所有层级统一使用 1.3 × 2 = 2.6，包含最精细层级；不逐层累乘。从更细层级加载或继续训练，不会把该层级重新当成“最粗层级”。
+
+UI 对应 Growth Base Threshold 和 Finer Growth Threshold Multiplier。最终外伸阈值上限为 4 个体素宽度，图属性初始化会校验参数，GPU 上传也有限制。旧 coarseGrowthFacePenetration 绝对阈值可迁移为倍数以保留旧实验，输出警告；若要新实验的 2.6，须确认当前倍数为 2。
+
+### 6.2 新生参数、等待与保护
+
+子椭球复制父 radiance、旋转和轴比，中心放在新 cell 内、靠近实际接触位置。Child Contact Offset 默认 0.2 个体素。先以 0.7 倍缩小，再按旋转后的实际范围进一步收缩，保证不穿过其余五个面；朝父体素的接触面允许越界，目前没有单独的越界深度上限。
+
+子 opacity 不完全复制：调整 DC，必要时减弱方向系数，使各方向初始 alpha 落在约 0.01～0.1 的可训练范围。Adam、梯度与删除证据初始化；父参数及父 Adam 不受生长影响。
+
+| 生命周期设置 | 默认完整轮数 | 作用 |
+|---|---:|---|
+| Newborn Growth Wait | 5 | 新生体素暂时不能当生长父体素 |
+| Newborn Protection | 5 | 新生体素暂时不收集删除票、不具备删除资格 |
+| Deleted Cell Cooldown | 5 | 删除位置暂时不能再长回去 |
+
+等待期间仍正常优化外观和几何；等待到期不表示已经稳定。年龄条件和全局生长周期必须同时满足。例如 mode1 子体素在局部轮次 20 出生，默认下一次可参与的周期通常是局部轮次 40。
+
+生长先统计唯一新 cell，再扩充属性页、初始化整层，最后发布有效空间索引。失败则回滚临时 claim 并禁用生长；回滚成功时已有参数仍可继续优化。界面显示 Last growth，是最近一次操作数量，不是累计数量。
+
+### 6.3 当前生长不包含哪些证据
+
+当前没有 GrowthEvidencePass，也没有按明确前景、alpha deficit、独立视角支持或背景冲突筛选生长位置。上述多视角证据用于删除，不用于决定是否出生。
+
+因此生长是几何驱动的探索，不保证一定补在真实空洞上。低初始 opacity 也不能保证大量新生几何叠加后无雾。收紧后续阈值只减少新探索，不会自动撤销最粗层级已经产生并传到后续层级的错误几何。
+
+## 7. 多视角证据删除与压缩
+
+### 7.1 局部移除影响
+
+对真实 hard-hit，GradientPass 估计移除当前命中、保持记录路径中其他命中固定时的 RGB/alpha 变化：
+
+```text
+ΔC = T_before · opacity · (behindColor - radiance)
+ΔA = -T_before · opacity · T_after
+ΔL = dot(dL/dC, ΔC) + ||ΔC||²
+   + (dL/dA) · ΔA + λ_alpha · ΔA²
+```
+
+这是结合当前残差的局部反事实估计，不是删除后重新渲染整个场景的全局 loss，也没有显式检查其他体素能否在重新优化后替代它。
+
+- 可靠前景且 ΔL > 阈值：移除有害，投前景支持票。
+- 可靠背景且 ΔL < -阈值：移除有益，投背景冲突票。
+- 模糊 alpha、遮挡过强、影响过小或新生保护中的命中不投票。
+
+默认前景 alpha >= 0.95，背景 alpha <= 1e-4，移除影响阈值为 1e-4，T_before 至少 0.05。背景可见性、透明度和随机命中机会都影响证据；没有 hit 不等于证明应该保留。
+
+### 7.2 精确独立相机去重
+
+每个体素分别存前景/背景相机位集合，原子 OR 首次置位才计票。同一窗口内，同一实际相机最多贡献一张前景票和一张背景票，不受像素数量、随机顺序或跨轮重复访问影响。
+
+每个视角每轮只用最终 spp 样本收集证据；多 spp 不额外增加投票权重，1 spp 可以通过多个训练轮次获得不同 jitter 的观测机会。
+
+TOPOLOGY_EVIDENCE_MAX_VIEWS 默认 128，覆盖当前 100 视角数据集。证据记录为 48 字节，包含两个相机集合、计数/标志和生命周期信息。超过容量的数据集会拒绝训练，需提高宏后重编译，不能用哈希碰撞或截断代替独立视角。
+
+### 7.3 窗口资格与删除时机
+
+当前 TopologySettings 默认值：
+
+| 参数 | 默认值 |
+|---|---:|
+| minDeletionConflictViews | 5 |
+| deletionConflictSupportRatio | 2 |
+| evidenceInterval | 5 轮 |
+| deletionInterval | 10 轮 |
+
+设 B 为独立背景冲突相机数，F 为独立前景支持相机数。一个窗口满足 B >= 5 且 B >= 2F 时具备删除资格；等号成立也算满足。
+
+两个满足条件的窗口确认删除候选，不要求严格连续。空窗口或弱证据窗口保留历史。取消历史/候选需要 F >= max(2, ceil(minConflictViews / ratio))，且背景没有占优势；按当前默认值需要至少 3 个前景支持相机，而不是一张前景票否决。
+
+每个窗口结算后清空相机集合和本窗口计数，保留必要的资格/候选历史。证据收集本身不修改占据状态。
+
+mode0 默认从轮次 50 开始收集，最早轮次 60 检查删除，之后每 10 轮检查。mode1 粗层级不删除；到目标层级重新从该层级局部时钟收集，最早在该层级训练 10 轮后检查。最终完成边界也处理已经确认的候选。
+
+### 7.4 删除后的紧凑池
+
+TopologyDeletion.cpp 用 GPU 生成空洞 ID 与尾部存活 donor ID，将 donor 移到紧凑前缀，修正位置索引，释放完整尾页，并保留适量生长余量。删除 cell 写入短暂空间冷却，避免立即在原位置循环生长。
+
+移动保留外观、几何、几何/opacity Adam 及新生生命周期；独立 radiance Adam 映射和矩状态被重置，以回收孤立槽位。压缩后删除证据重置，下一次确认需要新窗口，新生保护期仍保留。
+
+## 8. 暂停、追加训练与状态继承
+
+停止训练不改变当前几何，暂停的现实时间不计入新生年龄。
+
+在同一个网格上重新 Enable：
+
+- 保留当前参数及现有 Adam 状态；重启轮数/视角时钟与 loss 历史。
+- 清空删除证据、位置冷却、新生删除保护和暂态生长等待时钟。
+- 保留本次会话中的生长来源标记。
+- mode1 从当前分辨率重新分配整份总预算；已在目标层级时，整份预算都在该层级运行。
+- mode0 的 opacity warm-up/ramp 随重启的训练时钟再次执行。
+
+Init / Reset from PLY 会重建网格并清空相应状态。升层和文件加载会创建新资源，其 Adam 为初值，不能与同网格再次 Enable 的行为混为一谈。
+
+## 9. 保存、加载与可视化
+
+### 9.1 各层级文件与命名
+
+mode0 保存到 Reconstruction_Output/mode0，mode1 保存到 Reconstruction_Output/mode1。Save Each Completed Level 默认开启，在每次升层前保存当前层级，最终层级完成后自动保存。每个层级是独立 v3 文件，不是一个同时包含所有层级的容器。中间层级保存失败会报告，但不阻止升层。
+
+默认命名包含场景、日期、实验编号、可选标签、分辨率和优化参数，例如：
+
+```text
+ship_recon10_6_E0_64_radiance_opacity_center_shape_rotation_adam.bin
+ship_recon10_6_E0_512_radiance_opacity_center_shape_rotation_adam.bin
+```
+
+扫描同场景/日期下已有 bin 和 Loss CSV 的最大 E 编号，下一次使用最大值加一，无文件从 E0 开始。同一训练的不同层级复用编号；mode0/mode1 独立计数。加载、重新 Enable 或重复保存已经存在的层级，会开启新的命名会话/编号，以免覆盖。文件列表按数字排序，E2 在 E10 前。
+
+CSV 位于对应 mode 的 Loss 子目录，文件名与 bin 的 stem 一致。训练历史可能跨层级累计，层级 checkpoint CSV 不一定只含本层级的数据。
+
+### 9.2 v3 存储边界
+
+v3 保存网格元数据和每个活跃体素的 (cellIndex, VoxelData)。不保存 Adam、删除证据、新生时钟、空间冷却、生长来源标记或完整金字塔调度进度。
+
+Load Selected Reconstruction 加载参数、停止训练并清空当前 loss 历史。加载后可直接查看，不要求原始 PLY；再次 Enable 从保存分辨率优化，使用新 Adam。旧 dense v2 及更早格式不再支持。
+
+### 9.3 切换同一实验层级
+
+加载一个带 E 编号的结果，或当前重建完成并保存后，在 Reconstruction IO → Experiment Level 选择对应已保存分辨率即可直接切换，再选择目标层级可返回最终保存结果。
+
+归组使用同目录下的场景/日期/E 编号/Name Tag，不是只比较 E 编号。训练期间禁用切换。切换会加载文件并替换当前网格、重置 Adam 和 loss，不是保留完整训练状态的临时预览；再次训练从正在查看的层级开始。
+
+只列出实际保存的层级。未保存的粗层级不能从最终网格逆推出。无 E 编号的旧文件仍能手动加载，但不自动归组。Viewing Resolution 控制输出图像尺寸，与体素层级无关：训练固定 800×800，停止时可选择 800×800 或 1920×1080。
+
+### 9.4 生长与删除调试显示
+
+Topology 中 Show Grown Voxels / Stop and Show Grown Voxels 显示绿色生长 cell，Show Occupied Context 可添加灰色上下文；Show Default 恢复正常渲染。删除候选层用红色显示候选。
+
+调试层显示 cell，不依赖椭球 opacity，因此可以看见低透明度的新生位置。生长标记在同网格优化、删除压缩、停止和重新 Enable 后保留，删除后不再显示；升层、重新初始化或加载文件不保留来源标记。不能用绿色 cell 可见性判断正常渲染是否已有有效几何。
+
+## 10. 代码导航与验证
+
+| 代码 | 职责 |
+|---|---|
+| Defines.h / VoxelReconstructionNoLightTransport.h | 编译默认值、运行时设置、资源与生命周期状态 |
+| VoxelReconstructionNoLightTransport.cpp | 按视角/spp 调度、随机顺序、UI |
+| PointCloudLoader.cpp / PointCloudInitialization.cpp | PLY、稀疏网格分配与初始化、状态重启 |
+| RayMarchingPass.cpp / Shader/RayMarchingPass.ps.slang | 前向 DDA、硬相交、记录路径和调试显示 |
+| LossPass.cpp / Shader/LossPass.cs.slang | 图像残差、alpha 分类与上游导数 |
+| GradientPass.cpp / Shader/GradientPass.cs.slang | 手工外观/几何梯度、独立相机证据票 |
+| UpdatePass.cpp / Shader/UpdatePass.cs.slang | Adam 与参数范围、步长限制 |
+| ReducePass.cpp | loss 归约、完整轮次历史 |
+| CoarseToFine.cpp / Shader/RefineGrid.cs.slang | 层级预算、父子转移、升层事务 |
+| TopologyGrowth.cpp / Math/GrowthEllipsoid.slang / Shader/GrowthPass.cs.slang | 有限面外伸判定、原子 claim、初始化与回滚 |
+| TopologyPass.cpp / Shader/TopologyPass.cs.slang | 证据窗口、资格与候选状态 |
+| TopologyDeletion.cpp / Shader/DeleteCompactPass.cs.slang | 删除、紧凑池搬移、冷却与资源回收 |
+| DataProcess.cpp | v3 IO、E 编号、实验层级归组 |
+
+GPU 回归测试入口为 Tests/NeighborGrowth.cpp 和 Tests/CoarseToFine.cpp，使用小页与合成数据，不依赖实际训练数据集：
+
+```text
+配置：-DVOXEL_RECONSTRUCTION_BUILD_GROWTH_TESTS=ON
+构建：VoxelNeighborGrowthTests
+运行：在对应 Debug/Release 运行目录运行程序；设置 FALCOR_DEVMODE=1 从源码解析 shader
+```
+
+覆盖基值/倍数与旧属性迁移、随机视角、独立相机去重及并发像素、生命周期保护、所有层级生长与最终边界、有限面判定、共享邻居去重、属性页扩充/溢出回滚、升层尺寸与父体积约束、Adam 转移、实际优化器绑定、目标层级删除、v3 往返、E 编号和层级查看归组。
+
+回归通过只验证实现约束，不保证真实场景收敛质量、细绳连续性或没有白雾。
+
+## 11. 当前限制与实验排查
+
+- 生长靠几何外伸，没有前景缺失与多视角出生确认，可能加厚表面或制造漂浮几何。
+- 单次只加一层不是总数量预算；大量父体素同时触发仍会新增很多体素。
+- 新生等待是轮数门槛，不是稳定性检测；接触面越界和后续优化变大仍被允许。
+- 升层改变覆盖、命中数量及透明度叠加，不能保证 loss 连续或不突升；较粗初始化也可能丢失点云的细轮廓。
+- 当前粗层级不删除，错误粗几何可被传到后续层级；调高后续阈值不会自动清理这些已有后代。
+- 前景支持可能遮挡背景反证，反之过强删除也可能损伤细结构。当前局部移除估计不等价于重新优化后的可替代性。
+- 低初始 opacity、radiance 尚未稳定、多层透明遮挡均可能产生雾状外观；仅凭白色不能断言 radiance 没收到梯度。
+- hard-hit / near-miss 记录容量、透射率提前终止和低 opacity 导数都会影响观测与优化。
+
+排查建议固定起始层级、预算比例、spp、数据与学习率，每次只改一个因素。比较升层前后及每个生长周期前后的图像、活跃体素数、Last growth 和实际阈值，区分“升层初始化产生的缝隙/雾”和“本层级生长新增的雾”。全程 δ = 2 与最粗 1.3、后续 2.6 是不同的几何历史，不能只比较最终层级的阈值。
