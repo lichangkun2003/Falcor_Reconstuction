@@ -35,7 +35,9 @@ double coverageSqrt(double x)
         factor *= 4294967296.0L;
     }
     double seed = double(sqrt(float(scaled)));
-    for (uint i = 0; i < 3; ++i) seed = 0.5 * (seed + scaled / seed);
+    // A float sqrt seed has ~24 bits; two Newton steps exceed double precision.
+    [unroll]
+    for (uint i = 0; i < 2; ++i) seed = 0.5 * (seed + scaled / seed);
     return seed * factor;
 }
 
@@ -45,7 +47,10 @@ void coverageSinCos(double angle, out double sine, out double cosine)
     double x = angle - double(quadrant) * (0.5 * kCoveragePi);
     double x2 = x * x;
     double s = x, c = 1.0, st = x, ct = 1.0;
-    for (uint i = 1; i <= 12; ++i)
+    // Range reduction guarantees |x| <= pi/4. Eight terms put the first
+    // omitted term below double roundoff. Unroll to make divisors constant.
+    [unroll]
+    for (uint i = 1; i <= 8; ++i)
     {
         st *= -x2 / double((2u * i) * (2u * i + 1u));
         ct *= -x2 / double((2u * i - 1u) * (2u * i));
@@ -65,6 +70,7 @@ double coverageAtan(double value)
     bool quarterTurn = x > 0.4142135623730950488L;
     if (quarterTurn) x = (x - 1.0) / (x + 1.0);
     double x2 = x * x, term = x, sum = x;
+    [unroll]
     for (uint i = 1; i <= 22; ++i)
     {
         term *= -x2;
@@ -89,6 +95,7 @@ double coverageLog(double x)
     double mantissa = x * double(exp2(float(-exponent)));
     double z = (mantissa - 1.0) / (mantissa + 1.0);
     double z2 = z * z, term = z, sum = z;
+    [unroll]
     for (uint i = 1; i <= 22; ++i)
     {
         term *= z2;

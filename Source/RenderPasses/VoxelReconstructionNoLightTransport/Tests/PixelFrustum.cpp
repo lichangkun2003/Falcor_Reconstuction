@@ -1,5 +1,6 @@
 #include "Falcor.h"
 #include "Core/Pass/FullScreenPass.h"
+#include "Core/API/GpuTimer.h"
 #include "Scene/SceneBuilder.h"
 #include "Scene/Lights/EnvMap.h"
 #include "../Voxel/VoxelData.slang"
@@ -357,6 +358,129 @@ void testForward(const ref<Device>& device)
     bytes = ctx->readTextureSubresource(output.get(), 0);
     std::memcpy(&color, bytes.data(), sizeof(color));
     require(std::isfinite(color.x) && std::isfinite(color.w), "Ray mode produced non-finite output");
+    // Repeatable forward timing fixture, using GPU timestamp queries.
+    // This small sparse scene is a regression benchmark, not a training-scene FPS claim.
+    cb["usePixelFrustum"] = true;
+    cb["pixelCount"] = uint2(128);
+    cb["viewProjection"] = orthographicVP();
+    cb["invVP"] = inverse(orthographicVP());
+    cb["cameraPosition"] = float3(0.5f, 0.5f, 0);
+    cb["cameraForward"] = float3(0, 0, 1);
+    cb["cameraDepthRange"] = float2(0, 10);
+    auto benchmarkAccu = device->createTexture2D(128, 128, ResourceFormat::RGBA32Float, 1, 1, nullptr, flags);
+    var["gAccuColor"] = benchmarkAccu;
+    auto benchmarkOutput = device->createTexture2D(128, 128, ResourceFormat::RGBA32Float, 1, 1, nullptr,
+        ResourceBindFlags::ShaderResource | ResourceBindFlags::RenderTarget);
+    fbo->attachColorTarget(benchmarkOutput, 0);
+    ctx->clearUAV(benchmarkAccu->getUAV().get(), float4(0));
+    pass->execute(ctx, fbo);
+    ctx->readTextureSubresource(benchmarkOutput.get(), 0); // Warm up shader/driver.
+    auto timer = GpuTimer::create(device);
+    const auto measureForward = [&]()
+    {
+        double time = 0;
+        for (uint32_t iteration = 0; iteration < 5; ++iteration)
+        {
+            timer->begin();
+            pass->execute(ctx, fbo);
+            timer->end();
+            timer->resolve();
+            bytes = ctx->readTextureSubresource(benchmarkOutput.get(), 0);
+            time += timer->getElapsedTime();
+        }
+        return time / 5;
+    };
+    const double optimizedTime = measureForward();
+    const auto optimizedBytes = bytes;
+    pass->getProgram()->addDefine("FRUSTUM_DISABLE_FAST_PATH", "1");
+    pass->getProgram()->addDefine("FRUSTUM_CANDIDATE_BATCH_SIZE", "1");
+    pass->execute(ctx, fbo);
+    ctx->readTextureSubresource(benchmarkOutput.get(), 0);
+    const double analyticTime = measureForward();
+    std::cout << "128x128 sparse forward GPU ms: analytic=" << analyticTime << " optimized=" << optimizedTime << '\n';
+    for (size_t offset = 0; offset < bytes.size(); offset += sizeof(float4))
+    {
+        float4 reference, optimized;
+        std::memcpy(&reference, bytes.data() + offset, sizeof(reference));
+        std::memcpy(&optimized, optimizedBytes.data() + offset, sizeof(optimized));
+        require(length(reference - optimized) < 2e-5f, "Fast coverage differs from analytic reference");
+    }
+    pass->getProgram()->removeDefine("FRUSTUM_DISABLE_FAST_PATH");
+    pass->getProgram()->removeDefine("FRUSTUM_CANDIDATE_BATCH_SIZE");
+    double totalRed = 0;
+    for (size_t offset = 0; offset < bytes.size(); offset += sizeof(float4))
+    {
+        std::memcpy(&color, bytes.data() + offset, sizeof(color));
+        totalRed += color.x;
+    }
+    require(std::abs(totalRed - 0.5 * pi * 0.002 * 128 * 128) < 0.01,
+        "High-resolution coverage integral changed");
+    for (bool perspectiveFixture : {false, true})
+    {
+        for (uint32_t id = 0; id < 2; ++id)
+        {
+            voxels[id].ellipsoid = ellipsoid(float3(0.9f, 0.3f, 0.5f), float3(0.3f, 0.1f, 0.3f));
+            voxels[id].ellipsoid.rotation = float4(0, std::sin(0.2f), 0, std::cos(0.2f));
+        }
+        grid["voxelPages"][0] = device->createStructuredBuffer(sizeof(VoxelData), 32u, flags, MemoryType::DeviceLocal, voxels.data());
+        vp = perspectiveFixture ? camera->getViewProjMatrixNoJitter() : orthographicVP();
+        cb["viewProjection"] = vp;
+        cb["invVP"] = inverse(vp);
+        cb["cameraPosition"] = perspectiveFixture ? camera->getPosition() : float3(0.5f, 0.5f, 0);
+        cb["cameraForward"] = perspectiveFixture ? normalize(camera->getTarget() - camera->getPosition()) : float3(0, 0, 1);
+        cb["cameraDepthRange"] = perspectiveFixture ? float2(camera->getNearPlane(), camera->getFarPlane()) : float2(0, 10);
+        pass->getProgram()->addDefine("FRUSTUM_DISABLE_FAST_PATH", "1");
+        pass->getProgram()->addDefine("FRUSTUM_CANDIDATE_BATCH_SIZE", "1");
+        pass->execute(ctx, fbo);
+        const auto referenceBytes = ctx->readTextureSubresource(benchmarkOutput.get(), 0);
+        pass->getProgram()->removeDefine("FRUSTUM_DISABLE_FAST_PATH");
+        pass->getProgram()->removeDefine("FRUSTUM_CANDIDATE_BATCH_SIZE");
+        pass->execute(ctx, fbo);
+        const auto fastBytes = ctx->readTextureSubresource(benchmarkOutput.get(), 0);
+        for (size_t offset = 0; offset < fastBytes.size(); offset += sizeof(float4))
+        {
+            float4 reference, fast;
+            std::memcpy(&reference, referenceBytes.data() + offset, sizeof(reference));
+            std::memcpy(&fast, fastBytes.data() + offset, sizeof(fast));
+            require(length(reference - fast) < 2e-5f, "Clipped/rotated high-resolution fast coverage differs from analytic reference");
+        }
+    }
+    // Sixteen candidates in each of two slabs exercise batch overflow and
+    // deterministic equal-depth ID ordering, including an interleaved color.
+    std::fill(indices.begin(), indices.end(), -1);
+    float3 batchExpected(0);
+    float batchT = 1;
+    const float batchAlpha = alpha / 64.0f;
+    for (uint32_t id = 0; id < 32; ++id)
+    {
+        const uint32_t x = id % 4, y = (id / 4) % 4, z = id < 16 ? 2 : 4;
+        indices[x + 8 * y + 64 * z] = int32_t(id);
+        voxels[id] = voxels[id % 2];
+        const float3 radiance = (id % 2) == 1 ? float3(1, 0, 0) : float3(0, 1, 0);
+        batchExpected += batchT * batchAlpha * radiance;
+        batchT *= 1 - batchAlpha;
+    }
+    grid["indexPages"][0] = device->createTexture3D(8, 8, 8, ResourceFormat::R32Int, 1u, indices.data(), flags);
+    grid["voxelPages"][0] = device->createStructuredBuffer(sizeof(VoxelData), 32u, flags, MemoryType::DeviceLocal, voxels.data());
+    grid["activeVoxelCount"] = 32u;
+    cb["pixelCount"] = uint2(1);
+    cb["cameraPosition"] = float3(0.5f, 0.5f, 0);
+    cb["cameraForward"] = float3(0, 0, 1);
+    cb["cameraDepthRange"] = float2(0, 10);
+    // Restore the thin, unclipped ellipsoid used by the overflow reference.
+    for (uint32_t id = 0; id < 32; ++id)
+        voxels[id].ellipsoid = ellipsoid(float3(0.2f, 0.3f, 0.5f), float3(0.02f, 0.1f, 0.1f));
+    grid["voxelPages"][0] = device->createStructuredBuffer(sizeof(VoxelData), 32u, flags, MemoryType::DeviceLocal, voxels.data());
+    vp = orthographicVP();
+    vp[0][0] = vp[1][1] = 0.25f;
+    cb["viewProjection"] = vp;
+    cb["invVP"] = inverse(vp);
+    fbo->attachColorTarget(output, 0);
+    var["gAccuColor"] = accu;
+    color = readForward();
+    require(length(float3(color.x, color.y, color.z) - batchExpected) < 2e-7f,
+        "Candidate batch overflow dropped, repeated or reordered a voxel");
+    require(std::abs(color.w - (1 - batchT)) < 2e-7f, "Candidate batch overflow transmittance failed");
 }
 }
 

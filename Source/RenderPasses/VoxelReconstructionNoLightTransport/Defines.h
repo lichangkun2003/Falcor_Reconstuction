@@ -3,13 +3,13 @@
 // Shared by host code and shaders. Reconstruction uses point-cloud initialization.
 
 #ifndef GRID_RESOLUTION
-#define GRID_RESOLUTION 128
+#define GRID_RESOLUTION 512
 #endif
 
 // 0: fixed-resolution reconstruction;
 // 1: conservative coarse-to-fine experiment.
 #ifndef RECONSTRUCTION_MODE
-#define RECONSTRUCTION_MODE 0
+#define RECONSTRUCTION_MODE 1
 #endif
 #define COARSE_TO_FINE_START_RESOLUTION 16
 #define COARSEST_GROWTH_FACE_PENETRATION 1.3f
