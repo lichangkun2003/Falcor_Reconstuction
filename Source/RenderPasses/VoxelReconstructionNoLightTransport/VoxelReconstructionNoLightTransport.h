@@ -83,7 +83,8 @@ inline std::string ReferenceImageDir = "Reconstruction_Input/ship";
 inline std::string ReferenceCameraFile = "Reconstruction_Input/ship/transforms_train.json";
 // Use the sparse point cloud that was supplied to 3DGS. The optimized 3DGS
 // output remains available as "point_cloud.ply" for comparison experiments.
-inline std::string InitializationPointCloudFile = "init_points.ply";
+//inline std::string InitializationPointCloudFile = "init_points.ply";
+inline std::string InitializationPointCloudFile = "point_cloud.ply";
 
 inline std::filesystem::path resolveReconstructionPath(const std::filesystem::path& path)
 {

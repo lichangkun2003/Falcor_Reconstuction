@@ -6,9 +6,10 @@
 #define GRID_RESOLUTION 512
 #endif
 
-// 0: fixed-resolution reconstruction; 1: conservative coarse-to-fine experiment.
+// 0: fixed-resolution reconstruction;
+// 1: conservative coarse-to-fine experiment.
 #ifndef RECONSTRUCTION_MODE
-#define RECONSTRUCTION_MODE 1
+#define RECONSTRUCTION_MODE 0
 #endif
 #define COARSE_TO_FINE_START_RESOLUTION 16
 #define COARSEST_GROWTH_FACE_PENETRATION 1.3f
