@@ -288,10 +288,11 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
     {
         // 批开始时清掉上一批留下的梯度，整批之内只做原子累加.
         // gradBuffer 的元素与 appearanceValid/geometryValid 计数一起累加.
-        // update 时按计数求平均，得到的就是本批所有无偏梯度的平均.
+        // Update averages by backward samples, not per-voxel valid contributions.
         if (isFirstSample)
         {
             clearSparseGradients(pRenderContext);
+            mViewGradientSampleCount = 0;
         }
 
         if (hasResidualBaseline)
@@ -301,6 +302,7 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
             mLossPass.mView = getTrainingViewIndex();
             runLossPass(pRenderContext, renderData);
             runGradientPass(pRenderContext, renderData);
+            ++mViewGradientSampleCount;
         }
 
         if (isLastSample)

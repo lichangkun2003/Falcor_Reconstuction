@@ -1,10 +1,13 @@
 #include "Falcor.h"
 #include "Core/Pass/FullScreenPass.h"
+#include "Core/Pass/ComputePass.h"
 #include "Core/API/GpuTimer.h"
 #include "Scene/SceneBuilder.h"
 #include "Scene/Lights/EnvMap.h"
 #include "../Voxel/VoxelData.slang"
 #include "../PathRecord.slang"
+#include "../GradRecord.slang"
+#include "../GeometryAdamState.slang"
 #include <cmath>
 #include <cstring>
 #include <iostream>
@@ -192,6 +195,67 @@ void testCoverage(const ref<Device>& device)
         std::cout << "hyperbolic/parabolic cap, cameraZ=" << cameraZ << ": " << actual << " expected " << expected << '\n';
         require(std::abs(actual - expected) < 8e-5f, "Near-camera clipped conic area failed");
     }
+}
+
+void testUpdateNormalization(const ref<Device>& device)
+{
+    ProgramDesc desc;
+    desc.addShaderLibrary(std::string(shaderRoot) + "Shader/UpdatePass.cs.slang").csEntry("main");
+    desc.setShaderModel(ShaderModel::SM6_5);
+    DefineList defines;
+    defines.add("SPARSE_POOL_PAGE_SIZE", "32u");
+    defines.add("SPARSE_POOL_MAX_PAGES", "2");
+    auto pass = ComputePass::create(device, desc, defines);
+    auto var = pass->getRootVar();
+    auto block = ParameterBlock::create(device, pass->getProgram()->getReflector()->getParameterBlock("gGridDataParamBlock"));
+    auto grid = block->getRootVar();
+    grid["activeVoxelCount"] = 4u;
+    grid["voxelSize"] = float3(1);
+    var["gGridDataParamBlock"] = block;
+    const auto flags = ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess;
+    auto cb = var["CB"];
+    cb["gSparseUpdateOffset"] = 0u;
+    cb["gGradScale"] = 1.0f;
+    cb["gLrRadiance"] = 0.0f;
+    cb["gLrOpacity"] = 0.001f;
+    cb["gLrCenter"] = 0.001f;
+    cb["gLrShape"] = 0.0f;
+    cb["gLrRotation"] = 0.0f;
+    cb["gBackgroundCarveAdamMultiplier"] = 1.0f;
+    for (uint32_t samples : {1u, 7u})
+    {
+        std::vector<VoxelData> voxels(32);
+        std::vector<GradRecord> gradients(32);
+        std::vector<GeometryAdamState> moments(32);
+        for (uint32_t id = 0; id < 4; ++id)
+        {
+            voxels[id].occupied = 1u;
+            voxels[id].ellipsoid = ellipsoid(float3(0.5f), float3(0.1f));
+            // Equal gradient sums with different hit counts must yield equal
+            // moments. A doubled sum must retain its doubled contribution.
+            gradients[id].appearanceValid = gradients[id].geometryValid = id == 0 ? 1u : (id == 3 ? 0u : 20u);
+            gradients[id].opacityGrad.coefficients[0] = id == 2 ? 1.4f : 0.7f;
+            gradients[id].center = float3(gradients[id].opacityGrad.coefficients[0], 0, 0);
+        }
+        grid["voxelPages"][0] = device->createStructuredBuffer(sizeof(VoxelData), 32u, flags, MemoryType::DeviceLocal, voxels.data());
+        grid["gradPages"][0] = device->createStructuredBuffer(sizeof(GradRecord), 32u, flags, MemoryType::DeviceLocal, gradients.data());
+        auto adam = device->createStructuredBuffer(sizeof(GeometryAdamState), 32u, flags, MemoryType::DeviceLocal, moments.data());
+        var["gGeometryAdamPages"][0] = adam;
+        cb["gGradientSampleCount"] = samples;
+        auto ctx = device->getRenderContext();
+        pass->execute(ctx, uint3(4, 1, 1));
+        ctx->submit(true);
+        adam->getBlob(moments.data(), 0, moments.size() * sizeof(GeometryAdamState));
+        for (uint32_t id = 0; id < 3; ++id)
+        {
+            const float mean = 0.1f * gradients[id].opacityGrad.coefficients[0] / float(samples);
+            require(std::abs(moments[id].opacityMean[0] - mean) < 1e-6f, "Opacity used voxel hit count instead of backward sample count");
+            require(std::abs(moments[id].centerMean.x - mean) < 1e-6f, "Geometry used voxel hit count instead of backward sample count");
+        }
+        require(moments[3].opacitySteps == 0u && moments[3].centerSteps == 0u,
+            "Zero-valid voxel unexpectedly advanced Adam");
+    }
+    std::cout << "Backward-sample normalization GPU tests passed (1 and 7 samples, multiple pixels, zero-valid gate).\n";
 }
 
 void testForward(const ref<Device>& device)
@@ -494,6 +558,7 @@ int main()
         desc.enableDebugLayer = true;
         auto device = make_ref<Device>(desc);
         testCoverage(device);
+        testUpdateNormalization(device);
         testForward(device);
         device->wait();
         std::cout << "All pixel-frustum GPU tests passed.\n";

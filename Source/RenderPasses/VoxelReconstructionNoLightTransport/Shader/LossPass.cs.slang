@@ -41,7 +41,7 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
     //
     // 这样上游梯度只依赖 xi_0..xi_{k-1}，而 gradient pass 反传的是第 k 帧的 PathRecord
     // （只依赖 xi_k），两者独立，E[grad] 才严格等于 grad L_avg。
-    // 整批内每一帧都这样算一次，梯度在 gradBuffer 里原子累加，最后一次按计数求平均。
+    // Each backward sample accumulates pixel gradients; update averages over backward samples, not voxel hit counts.
     // 反之若直接用累积图，它与被反传的那一帧同源，会引入 + grad Var(C) 的偏差，
     // 该偏差的最优解就是把几何吃掉、把 alpha 摊成覆盖率。
     //

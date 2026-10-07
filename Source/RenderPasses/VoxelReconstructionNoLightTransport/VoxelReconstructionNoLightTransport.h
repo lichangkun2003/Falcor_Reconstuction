@@ -258,9 +258,6 @@ public:
     {
         ref<ComputePass> mpComputePass;
 
-        // 是否按当前 voxel 命中的 pixel 数做平均
-        bool mUseGradCountNormalize;
-
         // 全局梯度缩放，第一版可以设为 1.0
         float mGradScale;
 
@@ -277,7 +274,6 @@ public:
         {
             mpComputePass = nullptr;
 
-            mUseGradCountNormalize = true;
             mGradScale = 1.0f;
 
             // Separate Adam states for radiance, opacity, center,
@@ -495,6 +491,7 @@ private:
     std::mt19937 mTrainingViewRng{std::random_device{}()};
     std::vector<std::filesystem::path> mReferenceImagePaths;
     ref<Buffer> mpPathRecordBuffer;
+    uint32_t mViewGradientSampleCount = 0;
 
     // UI
     bool mOptionsChanged = false;

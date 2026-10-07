@@ -74,7 +74,7 @@ void VoxelReconstructionNoLightTransport::runUpdatePass(RenderContext* pRenderCo
     // Sparse Adam pages are bound when a grid is committed or extended.
 
     auto cb = var["CB"];
-    cb["gUseGradCountNormalize"] = mUpdatePass.mUseGradCountNormalize;
+    cb["gGradientSampleCount"] = std::max(1u, mViewGradientSampleCount);
     cb["gGradScale"] = mUpdatePass.mGradScale;
     cb["gLrRadiance"] = mUpdatePass.mLrRadiance;
     cb["gLrCenter"] = mUpdatePass.mLrCenter;
@@ -106,7 +106,7 @@ void VoxelReconstructionNoLightTransport::renderUIUpdatePass(Gui::Widgets& widge
     if (!group)
         return;
 
-    group.checkbox("Normalize by grad count", mUpdatePass.mUseGradCountNormalize);
+    group.text("Gradients are averaged over backward samples per view.");
 
     group.var("Grad scale", mUpdatePass.mGradScale, 0.0f, 10.0f, 0.001f);
 

@@ -10,8 +10,9 @@ RWStructuredBuffer<uint> gRadianceAdamCounter;
 
 
 cbuffer CB {
-    // 是否按当前 voxel 命中的 pixel 数做平均
-    bool gUseGradCountNormalize;
+    // Number of backward passes accumulated in this view. Missing voxel
+    // contributions are zero samples, not omitted from this denominator.
+    uint gGradientSampleCount;
 
     // 全局梯度缩放，第一版可以设为 1.0
     float gGradScale;
@@ -240,15 +241,11 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
         return;
 
 
-    // 这里 valid 实际上表示当前 voxel 累计了多少个 pixel contribution
-    float appearanceGradScale = gGradScale;
-    float geometryGradScale = gGradScale;
-
-    if (gUseGradCountNormalize)
-    {
-        appearanceGradScale *= 1.0f / max(1.0f, float(appearanceValid));
-        geometryGradScale *= 1.0f / max(1.0f, float(geometryValid));
-    }
+    // Sum pixel contributions and average only across backward samples.
+    // Validity counts gate updates and retain background-carving statistics;
+    // dividing by them would cancel voxel visibility/coverage frequency.
+    float appearanceGradScale = gGradScale / float(max(1u, gGradientSampleCount));
+    float geometryGradScale = appearanceGradScale;
 
     if (VOXEL_DATA(index).occupied == 0)
         return;

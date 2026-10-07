@@ -292,7 +292,7 @@ struct CoarseToFineTestAccess
         auto update = pass->mUpdatePass.mpComputePass;
         auto cb = update->getRootVar()["CB"];
         cb["gSparseUpdateOffset"] = 0u;
-        cb["gUseGradCountNormalize"] = true;
+        cb["gGradientSampleCount"] = 1u;
         cb["gGradScale"] = 1.0f;
         cb["gLrRadiance"] = 0.001f;
         cb["gLrOpacity"] = 0.0f;
