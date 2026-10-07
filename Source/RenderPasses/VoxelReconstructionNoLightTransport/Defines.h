@@ -3,7 +3,7 @@
 // Shared by host code and shaders. Reconstruction uses point-cloud initialization.
 
 #ifndef GRID_RESOLUTION
-#define GRID_RESOLUTION 512
+#define GRID_RESOLUTION 128
 #endif
 
 // 0: fixed-resolution reconstruction;

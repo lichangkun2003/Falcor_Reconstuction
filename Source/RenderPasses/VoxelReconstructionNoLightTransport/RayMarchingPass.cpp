@@ -118,6 +118,11 @@ void VoxelReconstructionNoLightTransport::rayMarchingPass(RenderContext* pRender
         auto cb = var["CB"];
         cb["pixelCount"] = pass.mOutputResolution;
         cb["invVP"] = math::inverse(pCamera->getViewProjMatrixNoJitter());
+        cb["viewProjection"] = pCamera->getViewProjMatrixNoJitter();
+        cb["cameraPosition"] = pCamera->getPosition();
+        cb["cameraForward"] = math::normalize(pCamera->getTarget() - pCamera->getPosition());
+        cb["cameraDepthRange"] = float2(pCamera->getNearPlane(), pCamera->getFarPlane());
+        cb["usePixelFrustum"] = pass.mUsePixelFrustum && !mEnableReconstruction;
         cb["shadowBias"] = pass.mShadowBias100 / 100 / mGridResources.gridData.voxelSize.x;
         // Keep debug colors out of the reconstruction/loss path.
         cb["drawMode"] = mEnableReconstruction ? uint32_t(ABSDFDrawMode::Default) : pass.mDrawMode;

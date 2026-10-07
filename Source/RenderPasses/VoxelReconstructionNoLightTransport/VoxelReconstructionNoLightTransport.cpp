@@ -387,6 +387,13 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
 
 void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget)
 {
+    if (widget.checkbox("Pixel Frustum (forward preview)", mRayMarchingPass.mUsePixelFrustum))
+        mRayMarchingPass.mOptionsChanged = true;
+    if (mRayMarchingPass.mUsePixelFrustum)
+    {
+        widget.text(mEnableReconstruction ? "Training uses rays; frustum backward is not implemented yet."
+                                          : "Analytic clipped-ellipsoid coverage (Green's theorem).");
+    }
     if (widget.checkbox("Check Primitive", mRayMarchingPass.mCheckPrimitive))
         mRayMarchingPass.mOptionsChanged = true;
     if (widget.dropdown("Draw Mode", reinterpret_cast<ABSDFDrawMode&>(mRayMarchingPass.mDrawMode)))
