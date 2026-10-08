@@ -875,7 +875,7 @@ struct NeighborGrowthTestAccess
                 pass->mCoarseToFine.enableCoarseGrowth &&
                     pass->mCoarseToFine.coarsestGrowthFacePenetration == COARSEST_GROWTH_FACE_PENETRATION &&
                     pass->mCoarseToFine.growthFinerLevelMultiplier == FINER_GROWTH_THRESHOLD_MULTIPLIER &&
-                    pass->mCoarseToFine.coarseGrowthInterval == 20u,
+                    pass->mCoarseToFine.coarseGrowthInterval == 15u,
                 "Default mode1 coarse-growth settings are incorrect"
             );
             pass->mUpdatePass.init();

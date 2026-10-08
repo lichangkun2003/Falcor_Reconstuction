@@ -135,7 +135,7 @@ radiance 在非正颜色区域保留能把颜色推回正区间的梯度，避�
 | radiance | 0.001 |
 | opacity | 0.0005 |
 | center | 0.001 |
-| logScale | 0.001 |
+| logScale | 0.002 |
 | rotation | 0.0005 |
 
 单次几何步长限制为 center 每轴 0.02 个体素、logScale 每轴 0.02、rotation 0.02 rad。Background Carve Adam Multiplier 默认 5，在 Adam 归一化之后，按背景几何样本比例放大几何更新；它不是 gBackgroundCarveWeight。
@@ -149,7 +149,7 @@ mode0 的 opacity 前 20 轮冻结，随后 30 轮线性恢复到目标学习率
 | 模式 | 分辨率流程 | 生长 | 多视角删除 |
 |---|---|---|---|
 | mode0 | 固定分辨率，默认 512 | 默认每 10 轮，δ = 1 | opacity 恢复结束后开启 |
-| mode1 | 起始分辨率逐次翻倍到目标 | 所有层级默认每 20 轮 | 仅目标层级开启 |
+| mode1 | 起始分辨率逐次翻倍到目标 | 所有层级默认每 15 轮 | 仅目标层级开启 |
 
 RECONSTRUCTION_MODE 默认 1。GRID_RESOLUTION 默认 512；COARSE_TO_FINE_START_RESOLUTION 默认 16。实际实验从 64 开始时，应在 UI 设置 Coarse Start Resolution = 64；不能把实验习惯与源码默认值混淆。
 
@@ -241,7 +241,7 @@ childAlpha_DC = 1 - exp(-0.65 · tau_DC)
 | Newborn Protection | 5 | 新生体素暂时不收集删除票、不具备删除资格 |
 | Deleted Cell Cooldown | 5 | 删除位置暂时不能再长回去 |
 
-等待期间仍正常优化外观和几何；等待到期不表示已经稳定。年龄条件和全局生长周期必须同时满足。例如 mode1 子体素在局部轮次 20 出生，默认下一次可参与的周期通常是局部轮次 40。
+等待期间仍正常优化外观和几何；等待到期不表示已经稳定。年龄条件和全局生长周期必须同时满足。例如 mode1 子体素在局部轮次 15 出生，默认下一次可参与的周期通常是局部轮次 30。
 
 生长先统计唯一新 cell，再扩充属性页、初始化整层，最后发布有效空间索引。失败则回滚临时 claim 并禁用生长；回滚成功时已有参数仍可继续优化。界面显示 Last growth，是最近一次操作数量，不是累计数量。
 

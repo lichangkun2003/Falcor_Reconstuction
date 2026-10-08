@@ -281,7 +281,7 @@ public:
             mLrRadiance = 1e-3f;
             mLrOpacity = 5e-4f;
             mLrCenter = 1e-3f;
-            mLrShape = 1e-3f;
+            mLrShape = 2e-3f;
             mLrRotation = 5e-4f;
             mBackgroundCarveAdamMultiplier = 5.0f;
             mOpacityWarmupIterations = 20u;
@@ -366,7 +366,7 @@ public:
         bool enableCoarseGrowth = true;
         float coarsestGrowthFacePenetration = COARSEST_GROWTH_FACE_PENETRATION;
         float growthFinerLevelMultiplier = FINER_GROWTH_THRESHOLD_MULTIPLIER;
-        uint32_t coarseGrowthInterval = 20u;
+        uint32_t coarseGrowthInterval = 15u;
         bool saveEachLevel = true;
         uint32_t scheduleStartResolution = 0;
         uint32_t levelStartIteration = 0;
