@@ -19,6 +19,17 @@ void VoxelReconstructionNoLightTransport::createGrowthPassResources()
     mpClearGrowthClaimsPass = create("clearGrowthClaims");
     mpRollbackGrowthPass = create("rollbackGrowth");
     mpClearGrowthCooldownPass = create("clearGrowthCooldown");
+    const auto evidence = [&](const char* entry)
+    {
+        ProgramDesc desc;
+        desc.addShaderLibrary("RenderPasses/VoxelReconstructionNoLightTransport/Shader/GrowthEvidence.cs.slang").csEntry(entry);
+        return ComputePass::create(mpDevice, desc, getReconstructionDefines(), true);
+    };
+    mpBuildGrowthCandidatesPass = evidence("buildCandidates");
+    mpEvaluateGrowthCandidatesPass = evidence("evaluateCandidates");
+    mpProposeEvidenceGrowthPass = evidence("proposeEvidenceGrowth");
+    mpInitializeEvidenceGrowthPass = evidence("initializeEvidenceGrowth");
+    mpClearEvidenceGrowthClaimsPass = evidence("clearEvidenceClaims");
 }
 
 void VoxelReconstructionNoLightTransport::resetGrowthCooldown(RenderContext* pRenderContext)
@@ -70,6 +81,15 @@ void VoxelReconstructionNoLightTransport::growNeighborVoxels(RenderContext* pRen
     const uint32_t parents = mGridResources.gridData.activeVoxelCount;
     if (parents == 0u)
         return;
+    const bool evidence = mTopologySettings.useGrowthEvidence;
+    if (evidence && (mGrowthEvidenceBoundary != mOptimizerParams.currentIteration ||
+        mGrowthEvidenceResolution != mVoxelResolution || !mpGrowthCandidates ||
+        mGrowthEvidenceViews < mOptimizerParams.viewsPerIteration))
+    {
+        mTopologySettings.growthStatus = "Growth skipped: no complete camera evidence round for this boundary";
+        resetGrowthEvidence();
+        return;
+    }
     const uint32_t oldPages = uint32_t(mGridResources.voxelPages.size());
     uint32_t added = 0u;
     bool claimed = false;
@@ -100,14 +120,30 @@ void VoxelReconstructionNoLightTransport::growNeighborVoxels(RenderContext* pRen
     {
         if (!mpProposeGrowthPass)
             createGrowthPassResources();
+        const auto propose = evidence ? mpProposeEvidenceGrowthPass : mpProposeGrowthPass;
+        const auto initialize = evidence ? mpInitializeEvidenceGrowthPass : mpInitializeGrowthPass;
+        const auto clearClaims = evidence ? mpClearEvidenceGrowthClaimsPass : mpClearGrowthClaimsPass;
+        const uint32_t proposals = evidence ? mGrowthCandidateCount : parents;
         // Compile/reflection-check all transaction stages before marking cells.
         for (const auto& pass :
-             {mpProposeGrowthPass, mpInitializeGrowthPass, mpCommitGrowthPass, mpClearGrowthClaimsPass, mpRollbackGrowthPass})
+             {propose, initialize, mpCommitGrowthPass, clearClaims, mpRollbackGrowthPass})
             pass->getRootVar();
+        if (evidence)
+        {
+            for (const auto& pass : {propose, initialize, clearClaims})
+            {
+                auto var = pass->getRootVar();
+                var["gGrowthCandidates"] = mpGrowthCandidates;
+                var["EvidenceCB"]["gCandidateCount"] = mGrowthCandidateCount;
+                var["EvidenceCB"]["gMinForegroundViews"] = std::max(2u, mTopologySettings.growthMinForegroundViews);
+                var["EvidenceCB"]["gBackgroundVetoViews"] = std::max(1u, mTopologySettings.growthBackgroundVetoViews);
+            }
+            pRenderContext->uavBarrier(mpGrowthCandidates.get());
+        }
         const auto flags = ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess;
-        auto counter = mpDevice->createStructuredBuffer(sizeof(uint32_t), 1u, flags);
+        auto counter = mpDevice->createStructuredBuffer(sizeof(uint32_t), evidence ? 3u : 1u, flags);
         pRenderContext->clearUAV(counter->getUAV().get(), uint4(0));
-        for (const auto& pass : {mpProposeGrowthPass, mpInitializeGrowthPass})
+        for (const auto& pass : {propose, initialize})
         {
             auto var = pass->getRootVar();
             var["gGrowthCounter"] = counter;
@@ -128,15 +164,20 @@ void VoxelReconstructionNoLightTransport::growNeighborVoxels(RenderContext* pRen
         barrierTopologyEvidence(pRenderContext);
         indexBarrier();
         claimed = true;
-        dispatch(mpProposeGrowthPass, parents);
+        dispatch(propose, proposals);
         indexBarrier();
         pRenderContext->uavBarrier(counter.get());
         pRenderContext->submit(true);
         counter->getBlob(&added, 0, sizeof(added));
+        uint32_t proposalStats[2] = {};
+        if (evidence) counter->getBlob(proposalStats, sizeof(uint32_t), sizeof(proposalStats));
         if (added == 0u)
         {
-            mTopologySettings.growthStatus = fmt::format("Iteration {}: no eligible empty neighbors (including newborn wait)",
-                mOptimizerParams.currentIteration);
+            mTopologySettings.growthStatus = evidence
+                ? fmt::format("Iteration {}: no growth; {} proposals, {} foreground-supported, {} background-vetoed",
+                    mOptimizerParams.currentIteration, proposals, proposalStats[0], proposalStats[1])
+                : fmt::format("Iteration {}: no eligible empty neighbors (including newborn wait)", mOptimizerParams.currentIteration);
+            if (evidence) resetGrowthEvidence();
             return;
         }
         const uint64_t required = uint64_t(parents) + added;
@@ -144,7 +185,7 @@ void VoxelReconstructionNoLightTransport::growNeighborVoxels(RenderContext* pRen
         if (required > maximum)
             throw RuntimeError("Neighbor growth exceeds the sparse-pool page limit.");
         reserveSparseVoxelCapacity(pRenderContext, uint32_t(required));
-        auto var = mpInitializeGrowthPass->getRootVar();
+        auto var = initialize->getRootVar();
         for (uint32_t page = 0; page < mGridResources.adamPages.size(); ++page)
         {
             var["gGeometryAdamPages"][page] = mGridResources.adamPages[page];
@@ -153,7 +194,7 @@ void VoxelReconstructionNoLightTransport::growNeighborVoxels(RenderContext* pRen
         pRenderContext->clearUAV(counter->getUAV().get(), uint4(0));
         initializing = true;
         // Parent count is frozen: newborns cannot become parents in this layer.
-        dispatch(mpInitializeGrowthPass, parents);
+        dispatch(initialize, proposals);
         barrierSparseVoxels(pRenderContext);
         barrierSparseGradients(pRenderContext);
         barrierTopologyEvidence(pRenderContext);
@@ -188,7 +229,10 @@ void VoxelReconstructionNoLightTransport::growNeighborVoxels(RenderContext* pRen
             mTopologySettings.lastGrowthPages
         );
         mPointCloud.clearAccumulation = true;
+        if (evidence) mTopologySettings.growthStatus += fmt::format("; {} proposals, {} supported, {} background-vetoed",
+            proposals, proposalStats[0], proposalStats[1]);
         logInfo("{}", mTopologySettings.growthStatus);
+        if (evidence) resetGrowthEvidence();
     }
     catch (const std::exception& error)
     {
@@ -203,7 +247,8 @@ void VoxelReconstructionNoLightTransport::growNeighborVoxels(RenderContext* pRen
                 if (initializing)
                     dispatch(mpRollbackGrowthPass, added);
                 indexBarrier();
-                dispatch(mpClearGrowthClaimsPass, parents);
+                dispatch(evidence ? mpClearEvidenceGrowthClaimsPass : mpClearGrowthClaimsPass,
+                    evidence ? mGrowthCandidateCount : parents);
                 indexBarrier();
                 barrierSparseVoxels(pRenderContext);
                 pRenderContext->submit(true);
@@ -222,5 +267,6 @@ void VoxelReconstructionNoLightTransport::growNeighborVoxels(RenderContext* pRen
             mTopologySettings.enableGrowth = false;
         mTopologySettings.growthStatus = "Growth paused: " + std::string(error.what());
         logError("{}", mTopologySettings.growthStatus);
+        if (evidence) resetGrowthEvidence();
     }
 }

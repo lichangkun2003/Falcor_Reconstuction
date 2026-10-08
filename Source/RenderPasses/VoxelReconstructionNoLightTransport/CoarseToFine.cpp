@@ -349,16 +349,20 @@ void VoxelReconstructionNoLightTransport::renderUICoarseToFine(Gui::Widgets& wid
             widget.var("Refinement Child Face Overlap (voxels)", mCoarseToFine.childFaceOverlap, 0.0f, 0.2f, 0.01f);
             widget.tooltip("Maximum extent beyond each fine-cell face. Parent ellipsoid containment is retained. Zero disables overlap.");
             widget.checkbox("Enable Mode1 Growth (all levels)", mCoarseToFine.enableCoarseGrowth);
-            widget.var("Growth Base Threshold", mCoarseToFine.coarsestGrowthFacePenetration,
-                0.0f, float(GROWTH_MAX_FACE_PENETRATION_VOXELS), 0.05f);
-            widget.tooltip("Coarse Start Resolution uses the base; all finer levels use base times multiplier (not cumulative).");
-            widget.var(
-                "Finer Growth Threshold Multiplier",
-                mCoarseToFine.growthFinerLevelMultiplier,
-                0.0f,
-                float(GROWTH_MAX_FACE_PENETRATION_VOXELS) / std::max(mCoarseToFine.coarsestGrowthFacePenetration, 0.01f),
-                0.05f
-            );
+            renderUIGrowthEvidence(widget);
+            if (!mTopologySettings.useGrowthEvidence)
+            {
+                widget.var("Growth Base Threshold", mCoarseToFine.coarsestGrowthFacePenetration,
+                    0.0f, float(GROWTH_MAX_FACE_PENETRATION_VOXELS), 0.05f);
+                widget.tooltip("Coarse Start Resolution uses the base; all finer levels use base times multiplier (not cumulative).");
+                widget.var(
+                    "Finer Growth Threshold Multiplier",
+                    mCoarseToFine.growthFinerLevelMultiplier,
+                    0.0f,
+                    float(GROWTH_MAX_FACE_PENETRATION_VOXELS) / std::max(mCoarseToFine.coarsestGrowthFacePenetration, 0.01f),
+                    0.05f
+                );
+            }
             widget.var("Coarse Growth Interval", mCoarseToFine.coarseGrowthInterval, 1u, 100u, 1u);
             widget.checkbox("Save Each Completed Level", mCoarseToFine.saveEachLevel);
             widget.tooltip("Save the current mode1 grid before every refinement. The final target level is saved at completion as usual.");

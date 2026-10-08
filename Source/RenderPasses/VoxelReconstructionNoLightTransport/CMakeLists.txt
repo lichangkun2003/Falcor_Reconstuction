@@ -11,6 +11,7 @@ set(voxel_reconstruction_sources
     TopologyPass.cpp
     TopologyDeletion.cpp
     TopologyGrowth.cpp
+    GrowthEvidence.cpp
     CoarseToFine.cpp
     DataProcess.cpp
 )
@@ -62,6 +63,7 @@ target_sources(VoxelReconstructionNoLightTransport PRIVATE
     Shader/TopologyPass.cs.slang
     Shader/DeleteCompactPass.cs.slang
     Shader/GrowthPass.cs.slang
+    Shader/GrowthEvidence.cs.slang
     Shader/RefineGrid.cs.slang
 )
 

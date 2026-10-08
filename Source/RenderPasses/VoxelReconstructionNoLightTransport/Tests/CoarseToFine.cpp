@@ -162,6 +162,7 @@ struct CoarseToFineTestAccess
         pass->mCoarseToFine.targetResolution = 64u;
         pass->mCoarseToFine.totalIterations = 12u; // Interpolated weights produce 3, 3, and 6 rounds.
         pass->mCoarseToFine.saveEachLevel = false; // Most scheduling checks must not write experiment checkpoints.
+        pass->mTopologySettings.useGrowthEvidence = false; // This fixture exercises legacy growth scheduling.
         pass->createUpdatePassResource(ctx);
         pass->createTopologyPassResource(ctx);
         pass->createDeletionPassResources();
@@ -564,6 +565,7 @@ struct CoarseToFineTestAccess
                 !loaded->mOptimizerParams.isRunning && loaded->mOptimizerParams.currentIteration == 0u,
                 "Loading did not stop/reset optimization"
             );
+            loaded->mCoarseToFine.startResolution = 16u;
             loaded->mCoarseToFine.targetResolution = 64u;
             loaded->mCoarseToFine.totalIterations = 6u;
             require(

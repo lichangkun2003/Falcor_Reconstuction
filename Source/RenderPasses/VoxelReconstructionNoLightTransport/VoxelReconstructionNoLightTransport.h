@@ -318,6 +318,10 @@ public:
         bool showOccupiedContext = true;
         bool collectDeletionEvidence = true;
         bool enableGrowth = true;
+        bool useGrowthEvidence = true;
+        uint32_t growthMinForegroundViews = 3;
+        uint32_t growthBackgroundVetoViews = 2;
+        float growthMinAlphaDeficit = 0.05f;
         // Minimum outward depth into the face neighbor, in that axis's voxel widths.
         float growthFacePenetration = 1.0f;
         uint32_t growthInterval = 10;
@@ -430,7 +434,24 @@ private:
     ref<ComputePass> mpClearGrowthClaimsPass;
     ref<ComputePass> mpRollbackGrowthPass;
     ref<ComputePass> mpClearGrowthCooldownPass;
+    ref<ComputePass> mpBuildGrowthCandidatesPass;
+    ref<ComputePass> mpEvaluateGrowthCandidatesPass;
+    ref<ComputePass> mpProposeEvidenceGrowthPass;
+    ref<ComputePass> mpInitializeEvidenceGrowthPass;
+    ref<ComputePass> mpClearEvidenceGrowthClaimsPass;
+    ref<Buffer> mpGrowthCandidates;
+    uint32_t mGrowthCandidateCount = 0;
+    uint32_t mGrowthEvidenceBoundary = 0;
+    uint32_t mGrowthEvidenceResolution = 0;
+    uint32_t mGrowthEvidenceViews = 0;
+    std::vector<bool> mGrowthEvidenceSeenViews;
     bool mGrowthCooldownPresent = false;
+    void resetGrowthEvidence();
+    void beginGrowthEvidence(RenderContext* pRenderContext, uint32_t boundary);
+    void collectGrowthEvidence(RenderContext* pRenderContext, const RenderData& renderData);
+    void evaluateGrowthCandidates(RenderContext* pRenderContext, uint32_t viewID,
+        const float4x4& viewProjection, const ref<Texture>& reference, const ref<Texture>& rendered);
+    void renderUIGrowthEvidence(Gui::Widgets& widget);
     void createGrowthPassResources();
     void resetGrowthCooldown(RenderContext* pRenderContext);
     void growNeighborVoxels(RenderContext* pRenderContext);

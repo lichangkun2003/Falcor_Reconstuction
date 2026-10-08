@@ -58,6 +58,10 @@ VoxelReconstructionNoLightTransport::VoxelReconstructionNoLightTransport(ref<Dev
             mCoarseToFine.childFaceOverlap = value;
         else if (key == "coarseGrowthEnabled")
             mCoarseToFine.enableCoarseGrowth = value;
+        else if (key == "growthUseEvidence") mTopologySettings.useGrowthEvidence = value;
+        else if (key == "growthMinForegroundViews") mTopologySettings.growthMinForegroundViews = value;
+        else if (key == "growthBackgroundVetoViews") mTopologySettings.growthBackgroundVetoViews = value;
+        else if (key == "growthMinAlphaDeficit") mTopologySettings.growthMinAlphaDeficit = value;
         else if (key == "growthFinerLevelMultiplier")
         {
             mCoarseToFine.growthFinerLevelMultiplier = value;
@@ -135,6 +139,10 @@ Properties VoxelReconstructionNoLightTransport::getProperties() const
     props["refinementOpacityOpticalDepthScale"] = mCoarseToFine.opacityOpticalDepthScale;
     props["refinementChildFaceOverlap"] = mCoarseToFine.childFaceOverlap;
     props["coarseGrowthEnabled"] = mCoarseToFine.enableCoarseGrowth;
+    props["growthUseEvidence"] = mTopologySettings.useGrowthEvidence;
+    props["growthMinForegroundViews"] = mTopologySettings.growthMinForegroundViews;
+    props["growthBackgroundVetoViews"] = mTopologySettings.growthBackgroundVetoViews;
+    props["growthMinAlphaDeficit"] = mTopologySettings.growthMinAlphaDeficit;
     props["growthFinerLevelMultiplier"] = mCoarseToFine.growthFinerLevelMultiplier;
     props["coarsestGrowthFacePenetration"] = mCoarseToFine.coarsestGrowthFacePenetration;
     props["coarseGrowthInterval"] = mCoarseToFine.coarseGrowthInterval;
@@ -307,6 +315,7 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
 
         if (isLastSample)
         {
+            collectGrowthEvidence(pRenderContext, renderData);
             runUpdatePass(pRenderContext, renderData);
             runReducePass(pRenderContext, renderData);
 
@@ -637,6 +646,8 @@ void VoxelReconstructionNoLightTransport::renderUITopology(Gui::Widgets& widget)
     if (!group)
         return;
 
+    renderUIGrowthEvidence(group);
+
     if (isCoarseToFine() && !mode1Target)
     {
 group.text("mode1 coarse level: deletion is disabled; conservative neighbor growth is enabled.");
@@ -661,17 +672,20 @@ group.text("mode1 coarse level: deletion is disabled; conservative neighbor grow
         }
         group.checkbox("Enable Mode1 Growth (all levels)", mCoarseToFine.enableCoarseGrowth);
         group.var("Coarse Growth Interval (iterations)", mCoarseToFine.coarseGrowthInterval, 1u, 100u, 1u);
-        group.var("Growth Base Threshold (voxel widths)", mCoarseToFine.coarsestGrowthFacePenetration,
-            0.0f, float(GROWTH_MAX_FACE_PENETRATION_VOXELS), 0.05f);
-        group.var(
-            "Finer Growth Threshold Multiplier",
-            mCoarseToFine.growthFinerLevelMultiplier,
-            0.0f,
-            float(GROWTH_MAX_FACE_PENETRATION_VOXELS) / std::max(mCoarseToFine.coarsestGrowthFacePenetration, 0.01f),
-            0.05f
-        );
+        if (!mTopologySettings.useGrowthEvidence)
+        {
+            group.var("Growth Base Threshold (voxel widths)", mCoarseToFine.coarsestGrowthFacePenetration,
+                0.0f, float(GROWTH_MAX_FACE_PENETRATION_VOXELS), 0.05f);
+            group.var(
+                "Finer Growth Threshold Multiplier",
+                mCoarseToFine.growthFinerLevelMultiplier,
+                0.0f,
+                float(GROWTH_MAX_FACE_PENETRATION_VOXELS) / std::max(mCoarseToFine.coarsestGrowthFacePenetration, 0.01f),
+                0.05f
+            );
+        }
         group.text("One layer per scheduled boundary; the final boundary before refinement is skipped.");
-        group.text(fmt::format("Current level growth threshold: {} voxel widths", getEffectiveGrowthFacePenetration()));
+        if (!mTopologySettings.useGrowthEvidence) group.text(fmt::format("Current level growth threshold: {} voxel widths", getEffectiveGrowthFacePenetration()));
         group.text(mTopologySettings.growthStatus);
         group.text(fmt::format(
             "Last growth: {} voxels; {} pool pages added",
@@ -760,14 +774,17 @@ group.text("mode1 coarse level: deletion is disabled; conservative neighbor grow
     {
         group.checkbox("Enable Mode1 Growth (all levels)", mCoarseToFine.enableCoarseGrowth);
         group.var("Mode1 Growth Interval (iterations)", mCoarseToFine.coarseGrowthInterval, 1u, 100u, 1u);
-        group.var("Growth Base Threshold (voxel widths)", mCoarseToFine.coarsestGrowthFacePenetration,
-            0.0f, float(GROWTH_MAX_FACE_PENETRATION_VOXELS), 0.05f);
-        group.var("Finer Growth Threshold Multiplier", mCoarseToFine.growthFinerLevelMultiplier,
-            0.0f, float(GROWTH_MAX_FACE_PENETRATION_VOXELS) / std::max(mCoarseToFine.coarsestGrowthFacePenetration, 0.01f), 0.05f);
+        if (!mTopologySettings.useGrowthEvidence)
+        {
+            group.var("Growth Base Threshold (voxel widths)", mCoarseToFine.coarsestGrowthFacePenetration,
+                0.0f, float(GROWTH_MAX_FACE_PENETRATION_VOXELS), 0.05f);
+            group.var("Finer Growth Threshold Multiplier", mCoarseToFine.growthFinerLevelMultiplier,
+                0.0f, float(GROWTH_MAX_FACE_PENETRATION_VOXELS) / std::max(mCoarseToFine.coarsestGrowthFacePenetration, 0.01f), 0.05f);
+        }
         group.var("Newborn Growth Wait (iterations)", mTopologySettings.growthWaitIterations, 0u, 100u, 1u);
         group.var("Newborn Protection (iterations)", mTopologySettings.growthProtectionIterations, 1u, 100u, 1u);
         group.var("Deleted Cell Cooldown (iterations)", mTopologySettings.deletionCooldownIterations, 0u, 100u, 1u);
-        group.text(fmt::format("Current level growth threshold: {} voxel widths", getEffectiveGrowthFacePenetration()));
+        if (!mTopologySettings.useGrowthEvidence) group.text(fmt::format("Current level growth threshold: {} voxel widths", getEffectiveGrowthFacePenetration()));
         group.text("Growth runs after deletion; skipped on the final save boundary.");
         group.text(mTopologySettings.growthStatus);
         group.text(fmt::format("Last growth: {} voxels; {} pool pages added",
@@ -783,14 +800,17 @@ group.text("mode1 coarse level: deletion is disabled; conservative neighbor grow
         getDeletionEvidenceStartIteration(),
         std::max(1u, mTopologySettings.growthInterval)
     ));
-    group.var(
-        "Growth Face Penetration (voxel widths)",
-        mTopologySettings.growthFacePenetration,
-        0.0f,
-        float(GROWTH_MAX_FACE_PENETRATION_VOXELS),
-        0.01f
-    );
-    group.text("Grow only when the ellipsoid extends beyond this depth inside the empty face neighbor; lower is more aggressive.");
+    if (!mTopologySettings.useGrowthEvidence)
+    {
+        group.var(
+            "Growth Face Penetration (voxel widths)",
+            mTopologySettings.growthFacePenetration,
+            0.0f,
+            float(GROWTH_MAX_FACE_PENETRATION_VOXELS),
+            0.01f
+        );
+        group.text("Grow only when the ellipsoid extends beyond this depth inside the empty face neighbor; lower is more aggressive.");
+    }
     group.var("Child Scale Multiplier", mTopologySettings.growthShrink, 0.01f, 0.99f, 0.01f);
     group.var("Child Contact Offset (voxels)", mTopologySettings.growthContactOffset, 0.01f, 0.49f, 0.01f);
     group.var("Child Max Initial Opacity", mTopologySettings.growthInitialOpacity, 0.01f, 0.49f, 0.01f);
@@ -1009,6 +1029,7 @@ void VoxelReconstructionNoLightTransport::startReconstruction()
 
 void VoxelReconstructionNoLightTransport::stopReconstruction()
 {
+    resetGrowthEvidence();
     mPointCloud.startRequested = false;
     mEnableReconstruction = false;
     mOptimizerParams.isRunning = false;

@@ -84,6 +84,45 @@ bool growthChild(uint parentID, uint face, out uint3 cell, out GaussianEllipsoid
     }
 }
 
+void writeGrowthChild(uint parentID, uint id, GaussianEllipsoid child, uint3 cell)
+{
+    VoxelData data = VOXEL_DATA(parentID);
+    data.ellipsoid = child;
+    data.occupied = 1u;
+    // Preserve directional variation when possible, keeping opacity both
+    // low and trainable in EVERY direction. |Y_lm| <= sqrt((2*l+1)/(4*pi)).
+    float y0 = calcSH(0u, float3(0, 0, 1));
+    float variation = 0.0f;
+    for (uint i = 1u; i < SH_OPACITY_COUNT; ++i)
+    {
+        uint degree = uint(floor(sqrt(float(i))));
+        variation += abs(data.opacity.coefficients[i]) * sqrt(float(2u * degree + 1u) / (4.0f * 3.14159265359f));
+    }
+    float desiredLogit = log(gInitialOpacity / (1.0f - gInitialOpacity));
+    float minimumOpacity = 0.1f * gInitialOpacity;
+    float minimumLogit = log(minimumOpacity / (1.0f - minimumOpacity));
+    float variationScale = min(1.0f, (desiredLogit - minimumLogit) / max(2.0f * variation, 1e-20f));
+    for (uint i = 1u; i < SH_OPACITY_COUNT; ++i)
+        data.opacity.coefficients[i] *= variationScale;
+    variation *= variationScale;
+    data.opacity.coefficients[0] = clamp(data.opacity.coefficients[0] * y0, minimumLogit + variation, desiredLogit - variation) / y0;
+    VOXEL_DATA(id) = data;
+    GradRecord gradient;
+    gradient.init();
+    GRAD_DATA(id) = gradient;
+    TopologyEvidence evidence = {};
+    evidence.deletionEligibleIteration = gEligibleIteration;
+    evidence.growthBirthIterationPlusOne = gCurrentIteration + 1u;
+    evidence.growthWaitStartIterationPlusOne = gCurrentIteration + 1u;
+    TOPOLOGY_DATA(id) = evidence;
+    uint page = id / SPARSE_POOL_PAGE_SIZE;
+    uint offset = id % SPARSE_POOL_PAGE_SIZE;
+    GeometryAdamState adam = {};
+    gGeometryAdamPages[NonUniformResourceIndex(page)][offset] = adam;
+    gRadianceAdamIndexPages[NonUniformResourceIndex(page)][offset] = 0xffffffffu;
+    gGridDataParamBlock.cellIndexPages[NonUniformResourceIndex(page)][offset] = uint(CellToIndex(cell, gGridDataParamBlock.voxelCount));
+}
+
     [numthreads(256, 1, 1)] void initializeGrowth(uint3 threadID
                                                   : SV_DispatchThreadID)
 {
@@ -101,41 +140,7 @@ bool growthChild(uint parentID, uint face, out uint3 cell, out GaussianEllipsoid
         if (slot >= gNewCount)
             continue;
         uint id = gParentCount + slot;
-        VoxelData data = VOXEL_DATA(parentID);
-        data.ellipsoid = child;
-        data.occupied = 1u;
-        // Preserve directional variation when possible, keeping opacity both
-        // low and trainable in EVERY direction. |Y_lm| <= sqrt((2*l+1)/(4*pi)).
-        float y0 = calcSH(0u, float3(0, 0, 1));
-        float variation = 0.0f;
-        for (uint i = 1u; i < SH_OPACITY_COUNT; ++i)
-        {
-            uint degree = uint(floor(sqrt(float(i))));
-            variation += abs(data.opacity.coefficients[i]) * sqrt(float(2u * degree + 1u) / (4.0f * 3.14159265359f));
-        }
-        float desiredLogit = log(gInitialOpacity / (1.0f - gInitialOpacity));
-        float minimumOpacity = 0.1f * gInitialOpacity;
-        float minimumLogit = log(minimumOpacity / (1.0f - minimumOpacity));
-        float variationScale = min(1.0f, (desiredLogit - minimumLogit) / max(2.0f * variation, 1e-20f));
-        for (uint i = 1u; i < SH_OPACITY_COUNT; ++i)
-            data.opacity.coefficients[i] *= variationScale;
-        variation *= variationScale;
-        data.opacity.coefficients[0] = clamp(data.opacity.coefficients[0] * y0, minimumLogit + variation, desiredLogit - variation) / y0;
-        VOXEL_DATA(id) = data;
-        GradRecord gradient;
-        gradient.init();
-        GRAD_DATA(id) = gradient;
-        TopologyEvidence evidence = {};
-        evidence.deletionEligibleIteration = gEligibleIteration;
-        evidence.growthBirthIterationPlusOne = gCurrentIteration + 1u;
-        evidence.growthWaitStartIterationPlusOne = gCurrentIteration + 1u;
-        TOPOLOGY_DATA(id) = evidence;
-        uint page = id / SPARSE_POOL_PAGE_SIZE;
-        uint offset = id % SPARSE_POOL_PAGE_SIZE;
-        GeometryAdamState adam = {};
-        gGeometryAdamPages[NonUniformResourceIndex(page)][offset] = adam;
-        gRadianceAdamIndexPages[NonUniformResourceIndex(page)][offset] = 0xffffffffu;
-        gGridDataParamBlock.cellIndexPages[NonUniformResourceIndex(page)][offset] = uint(CellToIndex(cell, gGridDataParamBlock.voxelCount));
+        writeGrowthChild(parentID, id, child, cell);
         // Leave the index negative until all children have initialized. Failed
         // initialization can be rolled back without exposing a partial layer.
     }

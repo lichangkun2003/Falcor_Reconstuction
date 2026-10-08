@@ -63,6 +63,7 @@ struct NeighborGrowthTestAccess
         ctx->submit(true);
         pass.mOptimizerParams.currentIteration = 50u;
         pass.mTopologySettings.enableGrowth = true;
+        pass.mTopologySettings.useGrowthEvidence = false; // Legacy geometry/lifecycle fixtures.
         pass.mTopologySettings.growthFacePenetration = 0.05f;
         // Geometry/lifecycle fixtures explicitly retain per-round scheduling.
         pass.mTopologySettings.growthInterval = 1u;
@@ -705,6 +706,99 @@ struct NeighborGrowthTestAccess
         render(3.5f, TopologyDebugLayer::Deletion, false, float3(1.0f, 0.12f, 0.04f));
     }
 
+    static void checkEvidenceGrowth(VoxelReconstructionNoLightTransport& pass, RenderContext* ctx)
+    {
+        const auto savedOptimizer = pass.mOptimizerParams;
+        const auto savedTopology = pass.mTopologySettings;
+        const auto savedMode = pass.mReconstructionMode;
+        pass.mReconstructionMode = 0u;
+        auto parent = parentVoxel();
+        parent.ellipsoid.rotation = float4(1, 0, 0, 0);
+        parent.ellipsoid.logScale = float3(std::log(0.6f));
+        const auto prepare = [&](uint32_t views, bool pair = false)
+        {
+            seed(pass, ctx, pair ? std::vector<uint32_t>{cell(2, 3, 3), cell(4, 3, 3)} : std::vector<uint32_t>{cell(3, 3, 3)},
+                pair ? std::vector<VoxelData>{parent, parent} : std::vector<VoxelData>{parent});
+            pass.mTopologySettings.useGrowthEvidence = true;
+            pass.mTopologySettings.growthMinForegroundViews = 3u;
+            pass.mTopologySettings.growthBackgroundVetoViews = 2u;
+            pass.mTopologySettings.growthMinAlphaDeficit = 0.05f;
+            pass.mTopologySettings.growthFacePenetration = 3.5f; // Must be ignored by evidence growth.
+            pass.mOptimizerParams.viewsPerIteration = views;
+            pass.beginGrowthEvidence(ctx, 50u);
+            require(pass.mGrowthCandidateCount == (pair ? 12u : 6u), "Shared-face evidence candidates require deep penetration");
+        };
+        auto vp = float4x4::identity();
+        vp[0][0] = vp[1][1] = 0.25f;
+        vp[0][3] = vp[1][3] = -1.0f;
+        vp[2][2] = 0.125f;
+        const auto vote = [&](uint32_t view, float referenceAlpha, float renderedAlpha, bool offscreen = false)
+        {
+            std::vector<float4> reference(16u * 16u, float4(0, 0, 0, referenceAlpha));
+            std::vector<float4> rendered(16u * 16u, float4(0, 0, 0, renderedAlpha));
+            auto r = pass.mpDevice->createTexture2D(16, 16, ResourceFormat::RGBA32Float, 1, 1, reference.data());
+            auto c = pass.mpDevice->createTexture2D(16, 16, ResourceFormat::RGBA32Float, 1, 1, rendered.data(),
+                ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess);
+            auto projection = vp;
+            if (offscreen) projection[0][3] = 10.0f;
+            pass.evaluateGrowthCandidates(ctx, view, projection, r, c);
+        };
+        const auto finish = [&](uint32_t expected)
+        {
+            pass.growNeighborVoxels(ctx);
+            ctx->submit(true);
+            require(pass.mGridResources.gridData.activeVoxelCount == expected, "Evidence growth accepted/rejected the wrong neighbors");
+            const auto map = indices(pass, ctx);
+            for (int32_t entry : map) require(entry > kGrowthClaimBase, "Evidence growth left an uncommitted claim");
+        };
+        prepare(3);
+        vote(0, 1, 0); vote(1, 1, 0); vote(2, 1, 0);
+        finish(7); // Fresh radius .6 parents can grow without hit->hit inflation.
+        prepare(3);
+        vote(0, 1, 0); vote(0, 1, 0); vote(0, 1, 0);
+        require(pass.mGrowthEvidenceViews == 1u, "Repeated SPP inflated the camera count");
+        finish(1); // Incomplete camera round cannot commit.
+        prepare(3);
+        vote(0, 1, 0); vote(1, 1, 1); vote(2, 1, 1);
+        finish(1); // Foreground coverage/occlusion gives no hole support.
+        prepare(5);
+        vote(0, 1, 0); vote(1, 1, 0); vote(2, 1, 0);
+        vote(3, 0, 1); vote(4, 0, 1);
+        finish(1); // Rendered occluders must not suppress reference-background vetoes.
+        prepare(3);
+        vote(0, 0.5f, 0); vote(1, 0.5f, 0); vote(2, 1, 0, true);
+        finish(1); // Mixed silhouettes and offscreen probes are neutral.
+        prepare(3, true);
+        vote(0, 1, 0); vote(1, 1, 0); vote(2, 1, 0);
+        finish(13); // Two parents propose the same hole; commit it only once.
+        prepare(3, true);
+        vote(0, 1, 0); vote(1, 1, 0); vote(2, 1, 0);
+        TopologyEvidence deletion = read<TopologyEvidence>(pass.mGridResources.topologyEvidencePages, 0u);
+        deletion.packedCountsAndFlags |= kTopologyEvidenceDeletionCandidate;
+        write(pass.mGridResources.topologyEvidencePages, 0u, deletion);
+        pass.mTopologySettings.candidateCount = 1u;
+        pass.deleteAndCompactCandidates(ctx);
+        require(pass.mGridResources.gridData.activeVoxelCount == 1u, "Evidence compaction fixture did not delete a parent");
+        finish(7); // The survivor moved IDs; its cell-addressed evidence remains valid.
+        seed(pass, ctx, {cell(1, 1, 1), cell(4, 1, 1), cell(1, 4, 1), cell(4, 4, 1), cell(1, 1, 4), cell(4, 1, 4)},
+            std::vector<VoxelData>(6u, parent));
+        pass.mTopologySettings.useGrowthEvidence = true;
+        pass.mOptimizerParams.viewsPerIteration = 3u;
+        pass.beginGrowthEvidence(ctx, 50u);
+        vote(0, 1, 0); vote(1, 1, 0); vote(2, 1, 0);
+        finish(42); // Extending the sparse pool must retain proposals and their frozen geometry.
+        prepare(3);
+        pass.mTopologySettings.enableGrowth = false;
+        vote(0, 1, 0); vote(1, 1, 0); vote(2, 1, 0);
+        finish(1);
+        pass.resetGrowthEvidence();
+        pass.mOptimizerParams = savedOptimizer;
+        pass.mTopologySettings = savedTopology;
+        pass.mReconstructionMode = savedMode;
+        std::cout << "PASS: multi-view deficit growth, background veto through occlusion, distinct-camera votes, "
+                     "neutral covered/silhouette/offscreen views, shared-cell deduplication, compaction-stable evidence, disabled growth\n";
+    }
+
     static int run()
     {
         try
@@ -718,6 +812,8 @@ struct NeighborGrowthTestAccess
             Properties properties;
             properties["reconstructionMode"] = 0u;
             auto pass = VoxelReconstructionNoLightTransport::create(device, properties);
+            require(pass->mTopologySettings.useGrowthEvidence, "Multi-view growth must be enabled by default");
+            pass->mTopologySettings.useGrowthEvidence = false;
             require(pass->mTopologySettings.growthFacePenetration == 1.0f, "Default growth depth is not delta 1");
             require(pass->mTopologySettings.growthInterval == 10u, "Default growth interval is not ten full rounds");
             require(
@@ -961,6 +1057,7 @@ struct NeighborGrowthTestAccess
             checkGrowthPreview(*pass, ctx);
             std::cout << "PASS: production preview highlights low-opacity grown cells, filters originals, retains "
                          "context/deletion/occupied layers\n";
+            checkEvidenceGrowth(*pass, ctx);
             runCoarseToFineTests(device);
             device->wait();
             std::cout << "All neighbor-growth GPU regression tests passed.\n";
