@@ -349,7 +349,7 @@ bool VoxelReconstructionNoLightTransport::initializePointCloudVoxelData(RenderCo
         }
         grid.solidVoxelCount = static_cast<uint32_t>(occupiedCount);
         grid.activeVoxelCount = grid.solidVoxelCount;
-        static_assert(sizeof(PointCloudInitialization::Seed) == sizeof(uint32_t));
+        static_assert(sizeof(PointCloudInitialization::Seed) == 56u);
         if (!mpInitializePointCloudPass)
         {
             ProgramDesc desc;
@@ -393,9 +393,10 @@ bool VoxelReconstructionNoLightTransport::initializePointCloudVoxelData(RenderCo
         const auto& stats = points.statistics;
         mPointCloud.status = fmt::format(
             "PLY: {} points, {} occupied voxels; {} outside, {} invalid, {} below alpha; "
+            "{} RGB points used; "
             "{} blocks tested, {} full blocks skipped, {} boundary cells tested; {} cells added (max {})",
             stats.inputPoints, grid.solidVoxelCount, stats.outsidePoints, stats.invalidPoints,
-            stats.droppedByOpacity, stats.testedBlocks, stats.skippedFullBlocks, stats.testedCells,
+            stats.droppedByOpacity, stats.coloredPoints, stats.testedBlocks, stats.skippedFullBlocks, stats.testedCells,
             stats.coveredCells, stats.maxCoveredCells);
         logInfo("Point-cloud initialization: {}. {}. Coordinates: NeRF (x,y,z) -> Falcor (x,z,-y).", path.string(), mPointCloud.status);
         return true;

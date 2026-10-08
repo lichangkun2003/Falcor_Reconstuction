@@ -1,4 +1,7 @@
 #include "../VoxelReconstructionNoLightTransport.h"
+#include "../PointCloudLoader.h"
+#include <fstream>
+#include <iomanip>
 #include <cmath>
 #include <cstring>
 #include <iostream>
@@ -150,9 +153,116 @@ struct CoarseToFineTestAccess
         std::cout << "PASS: coarse-biased level ratios, exact totals across 1-7 levels, minimum budgets, target-level restart\n";
     }
 
+    static void checkPointCloudInitialization(const ref<Device>& device)
+    {
+        const auto fixture = std::filesystem::temp_directory_path() /
+            ("falcor_point_fit_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".ply");
+        // A diagonal line, a repeated point and an off-center singleton in the next cell.
+        const std::array<float3, 5> local = {float3(.1f,.2f,.3f), float3(.9f,.8f,.7f),
+            float3(.5f,.5f,.5f), float3(.5f,.5f,.5f), float3(1.3f,.4f,.6f)};
+        const float3 size(2.f, 1.f, .5f);
+        const auto writeFixture = [&](bool binary)
+        {
+            std::ofstream file(fixture, std::ios::binary);
+            file << "ply\nformat " << (binary ? "binary_little_endian" : "ascii") << " 1.0\nelement vertex 5\n"
+                 << "property float z\nproperty uchar red\nproperty float x\nproperty uchar green\n"
+                 << "property float y\nproperty uchar blue\nend_header\n";
+            file << std::setprecision(9);
+            for (size_t i = 0; i < local.size(); ++i)
+            {
+                const float3 world = local[i] * size;
+                const float xyz[] = {world.y, world.x, -world.z}; // PLY fields z,x,y.
+                const uint8_t rgb[] = {uint8_t(i == 0 ? 255 : 128), uint8_t(64), uint8_t(i == 1 ? 255 : 128)};
+                for (size_t j = 0; j < 3; ++j)
+                {
+                    if (binary)
+                    {
+                        file.write(reinterpret_cast<const char*>(&xyz[j]), sizeof(float));
+                        file.write(reinterpret_cast<const char*>(&rgb[j]), 1);
+                    }
+                    else file << xyz[j] << ' ' << unsigned(rgb[j]) << ' ';
+                }
+                if (!binary) file << '\n';
+            }
+        };
+        const auto load = [&]() { return PointCloudInitialization::load(fixture, {2u,2u,2u}, {0,0,0}, {2,1,.5f}, .001); };
+        writeFixture(false);
+        const auto ascii = load();
+        writeFixture(true);
+        const auto binary = load();
+        require(ascii.seeds.size() == 2 && binary.seeds.size() == 2, "Point fitting changed voxel occupancy");
+        require(ascii.statistics.coloredPoints == 5 && binary.statistics.coloredPoints == 5, "PLY RGB was not consumed");
+        const auto linear = [](float c) { return c <= .04045f ? c / 12.92f : std::pow((c + .055f) / 1.055f, 2.4f); };
+        const float gray = linear(128.f / 255.f);
+        const float3 expectedColor((1.f + 3.f*gray) / 4.f, linear(64.f / 255.f), (1.f + 3.f*gray) / 4.f);
+        for (size_t i = 0; i < 2; ++i)
+        {
+            const auto& a = ascii.seeds[i]; const auto& b = binary.seeds[i];
+            require(a.voxelIndex == i && b.voxelIndex == i, "Fitted seed cell order changed");
+            for (size_t j = 0; j < 3; ++j)
+            {
+                require(std::abs(a.center[j] - b.center[j]) < 1e-6f && std::abs(a.scale[j] - b.scale[j]) < 1e-6f,
+                    "ASCII/binary point fits disagree");
+                require(std::isfinite(b.scale[j]) && b.scale[j] > 0, "Degenerate point cloud produced invalid axes");
+                if (i == 0) require(std::abs(b.color[j] - expectedColor[j]) < 1e-6f, "RGB must be linearized before averaging");
+            }
+        }
+        require(std::abs(binary.seeds[1].center[0] - .3f) < 1e-6f, "Singleton was not centered on its point");
+        auto pass = VoxelReconstructionNoLightTransport::create(device, {});
+        pass->mReconstructionMode = 0u;
+        pass->mCoarseToFine.initializationPending = false;
+        auto ctx = device->getRenderContext();
+        GridData grid = pass->makeVoxelGrid(2u);
+        grid.gridMin = float3(0);
+        grid.voxelSize = size;
+        auto resources = pass->allocateSparseGrid(ctx, grid, 2u);
+        auto block = pass->createSparseGridBlock(resources);
+        pass->commitSparseGrid(std::move(resources), block, 2u);
+        require(pass->initializePointCloudVoxelData(ctx, fixture), "Fitted point seed GPU initialization failed");
+        ctx->submit(true);
+        for (uint32_t i = 0; i < 2; ++i)
+        {
+            auto data = read<VoxelData>(pass->mGridResources.voxelPages, i);
+            const auto& seed = binary.seeds[i];
+            for (size_t j = 0; j < 3; ++j)
+            {
+                require(std::abs(data.ellipsoid.center[j] - seed.center[j]) < 1e-6f, "GPU seed center/layout mismatch");
+                require(std::abs(std::exp(data.ellipsoid.logScale[j]) - seed.scale[j]) < 1e-6f, "GPU seed scale/layout mismatch");
+                require(std::abs(data.radiance.coefficients[0][j] * calcSH(0u, float3(0,0,1)) - seed.color[j]) < 1e-6f,
+                    "Mean RGB was not converted to radiance DC");
+            }
+            for (uint32_t c = 1; c < SH_COUNT; ++c)
+                require(all(data.radiance.coefficients[c] == float3(0)), "Point initialization retained high SH");
+            require(std::abs(data.opacity.calcOpacity(float3(0,0,1)) - .5f) < 1e-6f, "Initial point opacity changed");
+            const float w=data.ellipsoid.rotation.x, x=data.ellipsoid.rotation.y, y=data.ellipsoid.rotation.z, z=data.ellipsoid.rotation.w;
+            const float3 axes[] = {float3(1-2*(y*y+z*z),2*(x*y+z*w),2*(x*z-y*w)),
+                float3(2*(x*y-z*w),1-2*(x*x+z*z),2*(y*z+x*w)), float3(2*(x*z+y*w),2*(y*z-x*w),1-2*(x*x+y*y))};
+            for (size_t p = (i == 0 ? 0u : 4u); p < (i == 0 ? 4u : 5u); ++p)
+            {
+                const float3 d = (local[p] - float3(float(i),0,0) - data.ellipsoid.center) * size;
+                float q = 0;
+                for (size_t j = 0; j < 3; ++j) { const float v = dot(d, axes[j]) / std::exp(data.ellipsoid.logScale[j]); q += v*v; }
+                require(q <= 1.00001f, "Initialized rotated ellipsoid does not contain an input point");
+            }
+        }
+        // Missing colors, coincident points and a point exactly on a cell boundary remain valid.
+        {
+            std::ofstream file(fixture);
+            file << "ply\nformat ascii 1.0\nelement vertex 2\nproperty float x\nproperty float y\nproperty float z\nend_header\n0 0 0\n0 0 0\n";
+        }
+        const auto uncolored = load();
+        require(uncolored.seeds.size() == 1 && uncolored.statistics.coloredPoints == 0, "Uncolored cloud was rejected");
+        for (size_t j = 0; j < 3; ++j)
+            require(uncolored.seeds[0].color[j] == 0.f && uncolored.seeds[0].scale[j] >= .25f * size[j],
+                "Coincident points lost the minimum thickness or black fallback");
+        std::filesystem::remove(fixture);
+        std::cout << "PASS: ASCII/binary RGB point fitting, non-cubic PCA containment, singleton/coincident fallback, linear color mean, GPU seed/DC layout\n";
+    }
+
     static void run(const ref<Device>& device)
     {
         auto ctx = device->getRenderContext();
+        checkPointCloudInitialization(device);
         auto pass = VoxelReconstructionNoLightTransport::create(device, {});
         require(pass->mReconstructionMode == uint32_t(RECONSTRUCTION_MODE), "Configured reconstruction mode was not applied");
         checkLevelBudgets(*pass);

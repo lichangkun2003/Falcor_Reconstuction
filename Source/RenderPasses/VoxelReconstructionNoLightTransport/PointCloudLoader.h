@@ -10,14 +10,19 @@ namespace PointCloudInitialization
 struct Seed
 {
     uint32_t voxelIndex;
+    std::array<float, 3> center = {0.5f, 0.5f, 0.5f}; // Voxel-local.
+    std::array<float, 3> scale = {}; // World-space semi-axes.
+    std::array<float, 4> rotation = {1.f, 0.f, 0.f, 0.f}; // w,x,y,z.
+    std::array<float, 3> color = {}; // Mean linear RGB; zero when unavailable.
 };
-static_assert(sizeof(Seed) == 4, "Point-cloud seeds must match the shader buffer layout.");
+static_assert(sizeof(Seed) == 56, "Point-cloud seeds must match the shader buffer layout.");
 
 struct Statistics
 {
     uint64_t inputPoints = 0;
     uint64_t invalidPoints = 0;
     uint64_t outsidePoints = 0;
+    uint64_t coloredPoints = 0; // Valid RGB points used by plain-cloud initialization.
     // 3DGS input only. Coverage is clipped to the grid, never to a fixed per-Gaussian radius.
     uint64_t droppedByOpacity = 0; // peak opacity below the visibility threshold
     uint64_t testedBlocks = 0;
@@ -39,7 +44,10 @@ struct Result
 // A 3DGS reconstruction carries the per-Gaussian properties (opacity, scale_0..2, rot_0..3), and
 // Every voxel whose closed AABB intersects the Gaussian's threshold ellipsoid is occupied.
 // This preserves thin walls even when the covered region misses every voxel center.
-// Without those properties a vertex only marks the voxel containing it.
+// Plain clouds fit each occupied cell's points with a padded PCA ellipsoid.
+// RGB integer channels are normalized by their type range; float RGB is [0,1].
+// RGB is interpreted as sRGB, linearized per point, and averaged per cell.
+// Missing/invalid RGB leaves the geometric point valid; missing colors fall back to black.
 // `opacityThreshold` is compared against the peak opacity sigmoid(opacity) and must be in (0, 1).
 Result load(
     const std::filesystem::path& path,

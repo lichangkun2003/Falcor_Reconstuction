@@ -54,7 +54,11 @@ opacity(v)  = sigmoid(Σ opacity_SH[k] · Yk(v))
 
 PLY 支持 ASCII 和 binary little-endian。XYZ 点云仅占据每个点落入的 cell；带 opacity、scale、rotation 的 Gaussian PLY 则按高斯覆盖的相交 cell 初始化，并受 Gaussian Opacity Threshold 筛选。该阈值不影响纯 XYZ 输入。NeRF 数据坐标变换为 (x, z, -y)。
 
-每个占据体素的初始中心为 (0.5, 0.5, 0.5)，半轴为 0.6 × voxelSize，radiance 为黑色，opacity logit 为零，即 alpha = 0.5。点云颜色和 SH 不直接复制到初始化 radiance。
+普通 XYZ/RGB 点云按 cell 聚合：中心为点位置均值（限制在优化器允许的局部 [0.01,0.99]），PCA 在世界尺度下估计主方向。半轴从协方差与该方向的 0.25 体素宽度下限取较大值，再等比放大到包含该 cell 内全部有效点，最后增加 5% 余量。单点没有方向证据，使用单位旋转及 0.6 × voxelSize 半轴，中心仍位于点附近。重合、共线、共面数据不会生成零半轴。不会自动剔除有限的离群点，因此应使用已清理的输入点云。
+
+支持 red/green/blue 或 diffuse_red/diffuse_green/diffuse_blue。整数 RGB 按类型正最大值归一化，浮点 RGB 约定为 [0,1]；按 sRGB 转为线性 RGB 后逐点求平均，与参考图的 sRGB 纹理读取一致。radiance DC = 平均线性 RGB / Y00，高阶 SH 清零；缺失或无效颜色不影响几何，均无有效颜色的 cell 回退黑色。opacity logit SH 全零，即各方向 alpha = 0.5。点记录仅在 CPU 初始化时暂存，GPU seed 为每个占据 cell 56 字节。
+
+带完整 opacity/scale/rotation 的 Gaussian PLY 保留原覆盖路径：覆盖 cell 中心为 (0.5,0.5,0.5)、半轴 0.6 × voxelSize、radiance 黑色；本次不将 Gaussian SH 或覆盖范围当作普通 RGB 点分布拟合。
 
 ## 2. 前向渲染与损失
 

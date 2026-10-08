@@ -1,9 +1,13 @@
 #include "../Voxel/VoxelGrid.slang"
 
-// Must match PointCloudInitialization::Seed on the host (4 bytes).
+// Must match PointCloudInitialization::Seed on the host (56 bytes).
 struct PointCloudSeed
 {
     uint voxelIndex;
+    float3 center;
+    float3 scale;
+    float4 rotation;
+    float3 color;
 };
 StructuredBuffer<PointCloudSeed> gSeeds;
 cbuffer CB
@@ -25,13 +29,12 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     // Empty cells were cleared on the host. Each occupied index occurs exactly once.
     VoxelData data = (VoxelData)0;
     data.occupied = 1;
-    data.ellipsoid.center = float3(0.5f);
-    // Initial semi-axes are 0.6 voxel widths; voxel corners remain outside the ellipsoid.
-    float3 initialScale = max(0.6f * gGridDataParamBlock.voxelSize, float3(1e-8f));
+    data.ellipsoid.center = seed.center;
+    float3 initialScale = max(seed.scale, float3(1e-8f));
     data.ellipsoid.logScale = log(initialScale);
-    data.ellipsoid.rotation = float4(1.0f, 0.0f, 0.0f, 0.0f);
-    // Point clouds determine occupancy only. All radiance SH coefficients start at zero (black).
+    data.ellipsoid.rotation = seed.rotation;
     data.radiance.init();
+    data.radiance.coefficients[0] = seed.color / calcSH(0u, float3(0, 0, 1));
     // Same opacity.init() as mode 3: zero logit SH, sigmoid(0) = 0.5.
     // Initialize independently of the optimization learning rates.
     data.opacity.init();

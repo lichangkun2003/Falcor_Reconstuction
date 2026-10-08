@@ -40,6 +40,7 @@ struct Header
     std::vector<Element> elements;
     size_t vertexElement = 0;
     std::array<size_t, 3> positions;
+    std::array<size_t, 3> colors = {kMissingProperty, kMissingProperty, kMissingProperty};
     // Optional per-Gaussian properties of a 3DGS reconstruction. Only when all of them are
     // present does the ellipsoid decide occupancy.
     size_t opacity = kMissingProperty;
@@ -321,6 +322,7 @@ Header readHeader(std::ifstream& input, uint64_t fileBytes)
     header.positions.fill(kMissingProperty);
     bool hasVertex = false;
     const std::array<std::string, 3> positionNames = {"x", "y", "z"};
+    const std::array<std::string, 3> colorNames = {"red", "green", "blue"};
     const std::array<std::string, 3> scaleNames = {"scale_0", "scale_1", "scale_2"};
     const std::array<std::string, 4> rotationNames = {"rot_0", "rot_1", "rot_2", "rot_3"};
     for (size_t elementIndex = 0; elementIndex < header.elements.size(); ++elementIndex)
@@ -342,6 +344,9 @@ Header readHeader(std::ifstream& input, uint64_t fileBytes)
                 }
             }
             if (property.isList) continue;
+            for (size_t axis = 0; axis < 3; ++axis)
+                if (property.name == colorNames[axis] || property.name == "diffuse_" + colorNames[axis])
+                    header.colors[axis] = propertyIndex;
             if (property.name == "opacity") header.opacity = propertyIndex;
             for (size_t axis = 0; axis < 3; ++axis)
                 if (property.name == scaleNames[axis]) header.scales[axis] = propertyIndex;
@@ -453,6 +458,143 @@ private:
     uint64_t mFileBytes;
 };
 
+struct CloudPoint
+{
+    uint32_t cell;
+    std::array<float, 3> local;
+    std::array<float, 3> color;
+    bool hasColor;
+};
+
+double normalizedColor(double value, ScalarType type)
+{
+    switch (type)
+    {
+    case ScalarType::UInt8: return value / 255.0;
+    case ScalarType::Int8: return value / 127.0;
+    case ScalarType::UInt16: return value / 65535.0;
+    case ScalarType::Int16: return value / 32767.0;
+    case ScalarType::UInt32: return value / 4294967295.0;
+    case ScalarType::Int32: return value / 2147483647.0;
+    default: return value; // Floating-point RGB must already be in [0,1].
+    }
+}
+
+Seed fitPoints(const std::vector<CloudPoint>& points, size_t begin, size_t end, const std::array<float, 3>& voxelSize)
+{
+    Seed seed = {};
+    seed.voxelIndex = points[begin].cell;
+    const double count = double(end - begin);
+    double mean[3] = {}, color[3] = {};
+    size_t colorCount = 0;
+    for (size_t i = begin; i < end; ++i)
+    {
+        for (size_t j = 0; j < 3; ++j)
+        {
+            mean[j] += points[i].local[j];
+            if (points[i].hasColor) color[j] += points[i].color[j];
+        }
+        colorCount += points[i].hasColor ? 1u : 0u;
+    }
+    for (size_t j = 0; j < 3; ++j)
+    {
+        mean[j] /= count;
+        // Match optimizer center bounds before computing the enclosing scale.
+        seed.center[j] = float(std::clamp(mean[j], 0.01, 0.99));
+        seed.color[j] = colorCount ? float(color[j] / double(colorCount)) : 0.f;
+        seed.scale[j] = 0.6f * voxelSize[j];
+    }
+    if (end - begin == 1) return seed; // No local orientation/extent evidence.
+
+    // World-space covariance about the mean; voxel-local positions avoid large-world cancellation.
+    double covariance[3][3] = {};
+    double basis[3][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+    for (size_t i = begin; i < end; ++i)
+        for (size_t row = 0; row < 3; ++row)
+            for (size_t col = 0; col < 3; ++col)
+                covariance[row][col] += (points[i].local[row] - mean[row]) * voxelSize[row] *
+                    (points[i].local[col] - mean[col]) * voxelSize[col] / count;
+    // Jacobi rotations preserve an orthonormal, right-handed principal-axis frame.
+    for (uint32_t iteration = 0; iteration < 32; ++iteration)
+    {
+        size_t p = 0, q = 1;
+        for (size_t row = 0; row < 3; ++row)
+            for (size_t col = row + 1; col < 3; ++col)
+                if (std::abs(covariance[row][col]) > std::abs(covariance[p][q])) { p = row; q = col; }
+        const double diagonal = std::abs(covariance[0][0]) + std::abs(covariance[1][1]) + std::abs(covariance[2][2]);
+        if (std::abs(covariance[p][q]) <= 1e-12 * std::max(diagonal, 1e-30)) break;
+        const double angle = 0.5 * std::atan2(2.0 * covariance[p][q], covariance[q][q] - covariance[p][p]);
+        const double c = std::cos(angle), s = std::sin(angle);
+        const double pp = covariance[p][p], qq = covariance[q][q], pq = covariance[p][q];
+        for (size_t j = 0; j < 3; ++j)
+        {
+            if (j != p && j != q)
+            {
+                const double jp = covariance[j][p], jq = covariance[j][q];
+                covariance[j][p] = covariance[p][j] = c * jp - s * jq;
+                covariance[j][q] = covariance[q][j] = s * jp + c * jq;
+            }
+            const double bp = basis[j][p], bq = basis[j][q];
+            basis[j][p] = c * bp - s * bq;
+            basis[j][q] = s * bp + c * bq;
+        }
+        covariance[p][p] = c*c*pp - 2*c*s*pq + s*s*qq;
+        covariance[q][q] = s*s*pp + 2*c*s*pq + c*c*qq;
+        covariance[p][q] = covariance[q][p] = 0;
+    }
+    double axes[3] = {};
+    for (size_t j = 0; j < 3; ++j)
+    {
+        double voxelWidthSquared = 0;
+        for (size_t k = 0; k < 3; ++k)
+            voxelWidthSquared += basis[k][j] * basis[k][j] * double(voxelSize[k]) * voxelSize[k];
+        // Keep a quarter-voxel semi-axis floor, including planar/collinear clouds.
+        axes[j] = std::max(std::sqrt(std::max(covariance[j][j], 0.0)), 0.25 * std::sqrt(voxelWidthSquared));
+    }
+    double maxQ = 1;
+    for (size_t i = begin; i < end; ++i)
+    {
+        double q = 0;
+        for (size_t j = 0; j < 3; ++j)
+        {
+            double projected = 0;
+            for (size_t k = 0; k < 3; ++k)
+                projected += basis[k][j] * (double(points[i].local[k]) - seed.center[k]) * voxelSize[k];
+            q += projected * projected / (axes[j] * axes[j]);
+        }
+        maxQ = std::max(maxQ, q);
+    }
+    for (size_t j = 0; j < 3; ++j) seed.scale[j] = float(axes[j] * std::sqrt(maxQ) * 1.05);
+
+    // Rotation matrix (principal axes in columns) -> quaternion, w first.
+    double quat[4] = {};
+    const double trace = basis[0][0] + basis[1][1] + basis[2][2];
+    if (trace > 0)
+    {
+        const double s = 2 * std::sqrt(trace + 1);
+        quat[0] = s * 0.25;
+        quat[1] = (basis[2][1] - basis[1][2]) / s;
+        quat[2] = (basis[0][2] - basis[2][0]) / s;
+        quat[3] = (basis[1][0] - basis[0][1]) / s;
+    }
+    else
+    {
+        size_t i = 0;
+        if (basis[1][1] > basis[i][i]) i = 1;
+        if (basis[2][2] > basis[i][i]) i = 2;
+        const size_t j = (i + 1) % 3, k = (i + 2) % 3;
+        const double s = 2 * std::sqrt(std::max(0.0, 1 + basis[i][i] - basis[j][j] - basis[k][k]));
+        quat[0] = (basis[k][j] - basis[j][k]) / s;
+        quat[i + 1] = s * 0.25;
+        quat[j + 1] = (basis[j][i] + basis[i][j]) / s;
+        quat[k + 1] = (basis[k][i] + basis[i][k]) / s;
+    }
+    double norm = 0;
+    for (double v : quat) norm += v*v;
+    for (size_t j = 0; j < 4; ++j) seed.rotation[j] = float(quat[j] / std::sqrt(norm));
+    return seed;
+}
+
 } // namespace
 
 Result load(
@@ -489,6 +631,7 @@ Result load(
     PayloadReader reader(input, header.binary, fileBytes);
 
     Result result;
+    std::vector<CloudPoint> cloudPoints;
     result.statistics.inputPoints = header.elements[header.vertexElement].count;
 
     // Occupancy bitmask: Gaussian coverage overlaps heavily, and 128^3 cells is only 256 KiB.
@@ -541,6 +684,7 @@ Result load(
         for (uint64_t item = 0; item < element.count; ++item)
         {
             std::array<double, 3> position = {};
+            std::array<double, 3> color = {};
             double opacity = 0.0;
             std::array<double, 3> logScale = {};
             std::array<double, 4> rotation = {};
@@ -564,6 +708,12 @@ Result load(
                         opacity = reader.scalar(property.valueType);
                         consumed = true;
                     }
+                    for (size_t axis = 0; axis < 3 && !consumed; ++axis)
+                        if (header.colors[axis] == propertyIndex)
+                        {
+                            color[axis] = normalizedColor(reader.scalar(property.valueType), property.valueType);
+                            consumed = true;
+                        }
                     if (!consumed)
                         for (size_t axis = 0; axis < 3 && !consumed; ++axis)
                         {
@@ -599,7 +749,7 @@ Result load(
 
             if (!header.hasGaussianProperties)
             {
-                // Plain point cloud: mark the containing voxel only.
+                // Preserve each point for per-cell position, covariance, containment and color fitting.
                 std::array<uint32_t, 3> cell = {};
                 if (!cellOfWorld(world, cell))
                 {
@@ -607,6 +757,22 @@ Result load(
                     continue;
                 }
                 mark(cell);
+                CloudPoint point = {};
+                point.cell = cellIndexOf(cell);
+                point.hasColor = !anyMissing(header.colors.data(), header.colors.size());
+                for (size_t axis = 0; axis < 3; ++axis)
+                {
+                    point.local[axis] = float((world[axis] - gridMin[axis]) / voxelSize[axis] - cell[axis]);
+                    point.hasColor = point.hasColor && std::isfinite(color[axis]) && color[axis] >= 0 && color[axis] <= 1;
+                }
+                if (point.hasColor)
+                {
+                    ++result.statistics.coloredPoints;
+                    for (size_t axis = 0; axis < 3; ++axis)
+                        point.color[axis] = float(color[axis] <= 0.04045 ? color[axis] / 12.92 :
+                            std::pow((color[axis] + 0.055) / 1.055, 2.4));
+                }
+                cloudPoints.push_back(point);
                 continue;
             }
 
@@ -772,13 +938,32 @@ Result load(
         }
     }
 
+    if (!header.hasGaussianProperties)
+    {
+        std::sort(cloudPoints.begin(), cloudPoints.end(), [](const CloudPoint& a, const CloudPoint& b) { return a.cell < b.cell; });
+        for (size_t begin = 0; begin < cloudPoints.size();)
+        {
+            size_t groupEnd = begin + 1;
+            while (groupEnd < cloudPoints.size() && cloudPoints[groupEnd].cell == cloudPoints[begin].cell) ++groupEnd;
+            result.seeds.push_back(fitPoints(cloudPoints, begin, groupEnd, voxelSize));
+            begin = groupEnd;
+        }
+    }
+    // Gaussian coverage keeps the existing per-cell fallback, including cells with no input center.
     // Scan order is ascending, so the seeds come out sorted and each occupied index appears once.
+    else
     for (size_t word = 0; word < occupancy.size(); ++word)
         for (uint32_t bit = 0; bit < 64; ++bit)
             if ((occupancy[word] >> bit) & 1ull)
             {
                 const uint64_t index = uint64_t(word) * 64 + bit;
-                if (index < totalVoxelCount) result.seeds.push_back({static_cast<uint32_t>(index)});
+                if (index < totalVoxelCount)
+                {
+                    Seed seed = {};
+                    seed.voxelIndex = static_cast<uint32_t>(index);
+                    for (size_t axis = 0; axis < 3; ++axis) seed.scale[axis] = 0.6f * voxelSize[axis];
+                    result.seeds.push_back(seed);
+                }
             }
     if (result.seeds.empty())
         fail("no occupied voxels inside the voxel grid (input=" + std::to_string(result.statistics.inputPoints) +
