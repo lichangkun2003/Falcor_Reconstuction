@@ -59,6 +59,9 @@ VoxelReconstructionNoLightTransport::VoxelReconstructionNoLightTransport(ref<Dev
         else if (key == "coarseGrowthEnabled")
             mCoarseToFine.enableCoarseGrowth = value;
         else if (key == "growthUseEvidence") mTopologySettings.useGrowthEvidence = value;
+        else if (key == "growthEvidencePenetration") mTopologySettings.growthEvidencePenetration = value;
+        else if (key == "growthMinSupportingParents") mTopologySettings.growthMinSupportingParents = value;
+        else if (key == "growthInitialOpacity") mTopologySettings.growthInitialOpacity = value;
         else if (key == "growthMinForegroundViews") mTopologySettings.growthMinForegroundViews = value;
         else if (key == "growthBackgroundVetoViews") mTopologySettings.growthBackgroundVetoViews = value;
         else if (key == "growthMinAlphaDeficit") mTopologySettings.growthMinAlphaDeficit = value;
@@ -140,6 +143,9 @@ Properties VoxelReconstructionNoLightTransport::getProperties() const
     props["refinementChildFaceOverlap"] = mCoarseToFine.childFaceOverlap;
     props["coarseGrowthEnabled"] = mCoarseToFine.enableCoarseGrowth;
     props["growthUseEvidence"] = mTopologySettings.useGrowthEvidence;
+    props["growthEvidencePenetration"] = mTopologySettings.growthEvidencePenetration;
+    props["growthMinSupportingParents"] = mTopologySettings.growthMinSupportingParents;
+    props["growthInitialOpacity"] = mTopologySettings.growthInitialOpacity;
     props["growthMinForegroundViews"] = mTopologySettings.growthMinForegroundViews;
     props["growthBackgroundVetoViews"] = mTopologySettings.growthBackgroundVetoViews;
     props["growthMinAlphaDeficit"] = mTopologySettings.growthMinAlphaDeficit;
@@ -813,7 +819,6 @@ group.text("mode1 coarse level: deletion is disabled; conservative neighbor grow
     }
     group.var("Child Scale Multiplier", mTopologySettings.growthShrink, 0.01f, 0.99f, 0.01f);
     group.var("Child Contact Offset (voxels)", mTopologySettings.growthContactOffset, 0.01f, 0.49f, 0.01f);
-    group.var("Child Max Initial Opacity", mTopologySettings.growthInitialOpacity, 0.01f, 0.49f, 0.01f);
     group.var("Newborn Growth Wait (iterations)", mTopologySettings.growthWaitIterations, 0u, 100u, 1u);
     group.text("Newborns keep optimizing but cannot grow until this many full rounds finish; independent of deletion protection.");
     group.var("Newborn Protection (iterations)", mTopologySettings.growthProtectionIterations, 1u, 100u, 1u);

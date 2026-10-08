@@ -136,6 +136,7 @@ void VoxelReconstructionNoLightTransport::growNeighborVoxels(RenderContext* pRen
                 var["gGrowthCandidates"] = mpGrowthCandidates;
                 var["EvidenceCB"]["gCandidateCount"] = mGrowthCandidateCount;
                 var["EvidenceCB"]["gMinForegroundViews"] = std::max(2u, mTopologySettings.growthMinForegroundViews);
+                var["EvidenceCB"]["gMinSupportingParents"] = std::clamp(mTopologySettings.growthMinSupportingParents, 1u, 6u);
                 var["EvidenceCB"]["gBackgroundVetoViews"] = std::max(1u, mTopologySettings.growthBackgroundVetoViews);
             }
             pRenderContext->uavBarrier(mpGrowthCandidates.get());
@@ -155,10 +156,11 @@ void VoxelReconstructionNoLightTransport::growNeighborVoxels(RenderContext* pRen
             ));
             const float facePenetration =
                 getEffectiveGrowthFacePenetration();
-            cb["gFacePenetration"] = std::clamp(facePenetration, 0.0f, float(GROWTH_MAX_FACE_PENETRATION_VOXELS));
+            cb["gFacePenetration"] = std::clamp(evidence ? mTopologySettings.growthEvidencePenetration : facePenetration,
+                0.0f, float(GROWTH_MAX_FACE_PENETRATION_VOXELS));
             cb["gShrink"] = std::clamp(mTopologySettings.growthShrink, 0.01f, 0.99f);
             cb["gContactOffset"] = std::clamp(mTopologySettings.growthContactOffset, 0.01f, 0.49f);
-            cb["gInitialOpacity"] = std::clamp(mTopologySettings.growthInitialOpacity, 0.01f, 0.49f);
+            cb["gInitialOpacity"] = std::clamp(mTopologySettings.growthInitialOpacity, 0.01f, 0.99f);
         }
         barrierSparseVoxels(pRenderContext);
         barrierTopologyEvidence(pRenderContext);

@@ -319,6 +319,8 @@ public:
         bool collectDeletionEvidence = true;
         bool enableGrowth = true;
         bool useGrowthEvidence = true;
+        float growthEvidencePenetration = 0.15f;
+        uint32_t growthMinSupportingParents = 2u;
         uint32_t growthMinForegroundViews = 3;
         uint32_t growthBackgroundVetoViews = 2;
         float growthMinAlphaDeficit = 0.05f;
@@ -327,7 +329,7 @@ public:
         uint32_t growthInterval = 10;
         float growthShrink = 0.7f;
         float growthContactOffset = 0.2f;
-        float growthInitialOpacity = 0.1f;
+        float growthInitialOpacity = 0.5f;
         uint32_t growthWaitIterations = 5;
         uint32_t growthProtectionIterations = 5;
         uint32_t deletionCooldownIterations = 5;

@@ -33,7 +33,8 @@ void VoxelReconstructionNoLightTransport::beginGrowthEvidence(RenderContext* ctx
     cb["gParentCount"] = parents;
     cb["gCurrentIteration"] = boundary;
     cb["gGrowthWaitIterations"] = mTopologySettings.growthWaitIterations;
-    cb["gFacePenetration"] = 0.0f;
+    cb["gFacePenetration"] = std::clamp(mTopologySettings.growthEvidencePenetration, 0.0f, float(GROWTH_MAX_FACE_PENETRATION_VOXELS));
+    var["EvidenceCB"]["gMinSupportingParents"] = std::clamp(mTopologySettings.growthMinSupportingParents, 1u, 6u);
     cb["gShrink"] = std::clamp(mTopologySettings.growthShrink, 0.01f, 0.99f);
     cb["gContactOffset"] = std::clamp(mTopologySettings.growthContactOffset, 0.01f, 0.49f);
     const auto dispatch = [&]()
@@ -142,11 +143,16 @@ void VoxelReconstructionNoLightTransport::collectGrowthEvidence(RenderContext* c
 void VoxelReconstructionNoLightTransport::renderUIGrowthEvidence(Gui::Widgets& widget)
 {
     if (widget.checkbox("Use Multi-view Growth Evidence", mTopologySettings.useGrowthEvidence)) resetGrowthEvidence();
+    widget.var("Child Initial Opacity", mTopologySettings.growthInitialOpacity, 0.01f, 0.99f, 0.01f);
     if (!mTopologySettings.useGrowthEvidence) return;
+    bool changed = widget.var("Growth Outward Depth (voxels)", mTopologySettings.growthEvidencePenetration,
+        0.0f, float(GROWTH_MAX_FACE_PENETRATION_VOXELS), 0.01f);
+    changed |= widget.var("Growth Min Supporting Parents", mTopologySettings.growthMinSupportingParents, 1u, 6u, 1u);
+    if (changed) resetGrowthEvidence();
     widget.var("Growth Min Foreground Views", mTopologySettings.growthMinForegroundViews, 2u, uint32_t(TOPOLOGY_EVIDENCE_MAX_VIEWS), 1u);
     widget.var("Growth Background Veto Views", mTopologySettings.growthBackgroundVetoViews, 1u, uint32_t(TOPOLOGY_EVIDENCE_MAX_VIEWS), 1u);
     widget.var("Growth Min Alpha Deficit", mTopologySettings.growthMinAlphaDeficit, 0.001f, 1.0f, 0.01f);
-    widget.text("Shared-face candidates; foreground alpha deficit supports growth, reliable background vetoes it.");
+    widget.text("Mature face neighbors must extend beyond the outward-depth threshold before camera voting.");
     widget.text("Existing foreground coverage gives no vote. Legacy penetration thresholds are ignored.");
     widget.text(fmt::format("Current evidence: {} proposals, {} distinct views", mGrowthCandidateCount, mGrowthEvidenceViews));
 }

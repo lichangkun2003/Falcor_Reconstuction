@@ -16,6 +16,7 @@ Texture2D<float4> gGrowthRendered;
 cbuffer EvidenceCB
 {
     uint gCandidateCount;
+    uint gMinSupportingParents;
     bool gWriteCandidates;
     uint gMinForegroundViews;
     uint gBackgroundVetoViews;
@@ -33,6 +34,26 @@ bool growthCellAvailable(uint3 cell)
         (previous == -1 || gCurrentIteration >= uint(-previous - 2));
 }
 
+// Count distinct, mature face neighbors that can actually grow toward this cell.
+// Recheck at commit because supporting parents can be removed during evidence collection.
+bool hasSupportingParents(uint3 cell)
+{
+    uint support = 0u;
+    for (uint face = 0u; face < 6u; ++face)
+    {
+        int3 neighbor = int3(cell);
+        neighbor[face / 2u] += (face & 1u) != 0u ? 1 : -1;
+        if (any(neighbor < 0) || any(neighbor >= int3(gGridDataParamBlock.voxelCount))) continue;
+        int parentID = lookupVoxelID(neighbor);
+        if (parentID < 0 || uint(parentID) >= gParentCount) continue;
+        uint3 target;
+        GaussianEllipsoid child;
+        if (growthChild(uint(parentID), face ^ 1u, target, child) && all(target == cell))
+            if (++support >= max(gMinSupportingParents, 1u)) return true;
+    }
+    return false;
+}
+
 [numthreads(256, 1, 1)]
 void buildCandidates(uint3 threadID : SV_DispatchThreadID)
 {
@@ -42,8 +63,8 @@ void buildCandidates(uint3 threadID : SV_DispatchThreadID)
     {
         uint3 cell;
         GaussianEllipsoid child;
-        // Host sets penetration to zero: shared-face contact, no deep extension.
         if (!growthChild(parentID, face, cell, child) || !growthCellAvailable(cell)) continue;
+        if (!hasSupportingParents(cell)) continue;
         uint slot;
         InterlockedAdd(gGrowthCounter[0], 1u, slot);
         if (!gWriteCandidates || slot >= gCandidateCount) continue;
@@ -124,7 +145,9 @@ bool eligibleCandidate(uint id, out uint parentID, out uint3 cell)
     int parent = lookupVoxelID(IndexToCell(int(candidate.parentCell), gGridDataParamBlock.voxelCount));
     if (parent < 0 || VOXEL_DATA(uint(parent)).occupied == 0u || isDeletionCandidate(uint(parent))) return false;
     parentID = uint(parent);
-    return true;
+    uint3 target;
+    GaussianEllipsoid child;
+    return growthChild(parentID, candidate.face, target, child) && all(target == cell) && hasSupportingParents(cell);
 }
 
 [numthreads(256, 1, 1)]

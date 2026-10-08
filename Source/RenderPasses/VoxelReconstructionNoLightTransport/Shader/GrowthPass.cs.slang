@@ -89,23 +89,15 @@ void writeGrowthChild(uint parentID, uint id, GaussianEllipsoid child, uint3 cel
     VoxelData data = VOXEL_DATA(parentID);
     data.ellipsoid = child;
     data.occupied = 1u;
-    // Preserve directional variation when possible, keeping opacity both
-    // low and trainable in EVERY direction. |Y_lm| <= sqrt((2*l+1)/(4*pi)).
+    // Start with the parent's DC radiance; learn directional variation locally.
+    for (uint coefficient = 1u; coefficient < SH_COUNT; ++coefficient)
+        data.radiance.coefficients[coefficient] = float3(0.0f);
+    // Initialize the requested alpha uniformly in every direction.
     float y0 = calcSH(0u, float3(0, 0, 1));
-    float variation = 0.0f;
     for (uint i = 1u; i < SH_OPACITY_COUNT; ++i)
-    {
-        uint degree = uint(floor(sqrt(float(i))));
-        variation += abs(data.opacity.coefficients[i]) * sqrt(float(2u * degree + 1u) / (4.0f * 3.14159265359f));
-    }
+        data.opacity.coefficients[i] = 0.0f;
     float desiredLogit = log(gInitialOpacity / (1.0f - gInitialOpacity));
-    float minimumOpacity = 0.1f * gInitialOpacity;
-    float minimumLogit = log(minimumOpacity / (1.0f - minimumOpacity));
-    float variationScale = min(1.0f, (desiredLogit - minimumLogit) / max(2.0f * variation, 1e-20f));
-    for (uint i = 1u; i < SH_OPACITY_COUNT; ++i)
-        data.opacity.coefficients[i] *= variationScale;
-    variation *= variationScale;
-    data.opacity.coefficients[0] = clamp(data.opacity.coefficients[0] * y0, minimumLogit + variation, desiredLogit - variation) / y0;
+    data.opacity.coefficients[0] = desiredLogit / y0;
     VOXEL_DATA(id) = data;
     GradRecord gradient;
     gradient.init();

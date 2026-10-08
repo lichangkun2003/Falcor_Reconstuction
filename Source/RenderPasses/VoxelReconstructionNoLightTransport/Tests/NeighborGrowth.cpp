@@ -37,6 +37,8 @@ struct NeighborGrowthTestAccess
         result.ellipsoid.logScale = float3(std::log(4.0f), std::log(2.0f), std::log(0.8f));
         result.ellipsoid.rotation = float4(std::cos(0.3f), 0, 0, std::sin(0.3f));
         result.radiance.coefficients[0] = float3(0.3f, 0.5f, 0.7f);
+        for (uint32_t i = 1u; i < SH_COUNT; ++i)
+            result.radiance.coefficients[i] = float3(0.02f, -0.03f, 0.01f) * float(i);
         result.opacity.coefficients[1] = 0.03f;
         return result;
     }
@@ -112,7 +114,12 @@ struct NeighborGrowthTestAccess
     static void checkChild(const VoxelData& parent, const VoxelData& child, uint32_t childCell, uint32_t parentCell)
     {
         require(child.occupied == 1u, "Child is not occupied");
-        require(std::memcmp(&parent.radiance, &child.radiance, sizeof(parent.radiance)) == 0, "Radiance was not inherited");
+        for (uint32_t channel = 0u; channel < 3u; ++channel)
+        {
+            require(child.radiance.coefficients[0][channel] == parent.radiance.coefficients[0][channel], "Radiance DC was not inherited");
+            for (uint32_t i = 1u; i < SH_COUNT; ++i)
+                require(child.radiance.coefficients[i][channel] == 0.0f, "Newborn radiance retained directional coefficients");
+        }
         for (uint32_t i = 0; i < 4; ++i)
             require(std::abs(parent.ellipsoid.rotation[i] - child.ellipsoid.rotation[i]) < 1e-6f, "Parent rotation changed");
         float3 ratios = child.ellipsoid.logScale - parent.ellipsoid.logScale;
@@ -137,7 +144,7 @@ struct NeighborGrowthTestAccess
             const float radius = std::sqrt(1.0f - z * z);
             auto opacity = child.opacity;
             const float alpha = opacity.calcOpacity(float3(radius * std::cos(phi), radius * std::sin(phi), z));
-            require(alpha >= 0.01f - 1e-6f && alpha <= 0.1f + 1e-6f, "Initial opacity is not low and trainable");
+            require(std::abs(alpha - 0.5f) < 1e-6f, "Initial opacity is not uniformly 0.5");
         }
     }
 
@@ -720,6 +727,8 @@ struct NeighborGrowthTestAccess
             seed(pass, ctx, pair ? std::vector<uint32_t>{cell(2, 3, 3), cell(4, 3, 3)} : std::vector<uint32_t>{cell(3, 3, 3)},
                 pair ? std::vector<VoxelData>{parent, parent} : std::vector<VoxelData>{parent});
             pass.mTopologySettings.useGrowthEvidence = true;
+            pass.mTopologySettings.growthEvidencePenetration = 0.0f;
+            pass.mTopologySettings.growthMinSupportingParents = 1u;
             pass.mTopologySettings.growthMinForegroundViews = 3u;
             pass.mTopologySettings.growthBackgroundVetoViews = 2u;
             pass.mTopologySettings.growthMinAlphaDeficit = 0.05f;
@@ -791,12 +800,58 @@ struct NeighborGrowthTestAccess
         pass.mTopologySettings.enableGrowth = false;
         vote(0, 1, 0); vote(1, 1, 0); vote(2, 1, 0);
         finish(1);
+        // Conservative mode: two mature, outward-reaching parents fill only their shared hole.
+        parent.ellipsoid.logScale = float3(std::log(0.8f));
+        prepare(3, true);
+        pass.mTopologySettings.growthEvidencePenetration = 0.15f;
+        pass.mTopologySettings.growthMinSupportingParents = 2u;
+        pass.beginGrowthEvidence(ctx, 50u);
+        require(pass.mGrowthCandidateCount == 2u, "Conservative growth admitted a singly supported cell");
+        vote(0, 1, 0); vote(1, 1, 0); vote(2, 1, 0);
+        finish(3);
+        const auto conservativeMap = indices(pass, ctx);
+        require(conservativeMap[cell(3, 3, 3)] >= 0, "Two-sided hole was not filled");
+        const auto newborn = read<VoxelData>(pass.mGridResources.voxelPages, uint32_t(conservativeMap[cell(3, 3, 3)]));
+        checkChild(parent, newborn, cell(3, 3, 3), cell(newborn.ellipsoid.center.x < 0.5f ? 2u : 4u, 3, 3));
+
+        // Adjacency alone is insufficient: one parent does not reach the threshold.
+        prepare(3, true);
+        pass.mTopologySettings.growthEvidencePenetration = 0.15f;
+        pass.mTopologySettings.growthMinSupportingParents = 2u;
+        auto shallow = parent;
+        shallow.ellipsoid.logScale = float3(std::log(0.6f));
+        write(pass.mGridResources.voxelPages, 1u, shallow);
+        pass.beginGrowthEvidence(ctx, 50u);
+        require(pass.mGrowthCandidateCount == 0u, "Shallow neighbor counted as outward support");
+
+        prepare(3, true);
+        pass.mTopologySettings.growthEvidencePenetration = 0.15f;
+        pass.mTopologySettings.growthMinSupportingParents = 2u;
+        auto young = read<TopologyEvidence>(pass.mGridResources.topologyEvidencePages, 1u);
+        young.growthWaitStartIterationPlusOne = 50u;
+        write(pass.mGridResources.topologyEvidencePages, 1u, young);
+        pass.beginGrowthEvidence(ctx, 50u);
+        require(pass.mGrowthCandidateCount == 0u, "Immature neighbor counted as support");
+
+        // Losing either support during the evidence round cancels the birth.
+        prepare(3, true);
+        pass.mTopologySettings.growthEvidencePenetration = 0.15f;
+        pass.mTopologySettings.growthMinSupportingParents = 2u;
+        pass.beginGrowthEvidence(ctx, 50u);
+        vote(0, 1, 0); vote(1, 1, 0); vote(2, 1, 0);
+        deletion = read<TopologyEvidence>(pass.mGridResources.topologyEvidencePages, 0u);
+        deletion.packedCountsAndFlags |= kTopologyEvidenceDeletionCandidate;
+        write(pass.mGridResources.topologyEvidencePages, 0u, deletion);
+        pass.mTopologySettings.candidateCount = 1u;
+        pass.deleteAndCompactCandidates(ctx);
+        finish(1);
         pass.resetGrowthEvidence();
         pass.mOptimizerParams = savedOptimizer;
         pass.mTopologySettings = savedTopology;
         pass.mReconstructionMode = savedMode;
         std::cout << "PASS: multi-view deficit growth, background veto through occlusion, distinct-camera votes, "
-                     "neutral covered/silhouette/offscreen views, shared-cell deduplication, compaction-stable evidence, disabled growth\n";
+                     "neutral covered/silhouette/offscreen views, shared-cell deduplication, compaction-stable evidence, disabled growth, "
+                     "outward-depth and mature multi-parent gates, support-loss rejection\n";
     }
 
     static int run()
@@ -915,7 +970,7 @@ struct NeighborGrowthTestAccess
                     "Newborn did not receive its own growth-wait clock"
                 );
             }
-            std::cout << "PASS: trigger timing, single layer, rotated five-face bounds, inheritance, low opacity, fresh Adam\n";
+            std::cout << "PASS: trigger timing, single layer, rotated five-face bounds, DC inheritance, uniform opacity, fresh Adam\n";
             checkDeletionProtection(*pass, ctx);
             std::cout << "PASS: newborn evidence gate preserves gradients; expiry restores unique-view votes\n";
 
