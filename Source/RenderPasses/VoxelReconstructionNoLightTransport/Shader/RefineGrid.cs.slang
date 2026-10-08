@@ -12,9 +12,9 @@ cbuffer CB
     float gChildFaceOverlap;
 };
 
-// Opacity SH stores logits. A uniform DC shift lowers every directional
-// logit while preserving the learned directional coefficients. Choose the
-// shift so the DC-only opacity has the requested optical depth
+// Opacity SH stores logits. Choose the DC shift so the parent's DC-only
+// opacity has the requested optical depth. Child directional coefficients
+// are cleared separately, including when attenuation is disabled.
 // tauChild = scale * tauParent.
 void attenuateRefinementOpacity(inout SphericalHarmonicsOpacity opacity)
 {
@@ -234,9 +234,14 @@ void main(uint3 threadID : SV_DispatchThreadID)
     uint parentCellIndex = gCoarseGrid.cellIndexPages[NonUniformResourceIndex(page)][offset];
     uint3 parentCell = uint3(IndexToCell(int(parentCellIndex), gCoarseGrid.voxelCount));
     GaussianEllipsoid parentEllipsoid = data.ellipsoid;
-    // Radiance is copied unchanged. Opacity is attenuated once per split to
-    // reduce the accumulated opacity of multiple children along one ray.
+    // Children inherit only the parent's direction-independent appearance.
+    // Keep radiance DC unchanged and attenuate opacity DC once per split;
+    // directional coefficients can be learned again at the finer level.
     attenuateRefinementOpacity(data.opacity);
+    for (uint coefficient = 1u; coefficient < SH_COUNT; ++coefficient)
+        data.radiance.coefficients[coefficient] = float3(0.0f);
+    for (uint coefficient = 1u; coefficient < SH_OPACITY_COUNT; ++coefficient)
+        data.opacity.coefficients[coefficient] = 0.0f;
     for (uint child = 0u; child < 8u; ++child)
     {
         if ((range.x & (1u << child)) == 0u) continue;

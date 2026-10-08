@@ -59,6 +59,17 @@ struct CoarseToFineTestAccess
         return float(std::log(childAlpha / (1.0 - childAlpha)) / y0);
     }
 
+    static void checkAppearance(const VoxelData& parent, const VoxelData& child, float opticalDepthScale)
+    {
+        require(all(child.radiance.coefficients[0] == parent.radiance.coefficients[0]), "Refinement changed radiance DC");
+        for (uint32_t coefficient = 1u; coefficient < SH_COUNT; ++coefficient)
+            require(all(child.radiance.coefficients[coefficient] == float3(0)), "Refinement retained directional radiance");
+        require(std::abs(child.opacity.coefficients[0] - attenuatedOpacityDC(parent.opacity, opticalDepthScale)) < 1e-4f,
+            "Refinement opacity DC did not use optical-depth attenuation");
+        for (uint32_t coefficient = 1u; coefficient < SH_OPACITY_COUNT; ++coefficient)
+            require(child.opacity.coefficients[coefficient] == 0.0f, "Refinement retained directional opacity");
+    }
+
     static void checkTrainingViewOrder(VoxelReconstructionNoLightTransport& pass)
     {
         const auto originalCameras = pass.mReferenceCameras;
@@ -147,6 +158,7 @@ struct CoarseToFineTestAccess
         checkLevelBudgets(*pass);
         checkTrainingViewOrder(*pass);
         pass->mReconstructionMode = 1u;
+        pass->mCoarseToFine.startResolution = 16u;
         pass->mCoarseToFine.targetResolution = 64u;
         pass->mCoarseToFine.totalIterations = 12u; // Interpolated weights produce 3, 3, and 6 rounds.
         pass->mCoarseToFine.saveEachLevel = false; // Most scheduling checks must not write experiment checkpoints.
@@ -261,17 +273,7 @@ struct CoarseToFineTestAccess
             require(child.occupied == 1u, "Child unoccupied");
             checkGeometry(parent.ellipsoid, child.ellipsoid, grid.voxelSize,
                 uint3(id & 1u, (id >> 1u) & 1u, (id >> 2u) & 1u), pass->mCoarseToFine.childFaceOverlap);
-            require(std::memcmp(&child.radiance, &parent.radiance, sizeof(parent.radiance)) == 0, "Refinement reset radiance");
-            require(
-                std::abs(child.opacity.coefficients[0] - attenuatedOpacityDC(parent.opacity, pass->mCoarseToFine.opacityOpticalDepthScale)) <
-                    1e-4f,
-                "Refinement opacity did not use optical-depth attenuation"
-            );
-            for (uint32_t coefficient = 1u; coefficient < SH_OPACITY_COUNT; ++coefficient)
-                require(
-                    child.opacity.coefficients[coefficient] == parent.opacity.coefficients[coefficient],
-                    "Refinement changed directional opacity coefficients"
-                );
+            checkAppearance(parent, child, pass->mCoarseToFine.opacityOpticalDepthScale);
             const auto adam = read<GeometryAdamState>(pass->mGridResources.adamPages, id);
             const GeometryAdamState zero = {};
             require(std::memcmp(&adam, &zero, sizeof(adam)) == 0, "Refinement retained incompatible parent Adam moments");
@@ -397,6 +399,7 @@ struct CoarseToFineTestAccess
         auto pass = VoxelReconstructionNoLightTransport::create(device, {});
         pass->mReconstructionOutputRoot = directory;
         pass->mReconstructionMode = 1u;
+        pass->mCoarseToFine.startResolution = 16u;
         pass->mCoarseToFine.targetResolution = 32u;
         pass->mReconstructionNameTag = "naming";
         GridData grid = {};
@@ -580,6 +583,7 @@ struct CoarseToFineTestAccess
         auto ctx = device->getRenderContext();
         auto pass = VoxelReconstructionNoLightTransport::create(device, {});
         pass->mReconstructionMode = 1u;
+        pass->mCoarseToFine.startResolution = 16u;
         pass->mCoarseToFine.targetResolution = 32u;
         const auto check = [&](VoxelData parent, float3 size, uint32_t expectedMask, uint32_t parents = 1u)
         {
@@ -648,22 +652,8 @@ struct CoarseToFineTestAccess
                         "Filtered child has an incorrect reverse spatial index"
                     );
                     const auto inherited = read<VoxelData>(pass->mGridResources.voxelPages, uint32_t(id));
-                    require(
-                        inherited.occupied == 1u && std::memcmp(&inherited.radiance, &parent.radiance, sizeof(parent.radiance)) == 0,
-                        "Filtered child did not inherit parent appearance"
-                    );
-                    const float expectedOpacityDC = attenuatedOpacityDC(parent.opacity, pass->mCoarseToFine.opacityOpticalDepthScale);
-                    if (std::abs(inherited.opacity.coefficients[0] - expectedOpacityDC) >= 1e-4f)
-                        throw std::runtime_error(fmt::format(
-                            "Filtered child opacity attenuation mismatch: expected {}, got {}",
-                            expectedOpacityDC,
-                            inherited.opacity.coefficients[0]
-                        ));
-                    for (uint32_t coefficient = 1u; coefficient < SH_OPACITY_COUNT; ++coefficient)
-                        require(
-                            inherited.opacity.coefficients[coefficient] == parent.opacity.coefficients[coefficient],
-                            "Directional opacity SH was modified during refinement"
-                        );
+                    require(inherited.occupied == 1u, "Filtered child is not occupied");
+                    checkAppearance(parent, inherited, pass->mCoarseToFine.opacityOpticalDepthScale);
                     checkGeometry(parent.ellipsoid, inherited.ellipsoid, size,
                         uint3(child & 1u, (child >> 1u) & 1u, (child >> 2u) & 1u), pass->mCoarseToFine.childFaceOverlap);
                 }
@@ -677,6 +667,18 @@ struct CoarseToFineTestAccess
         sphere.ellipsoid.rotation = float4(1, 0, 0, 0);
         sphere.ellipsoid.center = float3(0.25f);
         sphere.ellipsoid.logScale = float3(std::log(0.1f));
+        for (uint32_t coefficient = 1u; coefficient < SH_COUNT; ++coefficient)
+            sphere.radiance.coefficients[coefficient] = float(coefficient) * float3(0.3f, -0.2f, 0.1f);
+        for (uint32_t coefficient = 1u; coefficient < SH_OPACITY_COUNT; ++coefficient)
+            sphere.opacity.coefficients[coefficient] = coefficient % 2u ? float(coefficient) : -float(coefficient);
+        for (float scale : {0.65f, 1.0f})
+        {
+            pass->mCoarseToFine.opacityOpticalDepthScale = scale;
+            check(sphere, float3(1), 0x01u); // Clear all directional terms even with DC attenuation disabled.
+        }
+        pass->mCoarseToFine.opacityOpticalDepthScale = 0.65f;
+        for (uint32_t coefficient = 1u; coefficient < SH_OPACITY_COUNT; ++coefficient)
+            sphere.opacity.coefficients[coefficient] = 0.0f;
         check(sphere, float3(1), 0x01u);     // Ellipsoid wholly inside one child, with no corner inside it.
         check(sphere, float3(1), 0x01u, 9u); // Worst-case 72 > 64 slots; actual nine children must fit.
         sphere.opacity.coefficients[0] = std::log(0.001f / 0.999f) / calcSH(0u, float3(0, 0, 1));
@@ -752,7 +754,8 @@ struct CoarseToFineTestAccess
         sphere.ellipsoid.logScale = float3(std::log(1e-6f));
         check(sphere, float3(1), 0u); // Never inflate unrepresentable geometry to the optimizer minimum.
         std::cout << "PASS: refinement interior/boundary classification, bounded face overlap, inward boundary centers, "
-                     "parent containment, face/edge/tangent overlap, thin-shape rejection, non-cubic cells, compact allocation\n";
+                     "parent containment, face/edge/tangent overlap, thin-shape rejection, non-cubic cells, compact allocation, "
+                     "DC-only appearance inheritance with and without opacity attenuation\n";
     }
 };
 

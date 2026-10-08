@@ -343,7 +343,8 @@ void VoxelReconstructionNoLightTransport::renderUICoarseToFine(Gui::Widgets& wid
             );
             widget.var("Refinement Opacity Optical-Depth Scale", mCoarseToFine.opacityOpticalDepthScale, 0.01f, 1.0f, 0.01f);
             widget.tooltip(
-                "Attenuate child opacity at every refinement in optical-depth space. 1 keeps parent opacity; 0.65 reduces stacking."
+                "Children inherit radiance DC and attenuated opacity DC; higher SH coefficients reset to zero. "
+                "1 keeps parent DC opacity; 0.65 scales its optical depth."
             );
             widget.var("Refinement Child Face Overlap (voxels)", mCoarseToFine.childFaceOverlap, 0.0f, 0.2f, 0.01f);
             widget.tooltip("Maximum extent beyond each fine-cell face. Parent ellipsoid containment is retained. Zero disables overlap.");

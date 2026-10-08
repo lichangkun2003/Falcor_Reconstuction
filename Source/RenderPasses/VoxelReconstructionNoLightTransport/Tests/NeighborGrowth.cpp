@@ -721,7 +721,9 @@ struct NeighborGrowthTestAccess
             require(pass->mTopologySettings.growthFacePenetration == 1.0f, "Default growth depth is not delta 1");
             require(pass->mTopologySettings.growthInterval == 10u, "Default growth interval is not ten full rounds");
             require(
-                pass->mCoarseToFine.enableCoarseGrowth && pass->mCoarseToFine.growthFinerLevelMultiplier == 2.0f &&
+                pass->mCoarseToFine.enableCoarseGrowth &&
+                    pass->mCoarseToFine.coarsestGrowthFacePenetration == COARSEST_GROWTH_FACE_PENETRATION &&
+                    pass->mCoarseToFine.growthFinerLevelMultiplier == FINER_GROWTH_THRESHOLD_MULTIPLIER &&
                     pass->mCoarseToFine.coarseGrowthInterval == 20u,
                 "Default mode1 coarse-growth settings are incorrect"
             );
@@ -730,6 +732,8 @@ struct NeighborGrowthTestAccess
             const auto originalStartResolution = pass->mCoarseToFine.startResolution;
             pass->mReconstructionMode = 1u;
             pass->mCoarseToFine.startResolution = 64u;
+            pass->mCoarseToFine.coarsestGrowthFacePenetration = 1.3f;
+            pass->mCoarseToFine.growthFinerLevelMultiplier = 2.0f;
             for (uint32_t resolution : {64u, 128u, 256u, 512u})
             {
                 pass->mVoxelResolution = resolution;

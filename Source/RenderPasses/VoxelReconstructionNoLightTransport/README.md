@@ -195,7 +195,7 @@ Refinement Parent Opacity Threshold 默认 0，表示不按父 opacity 过滤。
 
 ### 5.3 外观与状态继承
 
-radiance 完全复制。opacity 使用默认 0.65 的光学厚度衰减：
+radiance 仅继承父体素第 0 项（DC），高阶 SH 系数全部清零。opacity 基于父体素 DC 使用默认 0.65 的光学厚度衰减：
 
 ```text
 alpha_DC = sigmoid(parentOpacityDC · Y0)
@@ -203,7 +203,7 @@ tau_DC   = -log(1 - alpha_DC)
 childAlpha_DC = 1 - exp(-0.65 · tau_DC)
 ```
 
-再调整 opacity SH 的 DC 系数，保留其他方向系数；倍率设为 1 可禁用衰减。这只是减轻多个子命中叠加的初始化近似，不是逐射线透射率守恒的精确分裂。
+再调整 opacity SH 的 DC 系数，高阶方向系数全部清零；倍率设为 1 可禁用 DC 衰减，但仍清零高阶项。子体素初始化时不具有方向性，后续优化仍可学习全部 SH 系数。这只是减轻多个子命中叠加的初始化近似，不是逐射线透射率守恒的精确分裂。
 
 新网格的 Adam、梯度和拓扑记录初始化，训练的全局轮数和 loss 历史继续。粗层级的生长绿色标记不会继承到细层级。
 
