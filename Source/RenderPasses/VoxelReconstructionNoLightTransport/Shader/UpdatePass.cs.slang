@@ -79,6 +79,26 @@ float adamStepWithBias(float gradient, inout float mean, inout float squaredMean
     return sanitizeFloat(lr * correctedMean / (sqrt(correctedSquaredMean) + kAdamEpsilon));
 }
 
+float3 geometryAdamStep(float3 gradient, inout float3 mean, inout float3 squaredMean, inout uint steps, float lr)
+{
+    float3 step = adamStep(gradient, mean, squaredMean, steps, lr);
+    #if GEOMETRY_TRANSITION_ONLY
+    // Old momentum must not move a parameter when its accepted gradient is
+    // zero, or move it against the currently accepted aggregate direction.
+    // Miss contributions may still legitimately expand the same voxel.
+    for (uint axis = 0; axis < 3; ++axis)
+    {
+        float g = sanitizeFloat(gradient[axis]);
+        if (g == 0.0f || mean[axis] * g < 0.0f)
+        {
+            mean[axis] = 0.0f;
+            step[axis] = 0.0f;
+        }
+    }
+    #endif
+    return step;
+}
+
 void updateEllipsoidCenterAdam(
     inout GaussianEllipsoid ellipsoid, float3 gradient, float lr,
     uint adamPage, uint adamOffset)
@@ -86,7 +106,7 @@ void updateEllipsoidCenterAdam(
     float3 mean = gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].centerMean;
     float3 squaredMean = gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].centerSquaredMean;
     uint steps = gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].centerSteps;
-    float3 step = adamStep(gradient, mean, squaredMean, steps, lr);
+    float3 step = geometryAdamStep(gradient, mean, squaredMean, steps, lr);
     gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].centerMean = mean;
     gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].centerSquaredMean = squaredMean;
     gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].centerSteps = steps;
@@ -101,7 +121,7 @@ void updateEllipsoidLogScaleAdam(
     float3 mean = gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].logScaleMean;
     float3 squaredMean = gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].logScaleSquaredMean;
     uint steps = gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].logScaleSteps;
-    float3 step = adamStep(gradient, mean, squaredMean, steps, lr);
+    float3 step = geometryAdamStep(gradient, mean, squaredMean, steps, lr);
     gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].logScaleMean = mean;
     gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].logScaleSquaredMean = squaredMean;
     gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].logScaleSteps = steps;
@@ -120,7 +140,7 @@ void updateEllipsoidRotationAdam(
     float3 mean = gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].rotationMean;
     float3 squaredMean = gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].rotationSquaredMean;
     uint steps = gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].rotationSteps;
-    float3 deltaAngle = -adamStep(gradient, mean, squaredMean, steps, lr);
+    float3 deltaAngle = -geometryAdamStep(gradient, mean, squaredMean, steps, lr);
     gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].rotationMean = mean;
     gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].rotationSquaredMean = squaredMean;
     gGeometryAdamPages[NonUniformResourceIndex(adamPage)][adamOffset].rotationSteps = steps;

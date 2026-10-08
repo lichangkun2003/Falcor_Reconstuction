@@ -1,5 +1,11 @@
 #pragma once
 
+// Experimental one-sided geometry proxy: hit -> miss, miss -> hit only.
+// Set to 0 to restore the original two-sided proxy and geometry Adam behavior.
+#ifndef GEOMETRY_TRANSITION_ONLY
+#define GEOMETRY_TRANSITION_ONLY 1
+#endif
+
 // Shared by host code and shaders. Reconstruction uses point-cloud initialization.
 
 #ifndef GRID_RESOLUTION
@@ -12,8 +18,8 @@
 #define RECONSTRUCTION_MODE 1
 #endif
 #define COARSE_TO_FINE_START_RESOLUTION 64
-#define COARSEST_GROWTH_FACE_PENETRATION 1.3f
-#define FINER_GROWTH_THRESHOLD_MULTIPLIER 3.0f
+#define COARSEST_GROWTH_FACE_PENETRATION 1.4f
+#define FINER_GROWTH_THRESHOLD_MULTIPLIER 2.5f
 #define COARSE_TO_FINE_TOTAL_ITERATIONS 1000
 // Four active levels use these relative weights (coarse -> fine).
 // Other level counts interpolate the same curve across the active schedule.

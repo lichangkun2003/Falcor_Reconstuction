@@ -186,6 +186,12 @@ void calcHardHitGeometryGrad(
             gGeometryGradClamp
         );
 
+    #if GEOMETRY_TRANSITION_ONLY
+    // Gradient descent increases g when dL/dg < 0 (hit -> miss).
+    // Filter before constructing center/scale/rotation derivatives. Keep a
+    // valid zero record so update can clear stale geometry momentum.
+    dL_dG = min(dL_dG, 0.0f);
+    #endif
     fillGaussianEllipsoidGradient(ellipsoid, xLocal, dL_dG, geometryGradRecord);
     if (isReferenceBackground && geometryGradRecord.geometryValid != 0)
         geometryGradRecord.backgroundCarveValid = 1;
@@ -257,6 +263,10 @@ void calcMissCandidateGeometryGrad(
 
     float dL_dG = clamp(sanitizeFloat(dL_dDistance * distanceScale), -gGeometryGradClamp, gGeometryGradClamp);
 
+    #if GEOMETRY_TRANSITION_ONLY
+    // Gradient descent decreases g when dL/dg > 0 (miss -> hit).
+    dL_dG = max(dL_dG, 0.0f);
+    #endif
     fillGaussianEllipsoidGradient(ellipsoid, xLocal, dL_dG, geometryGradRecord);
 }
 

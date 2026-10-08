@@ -236,6 +236,11 @@ void testUpdateNormalization(const ref<Device>& device)
             gradients[id].appearanceValid = gradients[id].geometryValid = id == 0 ? 1u : (id == 3 ? 0u : 20u);
             gradients[id].opacityGrad.coefficients[0] = id == 2 ? 1.4f : 0.7f;
             gradients[id].center = float3(gradients[id].opacityGrad.coefficients[0], 0, 0);
+            // Zero current y gradient must stop stale motion; a positive z
+            // gradient must not follow a negative (expanding) old momentum.
+            gradients[id].center.z = 0.01f;
+            moments[id].centerMean = float3(0, -0.1f, -0.1f);
+            moments[id].centerSquaredMean = float3(0, 0.01f, 0.01f);
         }
         grid["voxelPages"][0] = device->createStructuredBuffer(sizeof(VoxelData), 32u, flags, MemoryType::DeviceLocal, voxels.data());
         grid["gradPages"][0] = device->createStructuredBuffer(sizeof(GradRecord), 32u, flags, MemoryType::DeviceLocal, gradients.data());
@@ -251,6 +256,8 @@ void testUpdateNormalization(const ref<Device>& device)
             const float mean = 0.1f * gradients[id].opacityGrad.coefficients[0] / float(samples);
             require(std::abs(moments[id].opacityMean[0] - mean) < 1e-6f, "Opacity used voxel hit count instead of backward sample count");
             require(std::abs(moments[id].centerMean.x - mean) < 1e-6f, "Geometry used voxel hit count instead of backward sample count");
+            require(moments[id].centerMean.y == 0.0f && moments[id].centerMean.z == 0.0f,
+                "Geometry retained zero-gradient or opposing momentum");
         }
         require(moments[3].opacitySteps == 0u && moments[3].centerSteps == 0u,
             "Zero-valid voxel unexpectedly advanced Adam");
