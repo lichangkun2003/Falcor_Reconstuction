@@ -6,7 +6,7 @@ struct GrowthCandidate
 {
     GaussianEllipsoid ellipsoid;
     uint parentCell;
-    uint face;
+    uint neighborIndex;
     uint foregroundViews;
     uint backgroundViews;
 };
@@ -17,6 +17,7 @@ cbuffer EvidenceCB
 {
     uint gCandidateCount;
     uint gMinSupportingParents;
+    bool gUse26Neighbors;
     bool gWriteCandidates;
     uint gMinForegroundViews;
     uint gBackgroundVetoViews;
@@ -34,21 +35,43 @@ bool growthCellAvailable(uint3 cell)
         (previous == -1 || gCurrentIteration >= uint(-previous - 2));
 }
 
-// Count distinct, mature face neighbors that can actually grow toward this cell.
+uint evidenceNeighborCount() { return gUse26Neighbors ? 26u : 6u; }
+
+int3 evidenceNeighborOffset(uint index)
+{
+    if (gUse26Neighbors) return growthNeighborOffset(index);
+    int3 offset = int3(0);
+    offset[index / 2u] = (index & 1u) != 0u ? 1 : -1;
+    return offset;
+}
+
+bool evidenceGrowthChild(uint parentID, int3 offset, out uint3 cell, out GaussianEllipsoid child)
+{
+    child = VOXEL_DATA(parentID).ellipsoid;
+    cell = uint3(0);
+    if (!growthParentEligible(parentID)) return false;
+    int3 neighbor = getVoxelCell(parentID) + offset;
+    if (any(neighbor < 0) || any(neighbor >= int3(gGridDataParamBlock.voxelCount))) return false;
+    cell = uint3(neighbor);
+    return makeNeighborGrowthEllipsoid(child, gGridDataParamBlock.voxelSize, offset,
+        gFacePenetration, gShrink, gContactOffset, child);
+}
+
+// Count distinct, mature neighbors that can actually grow toward this cell.
 // Recheck at commit because supporting parents can be removed during evidence collection.
 bool hasSupportingParents(uint3 cell)
 {
     uint support = 0u;
-    for (uint face = 0u; face < 6u; ++face)
+    for (uint index = 0u; index < evidenceNeighborCount(); ++index)
     {
-        int3 neighbor = int3(cell);
-        neighbor[face / 2u] += (face & 1u) != 0u ? 1 : -1;
+        int3 offset = evidenceNeighborOffset(index);
+        int3 neighbor = int3(cell) + offset;
         if (any(neighbor < 0) || any(neighbor >= int3(gGridDataParamBlock.voxelCount))) continue;
         int parentID = lookupVoxelID(neighbor);
         if (parentID < 0 || uint(parentID) >= gParentCount) continue;
         uint3 target;
         GaussianEllipsoid child;
-        if (growthChild(uint(parentID), face ^ 1u, target, child) && all(target == cell))
+        if (evidenceGrowthChild(uint(parentID), -offset, target, child) && all(target == cell))
             if (++support >= max(gMinSupportingParents, 1u)) return true;
     }
     return false;
@@ -59,11 +82,11 @@ void buildCandidates(uint3 threadID : SV_DispatchThreadID)
 {
     uint parentID = gSparseOffset + threadID.x;
     if (parentID >= gParentCount) return;
-    for (uint face = 0; face < 6u; ++face)
+    for (uint index = 0u; index < evidenceNeighborCount(); ++index)
     {
         uint3 cell;
         GaussianEllipsoid child;
-        if (!growthChild(parentID, face, cell, child) || !growthCellAvailable(cell)) continue;
+        if (!evidenceGrowthChild(parentID, evidenceNeighborOffset(index), cell, child) || !growthCellAvailable(cell)) continue;
         if (!hasSupportingParents(cell)) continue;
         uint slot;
         InterlockedAdd(gGrowthCounter[0], 1u, slot);
@@ -71,7 +94,7 @@ void buildCandidates(uint3 threadID : SV_DispatchThreadID)
         GrowthCandidate candidate;
         candidate.ellipsoid = child;
         candidate.parentCell = uint(CellToIndex(uint3(getVoxelCell(parentID)), gGridDataParamBlock.voxelCount));
-        candidate.face = face;
+        candidate.neighborIndex = index;
         candidate.foregroundViews = 0u;
         candidate.backgroundViews = 0u;
         gGrowthCandidates[slot] = candidate;
@@ -81,7 +104,7 @@ void buildCandidates(uint3 threadID : SV_DispatchThreadID)
 uint3 candidateCell(GrowthCandidate candidate)
 {
     int3 cell = IndexToCell(int(candidate.parentCell), gGridDataParamBlock.voxelCount);
-    cell[candidate.face / 2u] += (candidate.face & 1u) != 0u ? 1 : -1;
+    cell += evidenceNeighborOffset(candidate.neighborIndex);
     return uint3(cell);
 }
 
@@ -147,7 +170,8 @@ bool eligibleCandidate(uint id, out uint parentID, out uint3 cell)
     parentID = uint(parent);
     uint3 target;
     GaussianEllipsoid child;
-    return growthChild(parentID, candidate.face, target, child) && all(target == cell) && hasSupportingParents(cell);
+    return evidenceGrowthChild(parentID, evidenceNeighborOffset(candidate.neighborIndex), target, child) &&
+        all(target == cell) && hasSupportingParents(cell);
 }
 
 [numthreads(256, 1, 1)]

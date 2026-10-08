@@ -136,7 +136,8 @@ void VoxelReconstructionNoLightTransport::growNeighborVoxels(RenderContext* pRen
                 var["gGrowthCandidates"] = mpGrowthCandidates;
                 var["EvidenceCB"]["gCandidateCount"] = mGrowthCandidateCount;
                 var["EvidenceCB"]["gMinForegroundViews"] = std::max(2u, mTopologySettings.growthMinForegroundViews);
-                var["EvidenceCB"]["gMinSupportingParents"] = std::clamp(mTopologySettings.growthMinSupportingParents, 1u, 6u);
+                var["EvidenceCB"]["gMinSupportingParents"] = std::clamp(mTopologySettings.growthMinSupportingParents, 1u, 26u);
+                var["EvidenceCB"]["gUse26Neighbors"] = mTopologySettings.growthUse26Neighbors;
                 var["EvidenceCB"]["gBackgroundVetoViews"] = std::max(1u, mTopologySettings.growthBackgroundVetoViews);
             }
             pRenderContext->uavBarrier(mpGrowthCandidates.get());

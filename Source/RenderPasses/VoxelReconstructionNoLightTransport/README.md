@@ -217,12 +217,13 @@ childAlpha_DC = 1 - exp(-0.65 · tau_DC)
 
 ### 6.1 外伸、多父支持与多视角证据
 
-`Use Multi-view Growth Evidence` 默认开启。候选空 cell 的六个面邻居中，必须有足够多的不同父体素已经超过新生等待期、未标记删除，并且椭球在朝目标 cell 的方向越过共享面一定深度。使用邻居有限面范围内的真实椭球截面判断，不用长轴长度或 AABB 极值代替。两个父体可以位于不同方向，不强制相对；这是保守补洞条件，可能阻止单侧扩展及跨度超过一格的细绳断口。
+`Use Multi-view Growth Evidence` 默认开启，`26-neighbor Growth` 默认开启：候选包括 6 个面邻居、12 个边邻居和 8 个角邻居，多父支持也在同一邻域统计。关闭后恢复 6 邻域。不同父体素必须超过新生等待期、未标记删除，并且椭球真正接触共享面、有限边或角点，且达到向目标方向的外伸深度；不使用 AABB 重叠代替。斜向深度按每个跨越轴分别计算，例如 (+1,+1,0) 的 0.05 表示 x、y 都越过各自边界 0.05 个体素宽度。两个父体不强制相对；单侧或邻域跨度之外的断口仍可能不满足支持条件。
 
 | UI 参数 | 默认值 | 含义 |
 |---|---:|---|
-| Growth Outward Depth (voxels) | 0.15 | 父椭球越过共享面的深度，以该轴体素宽度为单位 |
-| Growth Min Supporting Parents | 2 | 满足成熟期和外伸条件的不同面邻居数量 |
+| 26-neighbor Growth | 开启 | 候选与多父支持使用 26 邻域，关闭为 6 邻域 |
+| Growth Outward Depth (voxels) | 0.05 | 父椭球越过共享面的深度，以该轴体素宽度为单位 |
+| Growth Min Supporting Parents | 2 | 满足成熟期和外伸条件的不同邻居数量 |
 | Growth Min Foreground Views | 3 | 至少需要的前景缺失支持视角 |
 | Growth Background Veto Views | 2 | 达到该数量的可靠背景视角则拒绝 |
 | Growth Min Alpha Deficit | 0.05 | 参考 alpha 减渲染 alpha 的最小缺失量 |
@@ -231,11 +232,11 @@ childAlpha_DC = 1 - exp(-0.65 · tau_DC)
 
 候选几何在证据轮次开始时冻结，使用父 cell 地址适应删除压缩后的 ID 变化；实际提交时重新检查父体及多父支持，支持不足则取消。多个合格父体对同一目标 cell 的提案仍只提交一次，由成功 claim 的父体提供外观与形状，不对多个父体颜色求平均。临时候选记录为每条 56 字节。
 
-关闭 `Use Multi-view Growth Evidence` 可使用旧外伸阈值模式；`COARSEST_GROWTH_FACE_PENETRATION` 与 `FINER_GROWTH_THRESHOLD_MULTIPLIER` 只影响旧模式。新参数也支持脚本属性 `growthEvidencePenetration`、`growthMinSupportingParents`、`growthInitialOpacity`。
+关闭 `Use Multi-view Growth Evidence` 可使用旧的 6 邻域外伸阈值模式；`COARSEST_GROWTH_FACE_PENETRATION` 与 `FINER_GROWTH_THRESHOLD_MULTIPLIER` 只影响旧模式。新参数也支持脚本属性 `growthUse26Neighbors`、`growthEvidencePenetration`、`growthMinSupportingParents`、`growthInitialOpacity`。
 
 ### 6.2 新生参数、等待与保护
 
-子椭球仅继承父 radiance 的第 0 项（DC），高阶 SH 系数全部清零，后续优化可重新学习方向性。复制父旋转和轴比，中心放在新 cell 内、靠近实际接触位置。Child Contact Offset 默认 0.2 个体素。先以 0.7 倍缩小，再按旋转后的实际范围进一步收缩，保证不穿过其余五个面；朝父体素的接触面允许越界，目前没有单独的越界深度上限。
+子椭球仅继承父 radiance 的第 0 项（DC），高阶 SH 系数全部清零，后续优化可重新学习方向性。复制父旋转和轴比，中心放在新 cell 内、靠近实际接触位置。Child Contact Offset 默认 0.2 个体素，并应用到每个跨越轴。先以 0.7 倍缩小，再按旋转后的实际范围收缩：只允许向父体所在方向越界，其余面限制在 cell 内；面、边、角生长分别有 1、2、3 个朝父体的面允许越界。
 
 子 opacity 使用 Child Initial Opacity（默认 0.5）：DC 设置为 logit(alpha) / Y0，高阶系数清零，使各方向初始 alpha 一致；默认 0.5 对应全部 opacity SH 系数为零。Adam、梯度与删除证据初始化；父参数及父 Adam 不受生长影响。
 

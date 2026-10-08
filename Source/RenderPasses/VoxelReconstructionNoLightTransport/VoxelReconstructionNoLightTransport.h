@@ -319,7 +319,8 @@ public:
         bool collectDeletionEvidence = true;
         bool enableGrowth = true;
         bool useGrowthEvidence = true;
-        float growthEvidencePenetration = 0.15f;
+        bool growthUse26Neighbors = true;
+        float growthEvidencePenetration = 0.05f;
         uint32_t growthMinSupportingParents = 2u;
         uint32_t growthMinForegroundViews = 3;
         uint32_t growthBackgroundVetoViews = 2;

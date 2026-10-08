@@ -37,16 +37,22 @@ int growthClaim(uint parentID, uint face)
     return kGrowthClaimBase - int(parentID * 6u + face);
 }
 
-bool growthChild(uint parentID, uint face, out uint3 cell, out GaussianEllipsoid child)
+bool growthParentEligible(uint parentID)
 {
-    cell = uint3(0);
-    child = VOXEL_DATA(parentID).ellipsoid;
     if (VOXEL_DATA(parentID).occupied == 0u || isDeletionCandidate(parentID))
         return false;
     uint waitStart = TOPOLOGY_DATA(parentID).growthWaitStartIterationPlusOne;
     if (waitStart != 0u &&
         (gCurrentIteration < waitStart - 1u || gCurrentIteration - (waitStart - 1u) < gGrowthWaitIterations))
         return false;
+    return true;
+}
+
+bool growthChild(uint parentID, uint face, out uint3 cell, out GaussianEllipsoid child)
+{
+    cell = uint3(0);
+    child = VOXEL_DATA(parentID).ellipsoid;
+    if (!growthParentEligible(parentID)) return false;
     int3 neighbor = getVoxelCell(parentID);
     neighbor[face / 2u] += (face & 1u) != 0u ? 1 : -1;
     if (any(neighbor < 0) || any(neighbor >= int3(gGridDataParamBlock.voxelCount)))

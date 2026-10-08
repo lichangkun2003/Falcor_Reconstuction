@@ -59,6 +59,7 @@ VoxelReconstructionNoLightTransport::VoxelReconstructionNoLightTransport(ref<Dev
         else if (key == "coarseGrowthEnabled")
             mCoarseToFine.enableCoarseGrowth = value;
         else if (key == "growthUseEvidence") mTopologySettings.useGrowthEvidence = value;
+        else if (key == "growthUse26Neighbors") mTopologySettings.growthUse26Neighbors = value;
         else if (key == "growthEvidencePenetration") mTopologySettings.growthEvidencePenetration = value;
         else if (key == "growthMinSupportingParents") mTopologySettings.growthMinSupportingParents = value;
         else if (key == "growthInitialOpacity") mTopologySettings.growthInitialOpacity = value;
@@ -143,6 +144,7 @@ Properties VoxelReconstructionNoLightTransport::getProperties() const
     props["refinementChildFaceOverlap"] = mCoarseToFine.childFaceOverlap;
     props["coarseGrowthEnabled"] = mCoarseToFine.enableCoarseGrowth;
     props["growthUseEvidence"] = mTopologySettings.useGrowthEvidence;
+    props["growthUse26Neighbors"] = mTopologySettings.growthUse26Neighbors;
     props["growthEvidencePenetration"] = mTopologySettings.growthEvidencePenetration;
     props["growthMinSupportingParents"] = mTopologySettings.growthMinSupportingParents;
     props["growthInitialOpacity"] = mTopologySettings.growthInitialOpacity;

@@ -111,7 +111,8 @@ struct NeighborGrowthTestAccess
         return extent;
     }
 
-    static void checkChild(const VoxelData& parent, const VoxelData& child, uint32_t childCell, uint32_t parentCell)
+    static void checkChild(const VoxelData& parent, const VoxelData& child, uint32_t childCell, uint32_t parentCell,
+        bool allowDiagonal = false)
     {
         require(child.occupied == 1u, "Child is not occupied");
         for (uint32_t channel = 0u; channel < 3u; ++channel)
@@ -128,7 +129,8 @@ struct NeighborGrowthTestAccess
         );
         require(ratios.x < 0, "Child did not shrink");
         const int3 delta = cellCoordinates(childCell) - cellCoordinates(parentCell);
-        require(std::abs(delta.x) + std::abs(delta.y) + std::abs(delta.z) == 1, "More than one layer grew");
+        require(allowDiagonal ? (all(abs(delta) <= int3(1)) && any(delta != int3(0))) :
+            std::abs(delta.x) + std::abs(delta.y) + std::abs(delta.z) == 1, "More than one layer grew");
         const float3 extent = extents(child.ellipsoid);
         for (uint32_t axis = 0; axis < 3; ++axis)
         {
@@ -727,6 +729,7 @@ struct NeighborGrowthTestAccess
             seed(pass, ctx, pair ? std::vector<uint32_t>{cell(2, 3, 3), cell(4, 3, 3)} : std::vector<uint32_t>{cell(3, 3, 3)},
                 pair ? std::vector<VoxelData>{parent, parent} : std::vector<VoxelData>{parent});
             pass.mTopologySettings.useGrowthEvidence = true;
+            pass.mTopologySettings.growthUse26Neighbors = false; // Existing six-neighbor fixtures.
             pass.mTopologySettings.growthEvidencePenetration = 0.0f;
             pass.mTopologySettings.growthMinSupportingParents = 1u;
             pass.mTopologySettings.growthMinForegroundViews = 3u;
@@ -845,13 +848,77 @@ struct NeighborGrowthTestAccess
         pass.mTopologySettings.candidateCount = 1u;
         pass.deleteAndCompactCandidates(ctx);
         finish(1);
+        const auto prepare26 = [&](const std::vector<uint32_t>& cells, const std::vector<VoxelData>& voxels, uint32_t parents = 1u)
+        {
+            seed(pass, ctx, cells, voxels);
+            pass.mTopologySettings.useGrowthEvidence = true;
+            pass.mTopologySettings.growthUse26Neighbors = true;
+            pass.mTopologySettings.growthMinSupportingParents = parents;
+            pass.mTopologySettings.growthEvidencePenetration = .05f;
+            pass.mOptimizerParams.viewsPerIteration = 3u;
+            pass.beginGrowthEvidence(ctx, 50u);
+        };
+        parent.ellipsoid.logScale = float3(std::log(1.0f));
+        prepare26({cell(3,3,3)}, {parent});
+        require(pass.mGrowthCandidateCount == 26u, "26-neighbor stencil omitted face, edge or corner directions");
+        vote(0, 1, 0); vote(1, 1, 0); vote(2, 1, 0);
+        finish(27);
+        const auto fullMap = indices(pass, ctx);
+        for (uint32_t z = 2; z <= 4; ++z)
+            for (uint32_t y = 2; y <= 4; ++y)
+                for (uint32_t x = 2; x <= 4; ++x)
+                {
+                    if (x == 3 && y == 3 && z == 3) continue;
+                    const int32_t id = fullMap[cell(x,y,z)];
+                    require(id >= 0, "A signed 26-neighbor direction was not committed");
+                    checkChild(parent, read<VoxelData>(pass.mGridResources.voxelPages, uint32_t(id)), cell(x,y,z), cell(3,3,3), true);
+                }
+        prepare26({cell(0,0,0)}, {parent});
+        require(pass.mGrowthCandidateCount == 7u, "Grid corner admitted out-of-bounds neighbors");
+        vote(0, 1, 0); vote(1, 1, 0); vote(2, 1, 0);
+        finish(8);
+        // Two parents at opposite corners support the same diagonal gap.
+        prepare26({cell(2,2,2), cell(4,4,4)}, {parent, parent}, 2u);
+        require(pass.mGrowthCandidateCount == 2u, "Diagonal parents were not counted toward shared-cell support");
+        pass.mTopologySettings.growthUse26Neighbors = false;
+        pass.beginGrowthEvidence(ctx, 50u);
+        require(pass.mGrowthCandidateCount == 0u, "Six-neighbor mode accepted corner support");
+        pass.mTopologySettings.growthUse26Neighbors = true;
+        pass.beginGrowthEvidence(ctx, 50u);
+        vote(0, 1, 0); vote(1, 1, 0); vote(2, 1, 0);
+        finish(3);
+        require(indices(pass, ctx)[cell(3,3,3)] >= 0, "Shared corner gap was not filled");
+        // Diagonal candidates still obey the camera background veto.
+        prepare26({cell(2,2,2), cell(4,4,4)}, {parent, parent}, 2u);
+        pass.mOptimizerParams.viewsPerIteration = 5u;
+        vote(0, 1, 0); vote(1, 1, 0); vote(2, 1, 0); vote(3, 0, 1); vote(4, 0, 1);
+        finish(2);
+        parent.ellipsoid.logScale = float3(std::log(.8f));
+        prepare26({cell(3,3,3)}, {parent});
+        require(pass.mGrowthCandidateCount == 18u, "Edge contact or conservative corner rejection failed");
+        vote(0, 1, 0); vote(1, 1, 0); vote(2, 1, 0);
+        finish(19);
+        parent.ellipsoid.logScale = float3(std::log(.72f));
+        prepare26({cell(3,3,3)}, {parent});
+        require(pass.mGrowthCandidateCount == 6u, "Edge outward-depth threshold was ignored");
+        // A thin rotated ellipse reaches only its actual diagonal, despite broad AABB extents.
+        parent.ellipsoid.logScale = float3(std::log(1.2f), std::log(.08f), std::log(.08f));
+        parent.ellipsoid.rotation = float4(std::cos(3.14159265f/8.f), 0, 0, std::sin(3.14159265f/8.f));
+        prepare26({cell(3,3,3)}, {parent});
+        require(pass.mGrowthCandidateCount == 6u, "Rotated thin ellipse admitted an unsupported edge/corner");
+        vote(0, 1, 0); vote(1, 1, 0); vote(2, 1, 0);
+        finish(7);
+        const auto thinMap = indices(pass, ctx);
+        require(thinMap[cell(4,4,3)] >= 0 && thinMap[cell(2,2,3)] >= 0 && thinMap[cell(4,2,3)] < 0 &&
+            thinMap[cell(2,4,3)] < 0, "Diagonal growth followed the AABB instead of the ellipsoid");
         pass.resetGrowthEvidence();
         pass.mOptimizerParams = savedOptimizer;
         pass.mTopologySettings = savedTopology;
         pass.mReconstructionMode = savedMode;
         std::cout << "PASS: multi-view deficit growth, background veto through occlusion, distinct-camera votes, "
                      "neutral covered/silhouette/offscreen views, shared-cell deduplication, compaction-stable evidence, disabled growth, "
-                     "outward-depth and mature multi-parent gates, support-loss rejection\n";
+                     "outward-depth and mature multi-parent gates, support-loss rejection, 26-neighbor face/edge/corner growth, "
+                     "diagonal support/veto, grid bounds, rotated thin contact, six-neighbor toggle\n";
     }
 
     static int run()
