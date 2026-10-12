@@ -206,7 +206,7 @@ void VoxelReconstructionNoLightTransport::deleteAndCompactCandidates(RenderConte
     );
     mPointCloud.status = mTopologySettings.deletionStatus;
     mPointCloud.clearAccumulation = true;
-    mRayMarchingPass.mDrawMode = uint32_t(ABSDFDrawMode::Default);
+    mRayMarchingPass.mDrawMode = uint32_t(ReconstructionDrawMode::Default);
     mRayMarchingPass.mOptionsChanged = true;
     logInfo("{}", mTopologySettings.deletionStatus);
 }

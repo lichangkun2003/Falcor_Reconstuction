@@ -61,7 +61,6 @@ struct PathRecord
     uint valid;
     float3 viewDir;  // xyz = view direction = - ray direction
     float3 backgroundColor;
-    float3 finalColor;
     float inverseSamplingPdf; // Unit-pixel-area PDF; zero is a legacy/unweighted record.
 
     // Radiance & Opacity
@@ -78,7 +77,6 @@ struct PathRecord
         valid = 0;
         viewDir = float3(0); 
         backgroundColor = float3(0);
-        finalColor = float3(0);
         inverseSamplingPdf = 1.0f;
 
         contributingVoxelCount = 0;
@@ -100,7 +98,7 @@ struct PathRecord
 // D3D12 limits each StructuredBuffer element to 2048 bytes.
 static_assert(sizeof(PathRecord) <= 2048, "PathRecord exceeds the D3D12 structured-buffer stride limit.");
 static_assert(sizeof(VoxelRecord) == 40 && sizeof(GeometryCandidateRecord) == 36 &&
-    sizeof(PathRecord) == 52 + MAX_CONTRIBUTING_VOXELS_PER_RAY * sizeof(VoxelRecord) +
+    sizeof(PathRecord) == 40 + MAX_CONTRIBUTING_VOXELS_PER_RAY * sizeof(VoxelRecord) +
         MAX_CANDIDATES * sizeof(GeometryCandidateRecord),
     "PathRecord host/device layout changed.");
 #else

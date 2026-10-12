@@ -88,7 +88,7 @@ L = ||C - R||² + λ_alpha · (A - reference.alpha)²
 
 Alpha Loss Weight 默认 0.5。alpha 监督约束前景覆盖和背景透明，但不能单独决定哪个体素应保留。
 
-背景 carve 是额外的几何优化信号；它不是独立计入当前显示 loss 的项。gBinaryOpacityWeight 虽仍上传，但对应二值 opacity 梯度已注释，当前未实际参与优化。
+背景 carve 是额外的几何优化信号；它不是独立计入当前显示 loss 的项。当前没有额外的二值 opacity 正则项。
 
 ### 2.3 spp、视角和迭代的区别
 

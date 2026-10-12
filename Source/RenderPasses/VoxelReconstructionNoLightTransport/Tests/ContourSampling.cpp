@@ -229,7 +229,7 @@ struct ContourSamplingTestAccess
         cb["pixelCount"] = uint2(1);
         cb["enableReconstruction"] = true;
         cb["usePixelFrustum"] = false;
-        cb["drawMode"] = uint32_t(ABSDFDrawMode::Default);
+        cb["drawMode"] = uint32_t(ReconstructionDrawMode::Default);
         cb["renderBackGround"] = false;
         cb["clearColor"] = float4(0.7f, 0.8f, 0.9f, 0);
         cb["maxContributingVoxelCount"] = 16u;

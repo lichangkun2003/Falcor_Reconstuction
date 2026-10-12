@@ -8,7 +8,7 @@ import Utils.Debug.PixelDebug;
 
 #include "../Math/AABB.slang"
 #include "../Math/Random.slang"
-//#include "../Voxel/Shading.slang"
+#include "../RenderModes.slang"
 #include "../Voxel/VoxelGrid.slang"
 #include "../PathRecord.slang"
 #include "../ContourSampling.slang"
@@ -32,15 +32,12 @@ cbuffer CB
     float3 cameraForward;
     float2 cameraDepthRange;
     bool usePixelFrustum;
-    float shadowBias;
     uint drawMode;
     uint topologyDebugLayer;
     bool showOccupiedContext;
-    //uint sampleStrategy;
     uint frameIndex;
     bool renderBackGround;
     float4 clearColor;
-    //uint2 selectedPixel;
     bool enableReconstruction;
     bool useContourSampling;
     float contourUniformFraction;
@@ -311,7 +308,7 @@ HitResult rayMarchingDDA(
         {
             // Inspect the occupied grid independently of ellipsoid intersection.
             // This path is view-only and never contributes to training records.
-            if (!enableReconstruction && drawMode == uint(ABSDFDrawMode::TopologyDebug))
+            if (!enableReconstruction && drawMode == uint(ReconstructionDrawMode::TopologyDebug))
             {
                 HitResult occupied = { true, cellInt, float3(cellInt) + 0.5f,
                     -1.0f, float4(float3(cellInt) + 0.5f, 1.0f) };
@@ -418,7 +415,6 @@ HitResult rayMarchingDDA(
     return hit;
 }
 
-// HitResult rayMarching(float3 from, float3 direction, bool ignoreFirst, int3 initialCellInt)
 HitResult rayMarching(
     float3 from,
     float3 direction,
@@ -463,7 +459,6 @@ float4 shadingGlobal(
 {
     uint bufferIndex = PixelToIndex(pixel, pixelCount);
 
-    //HitResult hits[MAX_CONTRIBUTING_VOXELS_PER_RAY];
     contributingVoxelCount = min(contributingVoxelCount, (uint)MAX_CONTRIBUTING_VOXELS_PER_RAY);
 
     float3 accumulatedColor = float3(0.0f);
@@ -513,16 +508,6 @@ float4 shadingGlobal(
             gPathRecordBuffer[bufferIndex].voxels[i] = voxelRecord;
         }
 
-        {
-            //float weight = transmittance * opacity;
-
-            //print("hit index : ", i);
-            //print("cell : ", currentHit.cellInt);
-            //print("opacity : ", opacity);
-            //print("T_before : ", transmittance);
-            //print("weight : ", weight);
-        }
-
         accumulatedColor += transmittance * opacity * radiance;
         transmittance *= 1.0f - opacity;
 
@@ -543,11 +528,6 @@ float4 shadingGlobal(
             actualHitCount,
             candidateCount);
 
-        //if (i == 0) {
-        //    print("first radiance : ", radiance);
-        //    print("first opacity : ", opacity);
-        //}
-            
     }
 
     accumulatedColor += transmittance * renderBackground(direction).xyz;
@@ -557,7 +537,6 @@ float4 shadingGlobal(
         gPathRecordBuffer[bufferIndex].contributingVoxelCount = actualHitCount;
         gPathRecordBuffer[bufferIndex].viewDir = normalize(-direction);
         gPathRecordBuffer[bufferIndex].backgroundColor = renderBackground(direction).xyz;
-        gPathRecordBuffer[bufferIndex].finalColor = accumulatedColor;
     }
 
     return float4(accumulatedColor, renderAlpha);
@@ -574,7 +553,7 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
     uint2 pixel = uint2(texCoord * pixelCount);
     printSetPixel(pixel);
 
-    if (usePixelFrustum && !enableReconstruction && drawMode == uint(ABSDFDrawMode::Default))
+    if (usePixelFrustum && !enableReconstruction && drawMode == uint(ReconstructionDrawMode::Default))
     {
         psOut.color = renderPixelFrustum(pixel);
         gAccuColor[pixel] += psOut.color;
@@ -602,10 +581,9 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
     float3 to = screenCoordToCell(texCoord, 1);
     float3 delta = to - from;
     float3 direction = normalize(delta); // 网格/世界空间下的方向相同
-    //psOut.color = renderBackground(direction);
     float3 backgroundColor = renderBackground(direction).xyz;
     psOut.color = float4(backgroundColor, 0.0f);
-    bool topologyPreview = !enableReconstruction && drawMode == uint(ABSDFDrawMode::TopologyDebug);
+    bool topologyPreview = !enableReconstruction && drawMode == uint(ReconstructionDrawMode::TopologyDebug);
     if (topologyPreview)
         psOut.color = float4(0.02f, 0.02f, 0.025f, 1.0f);
 
@@ -670,8 +648,6 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
     {
         gPathRecordBuffer[bufferIndex].candidateCount = candidateCount;
     }
-
-    //print("candidateCount : ", candidateCount);
 
     psOut.color = accumulateSample(pixel, psOut.color, contourSlot, contourBin, inversePdf);
 

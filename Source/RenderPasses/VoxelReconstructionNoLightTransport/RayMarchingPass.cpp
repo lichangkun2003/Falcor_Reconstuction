@@ -32,11 +32,6 @@ void VoxelReconstructionNoLightTransport::createRayMarchingPassResource(RenderCo
 {
     mRayMarchingPass.init();
 
-    Sampler::Desc samplerDesc;
-    samplerDesc.setFilterMode(TextureFilteringMode::Point, TextureFilteringMode::Point, TextureFilteringMode::Point)
-        .setAddressingMode(TextureAddressingMode::Wrap, TextureAddressingMode::Wrap, TextureAddressingMode::Wrap);
-    mRayMarchingPass.mpPointSampler = mpDevice->createSampler(samplerDesc);
-
     {
         ProgramDesc desc;
         desc.addShaderLibrary(RayMarchingShaderFilePath).psEntry("main");
@@ -129,9 +124,8 @@ void VoxelReconstructionNoLightTransport::rayMarchingPass(RenderContext* pRender
         cb["cameraForward"] = math::normalize(pCamera->getTarget() - pCamera->getPosition());
         cb["cameraDepthRange"] = float2(pCamera->getNearPlane(), pCamera->getFarPlane());
         cb["usePixelFrustum"] = pass.mUsePixelFrustum && !mEnableReconstruction;
-        cb["shadowBias"] = pass.mShadowBias100 / 100 / mGridResources.gridData.voxelSize.x;
         // Keep debug colors out of the reconstruction/loss path.
-        cb["drawMode"] = mEnableReconstruction ? uint32_t(ABSDFDrawMode::Default) : pass.mDrawMode;
+        cb["drawMode"] = mEnableReconstruction ? uint32_t(ReconstructionDrawMode::Default) : pass.mDrawMode;
         cb["topologyDebugLayer"] = mTopologySettings.debugLayer;
         cb["showOccupiedContext"] = mTopologySettings.showOccupiedContext;
         cb["maxContributingVoxelCount"] = pass.mMaxContributingVoxelCount;

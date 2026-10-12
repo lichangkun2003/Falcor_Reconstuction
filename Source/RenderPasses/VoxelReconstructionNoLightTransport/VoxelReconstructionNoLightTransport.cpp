@@ -195,7 +195,6 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
     if (!mpScene)
         return;
     mFrameDim = mRayMarchingPass.mOutputResolution;
-    mInvFrameDim = 1.0f / float2(mFrameDim);
     beginFrame(pRenderContext, false);
 
     // Viewing an existing result must work even without the training images or PLY.
@@ -425,7 +424,7 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget)
     }
     if (widget.checkbox("Check Primitive", mRayMarchingPass.mCheckPrimitive))
         mRayMarchingPass.mOptionsChanged = true;
-    if (widget.dropdown("Draw Mode", reinterpret_cast<ABSDFDrawMode&>(mRayMarchingPass.mDrawMode)))
+    if (widget.dropdown("Draw Mode", reinterpret_cast<ReconstructionDrawMode&>(mRayMarchingPass.mDrawMode)))
         mRayMarchingPass.mOptionsChanged = true;
     if (widget.checkbox("Render Background", mRayMarchingPass.mRenderBackGround))
         mRayMarchingPass.mOptionsChanged = true;
@@ -673,7 +672,7 @@ group.text("mode1 coarse level: deletion is disabled; conservative neighbor grow
         if (group.button("Show Occupied Grid"))
         {
             mTopologySettings.debugLayer = uint32_t(TopologyDebugLayer::Occupied);
-            mRayMarchingPass.mDrawMode = uint32_t(ABSDFDrawMode::TopologyDebug);
+            mRayMarchingPass.mDrawMode = uint32_t(ReconstructionDrawMode::TopologyDebug);
             mRayMarchingPass.mOptionsChanged = true;
         }
         if (group.button(mEnableReconstruction ? "Stop and Show Grown Voxels" : "Show Grown Voxels"))
@@ -681,12 +680,12 @@ group.text("mode1 coarse level: deletion is disabled; conservative neighbor grow
             if (mEnableReconstruction)
                 stopReconstruction();
             mTopologySettings.debugLayer = uint32_t(TopologyDebugLayer::Growth);
-            mRayMarchingPass.mDrawMode = uint32_t(ABSDFDrawMode::TopologyDebug);
+            mRayMarchingPass.mDrawMode = uint32_t(ReconstructionDrawMode::TopologyDebug);
             mRayMarchingPass.mOptionsChanged = true;
         }
         if (group.button("Show Default"))
         {
-            mRayMarchingPass.mDrawMode = uint32_t(ABSDFDrawMode::Default);
+            mRayMarchingPass.mDrawMode = uint32_t(ReconstructionDrawMode::Default);
             mRayMarchingPass.mOptionsChanged = true;
         }
         group.checkbox("Enable Mode1 Growth (all levels)", mCoarseToFine.enableCoarseGrowth);
@@ -721,18 +720,18 @@ group.text("mode1 coarse level: deletion is disabled; conservative neighbor grow
 
     if (group.button("Show TopologyDebug"))
     {
-        mRayMarchingPass.mDrawMode = uint32_t(ABSDFDrawMode::TopologyDebug);
+        mRayMarchingPass.mDrawMode = uint32_t(ReconstructionDrawMode::TopologyDebug);
         mRayMarchingPass.mOptionsChanged = true;
     }
     if (group.button("Show Default"))
     {
-        mRayMarchingPass.mDrawMode = uint32_t(ABSDFDrawMode::Default);
+        mRayMarchingPass.mDrawMode = uint32_t(ReconstructionDrawMode::Default);
         mRayMarchingPass.mOptionsChanged = true;
     }
     if (group.button("Show Deletion Candidates"))
     {
         mTopologySettings.debugLayer = uint32_t(TopologyDebugLayer::Deletion);
-        mRayMarchingPass.mDrawMode = uint32_t(ABSDFDrawMode::TopologyDebug);
+        mRayMarchingPass.mDrawMode = uint32_t(ReconstructionDrawMode::TopologyDebug);
         mRayMarchingPass.mOptionsChanged = true;
     }
     if (group.button(mEnableReconstruction ? "Stop and Show Grown Voxels" : "Show Grown Voxels"))
@@ -740,7 +739,7 @@ group.text("mode1 coarse level: deletion is disabled; conservative neighbor grow
         if (mEnableReconstruction)
             stopReconstruction();
         mTopologySettings.debugLayer = uint32_t(TopologyDebugLayer::Growth);
-        mRayMarchingPass.mDrawMode = uint32_t(ABSDFDrawMode::TopologyDebug);
+        mRayMarchingPass.mDrawMode = uint32_t(ReconstructionDrawMode::TopologyDebug);
         mRayMarchingPass.mOptionsChanged = true;
     }
 
@@ -895,38 +894,6 @@ void VoxelReconstructionNoLightTransport::endFrame(RenderContext* pRenderContext
     mRayMarchingPass.mFrameIndex = mFrameCount;
 }
 
-// void VoxelReconstructionNoLightTransport::UpdateVoxelGrid(uint voxelResolution)
-//{
-//     float3 diag;
-//     float length;
-//     float3 center;
-//     if (scene)
-//     {
-//         AABB aabb = scene->getSceneBounds();
-//         diag = aabb.maxPoint - aabb.minPoint;
-//         length = std::max(diag.z, std::max(diag.x, diag.y));
-//         center = aabb.center();
-//         diag *= 1.02f;
-//         length *= 1.02f;
-//     }
-//     else
-//     {
-//         diag = float3(1);
-//         length = 1.f;
-//         center = float3(0);
-//     }
-//
-//     mGridResources.gridData.voxelSize = float3(length / voxelResolution);
-//     float3 temp = diag / mGridResources.gridData.voxelSize;
-//
-//     mGridResources.gridData.voxelCount = uint3(
-//         (uint)math::ceil(temp.x / MinFactor.x) * MinFactor.x,
-//         (uint)math::ceil(temp.y / MinFactor.y) * MinFactor.y,
-//         (uint)math::ceil(temp.z / MinFactor.z) * MinFactor.z
-//     );
-//     mGridResources.gridData.gridMin = center - 0.5f * mGridResources.gridData.voxelSize * float3(mGridResources.gridData.voxelCount);
-//     // mGridResources.gridData.solidVoxelCount = 0;
-// }
 
 void VoxelReconstructionNoLightTransport::UpdateVoxelGrid(uint voxelResolution)
 {

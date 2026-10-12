@@ -78,7 +78,6 @@ void VoxelReconstructionNoLightTransport::runGradientPass(RenderContext* pRender
     cb["gGeometryGradClamp"] = mGradientPass.geometryGradClamp;
     cb["gAlphaGeometryWeight"] = mGradientPass.alphaGeometryWeight;
     cb["gBackgroundCarveWeight"] = 0.01f;
-    cb["gBinaryOpacityWeight"] = 0.003f;
     cb["gCollectDeletionEvidence"] = shouldCollectDeletionEvidence();
     // The topology pass clears camera bitsets at every evidence-window boundary,
     // so the camera index makes each physical view vote at most once per window.

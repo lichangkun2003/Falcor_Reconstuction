@@ -26,19 +26,13 @@ set(voxel_reconstruction_shared_headers
     GeometryAdamState.slang
     TopologyEvidence.slang
     ContourSampling.slang
-    Voxel/ABSDF.slang
+    RenderModes.slang
     Voxel/VoxelGrid.slang
     Voxel/VoxelData.slang
-    Voxel/Shading.slang
 
     Math/AABB.slang
-    Math/Projection.slang
-    Math/Ellipsoid.slang
     Math/GaussianEllipsoid.slang
     Math/GrowthEllipsoid.slang
-    Math/Polygon.slang
-    Math/Triangle.slang
-    Math/Sampling.slang
     Math/SphericalHarmonics.slang
 )
 
@@ -47,8 +41,6 @@ target_sources(VoxelReconstructionNoLightTransport PRIVATE
     ${voxel_reconstruction_shared_headers}
     PointCloudLoader.cpp
     PointCloudLoader.h
-    Math/LebedevQuadrature.slang
-    Math/Random.h
     Math/Random.slang
 
     Shader/ReflectTypes.cs.slang
@@ -90,6 +82,7 @@ if(VOXEL_RECONSTRUCTION_BUILD_FRUSTUM_TESTS)
     add_falcor_executable(VoxelFrustumTests)
     target_sources(VoxelFrustumTests PRIVATE Tests/PixelFrustum.cpp Tests/PixelCoverage.cs.slang)
     target_compile_definitions(VoxelFrustumTests PRIVATE SPARSE_POOL_PAGE_SIZE=32u SPARSE_POOL_MAX_PAGES=2)
+    set_property(SOURCE Tests/PixelFrustum.cpp APPEND PROPERTY OBJECT_DEPENDS ${voxel_reconstruction_object_dependencies})
 endif()
 
 option(VOXEL_RECONSTRUCTION_BUILD_GROWTH_TESTS "Build the headless neighbor-growth GPU regression test" OFF)

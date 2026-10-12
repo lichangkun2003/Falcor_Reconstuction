@@ -1,10 +1,7 @@
 #pragma once
 #include "../HostDeviceShared.slang"
-#include "ABSDF.slang"
 #include "../Math/GaussianEllipsoid.slang"
 #include "../Math/SphericalHarmonics.slang"
-#include "../Math/Triangle.slang"
-#include "Shading.slang"
 
 BEGIN_NAMESPACE_FALCOR
 
@@ -14,19 +11,12 @@ struct VoxelData
 {
     uint occupied = 0;
     GaussianEllipsoid ellipsoid;
-    // SphericalHarmonics radianceR;
-    // SphericalHarmonics radianceG;
-    // SphericalHarmonics radianceB;
     SphericalHarmonicsRGB radiance;
     SphericalHarmonicsOpacity opacity;
 
     MUTATING
     void init()
     {
-        // ABSDF.init();
-        // primitiveProjAreaFunc.init();
-        // polygonsProjAreaFunc.init();
-        // totalProjAreaFunc.init();
         radiance.init();
         opacity.init();
     }

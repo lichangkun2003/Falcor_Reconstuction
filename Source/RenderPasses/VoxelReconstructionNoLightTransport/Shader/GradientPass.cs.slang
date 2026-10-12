@@ -1,6 +1,5 @@
 #include "../GradRecord.slang"
 #include "../PathRecord.slang"
-//#include "../Voxel/Shading.slang"
 #include "../Voxel/VoxelGrid.slang"
 
 import Utils.Debug.PixelDebug;
@@ -22,7 +21,6 @@ cbuffer CB {
     float gGeometryGradClamp;       // Clamp dL/dg after converting the world-distance gradient.
     float gAlphaGeometryWeight;     // Geometry-only multiplier; dL/dAlpha already includes the alpha-loss weight.
     float gBackgroundCarveWeight;   // 背景几何清除项的权重
-    float gBinaryOpacityWeight;
     bool gCollectDeletionEvidence;
     uint gEvidenceViewID;
     uint gCurrentIteration;
@@ -492,7 +490,6 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
             float dL_dOpacityRGB = dot(dL_dC, transmittanceBefore * (radiance - behindColor));
             float dA_dOpacity = transmittanceBefore * transmittanceAfter;
             float dL_dOpacityAlpha = dL_dA * dA_dOpacity;
-            //float dL_dOpacityBinary = gBinaryOpacityWeight * (1.0f - 2.0f * opacity);
             float dL_dOpacity = dL_dOpacityRGB + dL_dOpacityAlpha;
 
             dL_dRadiance = sanitizeFloat3(dL_dRadiance);
@@ -661,14 +658,6 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
             );
         }
     }
-
-    // VoxelRecord voxelRec = rec.voxels[0];
-    // uint indexGradBuffer = CellToIndex(uint3(voxelRec.cellInt), gVoxelCount);
-    // print("grad opacity :   ", gGradBuffer[indexGradBuffer].opacityGrad.coefficients[0]);
-    // print("appearanceValid :", gGradBuffer[indexGradBuffer].appearanceValid);
-    // print("average :        ", gGradBuffer[indexGradBuffer].opacityGrad.coefficients[0] / gGradBuffer[indexGradBuffer].appearanceValid);
-    //print("Loss:", dL_dC);
-
 
     dummy[pixel] = float4(abs(dL_dC), 1.0f);
 }

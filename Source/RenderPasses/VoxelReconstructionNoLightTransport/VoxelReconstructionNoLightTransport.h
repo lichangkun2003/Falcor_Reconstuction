@@ -44,7 +44,7 @@
 #include "Defines.h"
 #include "Voxel/VoxelData.slang"
 #include "Voxel/VoxelGrid.slang"
-#include "Voxel/ABSDF.slang"
+#include "RenderModes.slang"
 
 #include "PathRecord.slang"
 #include "GradRecord.slang"
@@ -73,8 +73,6 @@ const std::string GrowthPassShaderFilePath = "RenderPasses/VoxelReconstructionNo
 const std::string ReduceTexturePassShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/ReduceTexturePass.cs.slang";
 const std::string ReduceBufferPassShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/ReduceBufferPass.cs.slang";
 
-inline std::string kGBuffer = "gBuffer";
-inline std::string kPBuffer = "pBuffer";
 inline std::string kOutputColor = "color";
 inline std::string kAccumulateOutputColor = "AccuColor";
 
@@ -190,7 +188,6 @@ public:
         float3 mClearColor;
         bool mCheckPrimitive;
         bool mUsePixelFrustum = false;
-        float mShadowBias100;
         uint mDrawMode;
         bool mRenderBackGround;
         uint mMaxContributingVoxelCount;
@@ -201,20 +198,15 @@ public:
         uint mSampleIndex = 0;
 
         ref<FullScreenPass> mpFullScreenPass;
-        ref<FullScreenPass> mpDisplayNDFPass;
-        ref<Sampler> mpPointSampler;
         void init()
         {
             mpFullScreenPass = nullptr;
-            mpDisplayNDFPass = nullptr;
-            mpPointSampler = nullptr;
 
             mOptionsChanged = false;
             mFrameIndex = 0;
             mOutputResolution = uint2(800, 800);
             mClearColor = float3(0);
             mCheckPrimitive = true;
-            mShadowBias100 = 0.01f;
             mDrawMode = 0;
             mRenderBackGround = true;
             mMaxContributingVoxelCount = MAX_CONTRIBUTING_VOXELS_PER_RAY;
@@ -513,7 +505,6 @@ private:
     // Parameters
     uint mFrameCount = 0;
     uint2 mFrameDim;
-    float2 mInvFrameDim;
     uint mVoxelResolution = GRID_RESOLUTION; // X,Y,Z三个方向中，最长的边被划分的体素数量
 
     OptimizerParams mOptimizerParams;
@@ -549,7 +540,6 @@ private:
     uint32_t mViewGradientSampleCount = 0;
 
     // UI
-    bool mOptionsChanged = false;
     bool mEnableReconstruction = false;
     bool mInitVoxelData = false;
     bool mUseReferenceCamera = false;
@@ -581,12 +571,6 @@ inline std::string ToString(float3 v)
     std::ostringstream oss;
     oss << std::fixed << std::setprecision(4);
     oss << "(" << v.x << ", " << v.y << ", " << v.z << ")";
-    return oss.str();
-}
-inline std::string ToString(int2 v)
-{
-    std::ostringstream oss;
-    oss << "(" << v.x << ", " << v.y << ")";
     return oss.str();
 }
 inline std::string ToString(int3 v)

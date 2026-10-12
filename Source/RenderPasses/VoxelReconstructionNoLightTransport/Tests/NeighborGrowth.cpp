@@ -183,7 +183,6 @@ struct NeighborGrowthTestAccess
         cb["gGeometryGradClamp"] = 5.0f;
         cb["gAlphaGeometryWeight"] = 1.0f;
         cb["gBackgroundCarveWeight"] = 0.01f;
-        cb["gBinaryOpacityWeight"] = 0.0f;
         cb["gCollectDeletionEvidence"] = true;
         cb["gEvidenceViewID"] = 1u;
         cb["gMinRemovalLossDelta"] = 0.0f;
@@ -677,7 +676,7 @@ struct NeighborGrowthTestAccess
         var["GridData"]["solidVoxelCount"] = 3u;
         auto cb = var["CB"];
         cb["pixelCount"] = uint2(1);
-        cb["drawMode"] = uint32_t(ABSDFDrawMode::TopologyDebug);
+        cb["drawMode"] = uint32_t(ReconstructionDrawMode::TopologyDebug);
         cb["enableReconstruction"] = false;
         cb["renderBackGround"] = false;
         cb["invSpp"] = 1.0f;

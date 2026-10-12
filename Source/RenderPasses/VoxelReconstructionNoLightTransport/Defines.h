@@ -25,7 +25,6 @@
 // Other level counts interpolate the same curve across the active schedule.
 #define COARSE_TO_FINE_LEVEL_WEIGHTS {19u, 12u, 14u, 25u}
 
-#define REFERENCE_IMAGES_COUNT 100
 
 // Exact per-window camera sets (foreground/background), not hashes or last-view stamps.
 // Raise this and rebuild for datasets with more cameras. 128 covers the 100-view dataset.
@@ -43,7 +42,6 @@
 #define MAX_CONTRIBUTING_VOXELS_PER_RAY 16
 
 
-#define LOBE_COUNT 4
 
 // Radiance
 #define SH_COUNT 9
