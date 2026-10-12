@@ -91,6 +91,8 @@ void VoxelReconstructionNoLightTransport::rayMarchingPass(RenderContext* pRender
         pCamera = mpScene->getCamera();
     }
     ref<Texture> pOutputColor = renderData.getTexture(kOutputColor);
+    if (mEnableReconstruction && pass.mSampleIndex == 0u)
+        beginContourSampling(pRenderContext, getTrainingViewIndex(), pCamera->getViewProjMatrixNoJitter());
     pRenderContext->clearRtv(pOutputColor->getRTV().get(), float4(0));
 
 
@@ -108,6 +110,10 @@ void VoxelReconstructionNoLightTransport::rayMarchingPass(RenderContext* pRender
         var["gGridDataParamBlock"] = mpGridBlock;
         var["gPathRecordBuffer"] = mpPathRecordBuffer;
         var["gAccuColor"] = accumulation;
+        const bool guided = mEnableReconstruction && mContourBatchActive;
+        var["gContourLookup"] = guided ? mpContourLookup : nullptr;
+        var["gContourHistory"] = guided ? mContourViews[mContourBatchView].history : nullptr;
+        var["gContourObservations"] = guided ? mpContourObservations : nullptr;
 
         auto cb_GridData = var["GridData"];
         cb_GridData["gridMin"] = mGridResources.gridData.gridMin;
@@ -136,6 +142,8 @@ void VoxelReconstructionNoLightTransport::rayMarchingPass(RenderContext* pRender
         cb["renderBackGround"] = pass.mRenderBackGround;
         cb["clearColor"] = float4(pass.mClearColor, 0);
         cb["enableReconstruction"] = mEnableReconstruction;
+        cb["useContourSampling"] = guided;
+        cb["contourUniformFraction"] = mContourBatchUniformFraction;
         cb["invSpp"] = mEnableReconstruction ? 1.0f / pass.mSpp : 1.0f;
 
         ref<Fbo> fbo = Fbo::create(mpDevice);
@@ -143,6 +151,8 @@ void VoxelReconstructionNoLightTransport::rayMarchingPass(RenderContext* pRender
 
         mpPixelDebug->prepareProgram(pass.mpFullScreenPass->getProgram(), pass.mpFullScreenPass->getRootVar());
         pass.mpFullScreenPass->execute(pRenderContext, fbo);
+        if (guided) pRenderContext->uavBarrier(mpContourObservations.get());
+        pRenderContext->uavBarrier(accumulation.get());
 
         
     }

@@ -271,8 +271,13 @@ void calcMissCandidateGeometryGrad(
 }
 
 
-void accumulateGeometryGradRecord(uint indexGradBuffer, GradRecord gradRecord)
+void accumulateGeometryGradRecord(uint indexGradBuffer, GradRecord gradRecord, float sampleWeight)
 {
+    // Importance correction follows the existing proxy clamp and transition gate.
+    // Applying it before those nonlinear operations would change their behavior.
+    gradRecord.center *= sampleWeight;
+    gradRecord.logScale *= sampleWeight;
+    gradRecord.rotation *= sampleWeight;
     InterlockedAdd(GRAD_DATA(indexGradBuffer).geometryValid, gradRecord.geometryValid);
     InterlockedAdd(GRAD_DATA(indexGradBuffer).backgroundCarveValid, gradRecord.backgroundCarveValid);
 
@@ -452,6 +457,8 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
     dummy[pixel] = float4(0.0f);
     uint indexPathRecordBuffer = pixel.y * gResolution.x + pixel.x;
     PathRecord rec = gPathRecordBuffer[indexPathRecordBuffer];
+    // Zero remains compatible with legacy/synthetic records initialized with {}.
+    float sampleWeight = rec.inverseSamplingPdf > 0.0f ? rec.inverseSamplingPdf : 1.0f;
 
     if (rec.valid == 0 && rec.candidateCount == 0)
         return;
@@ -528,8 +535,8 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
             SphericalHarmonicsOpacity opacityGrad;
 
             calcAppearanceGrad(
-                dL_dRadiance,
-                dL_dOpacity,
+                dL_dRadiance * sampleWeight,
+                dL_dOpacity * sampleWeight,
                 opacity,
                 rec.viewDir,
                 radianceGrad,
@@ -568,7 +575,8 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
             {
                 accumulateGeometryGradRecord(
                     voxelIndex,
-                    geometryGradRecord
+                    geometryGradRecord,
+                    sampleWeight
                 );
             }
 
@@ -648,7 +656,8 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
             uint voxelIndex = cand.voxelID;
             accumulateGeometryGradRecord(
                 voxelIndex,
-                geometryGradRecord
+                geometryGradRecord,
+                sampleWeight
             );
         }
     }

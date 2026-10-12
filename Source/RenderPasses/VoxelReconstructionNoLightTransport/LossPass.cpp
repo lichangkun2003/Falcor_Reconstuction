@@ -465,6 +465,7 @@ void VoxelReconstructionNoLightTransport::loadReferenceImages()
     //
     if (mReferenceCameras.empty() || mReferenceImagePaths.empty())
     {
+        resetContourSampling();
         mReferenceCameras.clear();
         mReferenceImagePaths.clear();
         mReferenceImages.clear();

@@ -50,6 +50,7 @@
 #include "GradRecord.slang"
 #include "GeometryAdamState.slang"
 #include "TopologyEvidence.slang"
+#include "ContourSampling.slang"
 
 using namespace Falcor;
 
@@ -96,6 +97,7 @@ class VoxelReconstructionNoLightTransport : public RenderPass
 {
     friend struct NeighborGrowthTestAccess;
     friend struct CoarseToFineTestAccess;
+    friend struct ContourSamplingTestAccess;
 public:
     FALCOR_PLUGIN_CLASS(VoxelReconstructionNoLightTransport, "VoxelReconstructionNoLightTransport", "Insert pass description here.");
 
@@ -395,6 +397,35 @@ public:
     };
 
 private:
+    struct ContourSamplingSettings
+    {
+        bool enabled = true;
+        float uniformFraction = 0.5f;
+        float historyRate = 0.3f;
+    } mContourSampling;
+    struct ContourViewHistory
+    {
+        bool initialized = false;
+        uint32_t count = 0;
+        ref<Texture> reference;
+        float4x4 viewProjection = float4x4::identity();
+        ref<Buffer> history;
+    };
+    std::vector<ContourViewHistory> mContourViews;
+    uint2 mContourResolution = uint2(0);
+    uint32_t mContourBatchView = 0;
+    bool mContourBatchActive = false;
+    float mContourBatchUniformFraction = 0.5f;
+    float mContourBatchHistoryRate = 0.3f;
+    uint32_t mContourScratchCapacity = 0;
+    ref<Texture> mpContourLookup;
+    ref<Buffer> mpContourPixels, mpContourCounter, mpContourObservations;
+    ref<ComputePass> mpFindContours, mpInitializeContourHistory, mpPrepareContourBatch, mpFinishContourBatch;
+    void resetContourSampling();
+    void beginContourSampling(RenderContext* ctx, uint32_t viewID, const float4x4& viewProjection);
+    void finishContourSampling(RenderContext* ctx);
+    void renderUIContourSampling(Gui::Widgets& widget);
+
     bool isCoarseToFine() const { return mReconstructionMode == 1u; }
     void renderUICoarseToFine(Gui::Widgets& widget);
     void validateCoarseToFineSettings() const;

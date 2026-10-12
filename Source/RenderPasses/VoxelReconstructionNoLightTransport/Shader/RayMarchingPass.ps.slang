@@ -11,6 +11,7 @@ import Utils.Debug.PixelDebug;
 //#include "../Voxel/Shading.slang"
 #include "../Voxel/VoxelGrid.slang"
 #include "../PathRecord.slang"
+#include "../ContourSampling.slang"
 
 
 
@@ -41,6 +42,8 @@ cbuffer CB
     float4 clearColor;
     //uint2 selectedPixel;
     bool enableReconstruction;
+    bool useContourSampling;
+    float contourUniformFraction;
     float invSpp;
     uint maxContributingVoxelCount;
     float transmittanceThreshold;
@@ -48,6 +51,23 @@ cbuffer CB
 
 RWStructuredBuffer<PathRecord> gPathRecordBuffer;
 RWTexture2D gAccuColor;
+Texture2D<uint> gContourLookup;
+StructuredBuffer<ContourHistory> gContourHistory;
+RWStructuredBuffer<ContourObservation> gContourObservations;
+
+float4 accumulateSample(uint2 pixel, float4 raw, uint contourSlot, uint bin, float inversePdf)
+{
+    if (contourSlot != 0u)
+    {
+        // One pixel owns this slot. Draws are separated by a UAV barrier.
+        uint observation = (contourSlot - 1u) * 16u + bin;
+        gContourObservations[observation].alphaSum += raw.a;
+        gContourObservations[observation].count += 1u;
+        raw = contourEstimate(raw, inversePdf);
+    }
+    gAccuColor[pixel] += raw * invSpp;
+    return raw;
+}
 
 
 struct PsOut
@@ -562,6 +582,21 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
     }
 
     float2 jitter = randomJitter();
+    uint contourSlot = 0u;
+    uint contourBin = 0u;
+    float inversePdf = 1.0f;
+    if (enableReconstruction)
+    {
+        UniformSampleGenerator pixelSampler = UniformSampleGenerator(pixel, frameIndex);
+        float2 subpixel;
+        if (useContourSampling) contourSlot = gContourLookup[pixel];
+        if (contourSlot != 0u)
+            subpixel = sampleContour(gContourHistory[contourSlot - 1u], contourUniformFraction,
+                sampleNext3D(pixelSampler), contourBin, inversePdf);
+        else
+            subpixel = sampleNext2D(pixelSampler);
+        jitter = (subpixel - 0.5f) / float2(pixelCount);
+    }
     texCoord = saturate(texCoord + jitter);
     float3 from = screenCoordToCell(texCoord, 0);
     float3 to = screenCoordToCell(texCoord, 1);
@@ -580,14 +615,14 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
     if (enableReconstruction)
     {
         gPathRecordBuffer[bufferIndex].init();
+        gPathRecordBuffer[bufferIndex].inverseSamplingPdf = inversePdf;
         gPathRecordBuffer[bufferIndex].backgroundColor = backgroundColor;
         gPathRecordBuffer[bufferIndex].viewDir = normalize(-direction);
     }
 
     float2 inOut = clip(float3(0), float3(voxelCount), from, to);
     if (inOut.x < 0) {
-        gAccuColor[pixel].xyz += psOut.color.xyz * invSpp;
-        gAccuColor[pixel].w += 0.0f;
+        psOut.color = accumulateSample(pixel, psOut.color, contourSlot, contourBin, inversePdf);
         return psOut;
     }
         
@@ -638,8 +673,7 @@ PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
 
     //print("candidateCount : ", candidateCount);
 
-    gAccuColor[pixel].xyz += psOut.color.xyz * invSpp;
-    gAccuColor[pixel].w += psOut.color.w * invSpp;
+    psOut.color = accumulateSample(pixel, psOut.color, contourSlot, contourBin, inversePdf);
 
     return psOut;
 

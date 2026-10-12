@@ -107,6 +107,7 @@ ref<ParameterBlock> VoxelReconstructionNoLightTransport::createSparseGridBlock(c
 void VoxelReconstructionNoLightTransport::commitSparseGrid(
     GridResources&& resources, const ref<ParameterBlock>& block, uint32_t resolution)
 {
+    if (resolution != mVoxelResolution) resetContourSampling();
     // Capacity extension replaces the parameter block but keeps the same grid
     // and in-flight growth proposals. Initialization/refinement/load replaces it.
     if (resolution != mVoxelResolution || mGridResources.voxelPages.empty() || resources.voxelPages.empty() ||
@@ -293,6 +294,7 @@ void VoxelReconstructionNoLightTransport::uploadSparseBatch(
 
 void VoxelReconstructionNoLightTransport::resetPointCloudOptimization(RenderContext* pRenderContext)
 {
+    resetContourSampling();
     resetGrowthEvidence();
     mReconstructionExperimentKey.clear();
     resetGrowthCooldown(pRenderContext);

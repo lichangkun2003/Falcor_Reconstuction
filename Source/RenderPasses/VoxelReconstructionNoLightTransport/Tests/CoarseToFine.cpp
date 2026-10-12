@@ -311,12 +311,15 @@ struct CoarseToFineTestAccess
         pass->mOptimizerParams.isRunning = pass->mEnableReconstruction = true;
 
         pass->mOptimizerParams.currentIteration = 50u;
+        // This fixture isolates refinement. Do not rely on the default growth
+        // cadence to skip round 50 (the default interval is now ten rounds).
+        pass->mCoarseToFine.enableCoarseGrowth = false;
         pass->mRayMarchingPass.mSampleIndex = pass->mRayMarchingPass.mSpp;
         require(!pass->shouldCollectDeletionEvidence(), "Mode1 enabled deletion evidence");
         pass->mTopologySettings.candidateCount = 1u;
         pass->deleteAndCompactCandidates(ctx);
         pass->growNeighborVoxels(ctx);
-        require(pass->mGridResources.gridData.activeVoxelCount == 1u, "Mode1 performed adaptive topology changes");
+        require(pass->mGridResources.gridData.activeVoxelCount == 1u, "Mode1 changed topology with growth disabled");
         pass->mTopologySettings.candidateCount = 0u;
 
         GeometryAdamState oldAdam = {};

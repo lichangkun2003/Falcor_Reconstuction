@@ -12,6 +12,7 @@ set(voxel_reconstruction_sources
     TopologyDeletion.cpp
     TopologyGrowth.cpp
     GrowthEvidence.cpp
+    ContourSampling.cpp
     CoarseToFine.cpp
     DataProcess.cpp
 )
@@ -24,6 +25,7 @@ set(voxel_reconstruction_shared_headers
     GradRecord.slang
     GeometryAdamState.slang
     TopologyEvidence.slang
+    ContourSampling.slang
     Voxel/ABSDF.slang
     Voxel/VoxelGrid.slang
     Voxel/VoxelData.slang
@@ -56,6 +58,7 @@ target_sources(VoxelReconstructionNoLightTransport PRIVATE
     Shader/PixelFrustumForward.slang
     Math/PixelCoverage.slang
     Shader/LossPass.cs.slang
+    Shader/ContourSampling.cs.slang
     Shader/ReduceTexturePass.cs.slang
     Shader/ReduceBufferPass.cs.slang
     Shader/GradientPass.cs.slang
@@ -95,6 +98,8 @@ if(VOXEL_RECONSTRUCTION_BUILD_GROWTH_TESTS)
     target_sources(VoxelNeighborGrowthTests PRIVATE
         Tests/NeighborGrowth.cpp
         Tests/CoarseToFine.cpp
+        Tests/ContourSampling.cpp
+        Tests/ContourSampling.cs.slang
         ${voxel_reconstruction_sources}
         ${voxel_reconstruction_shared_headers}
         PointCloudLoader.cpp
@@ -105,4 +110,5 @@ if(VOXEL_RECONSTRUCTION_BUILD_GROWTH_TESTS)
     target_compile_definitions(VoxelNeighborGrowthTests PRIVATE SPARSE_POOL_PAGE_SIZE=32u SPARSE_POOL_MAX_PAGES=2)
     set_property(SOURCE Tests/NeighborGrowth.cpp APPEND PROPERTY OBJECT_DEPENDS ${voxel_reconstruction_object_dependencies})
     set_property(SOURCE Tests/CoarseToFine.cpp APPEND PROPERTY OBJECT_DEPENDS ${voxel_reconstruction_object_dependencies})
+    set_property(SOURCE Tests/ContourSampling.cpp APPEND PROPERTY OBJECT_DEPENDS ${voxel_reconstruction_object_dependencies})
 endif()

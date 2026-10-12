@@ -42,6 +42,9 @@ VoxelReconstructionNoLightTransport::VoxelReconstructionNoLightTransport(ref<Dev
     {
         if (key == "reconstructionMode")
             mReconstructionMode = value;
+        else if (key == "contourImportanceSampling") mContourSampling.enabled = value;
+        else if (key == "contourUniformFraction") mContourSampling.uniformFraction = value;
+        else if (key == "contourHistoryRate") mContourSampling.historyRate = value;
         else if (key == "coarseStartResolution")
             mCoarseToFine.startResolution = value;
         else if (key == "targetResolution")
@@ -85,6 +88,9 @@ VoxelReconstructionNoLightTransport::VoxelReconstructionNoLightTransport(ref<Dev
     }
     if (mReconstructionMode > 1u)
         throw RuntimeError("Reconstruction mode must be 0 or 1.");
+    if (!(mContourSampling.uniformFraction >= 0.05f && mContourSampling.uniformFraction <= 1.0f) ||
+        !(mContourSampling.historyRate > 0.0f && mContourSampling.historyRate <= 1.0f))
+        throw RuntimeError("Contour sampling requires uniform fraction in [0.05,1] and history rate in (0,1].");
     if (hasLegacyThreshold && !hasMultiplier)
     {
         if (mCoarseToFine.coarsestGrowthFacePenetration <= 0.0f)
@@ -136,6 +142,9 @@ Properties VoxelReconstructionNoLightTransport::getProperties() const
 {
     Properties props;
     props["reconstructionMode"] = mReconstructionMode;
+    props["contourImportanceSampling"] = mContourSampling.enabled;
+    props["contourUniformFraction"] = mContourSampling.uniformFraction;
+    props["contourHistoryRate"] = mContourSampling.historyRate;
     props["coarseStartResolution"] = mCoarseToFine.startResolution;
     props["targetResolution"] = mCoarseToFine.targetResolution;
     props["totalIterations"] = mCoarseToFine.totalIterations;
@@ -323,6 +332,7 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
 
         if (isLastSample)
         {
+            finishContourSampling(pRenderContext);
             collectGrowthEvidence(pRenderContext, renderData);
             runUpdatePass(pRenderContext, renderData);
             runReducePass(pRenderContext, renderData);
@@ -435,6 +445,7 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget)
     {
         mRayMarchingPass.mSampleIndex = 0;
     }
+    renderUIContourSampling(widget);
 
     if (widget.checkbox("Use ReferenceCamera", mUseReferenceCamera))
     {
@@ -833,6 +844,7 @@ group.text("mode1 coarse level: deletion is disabled; conservative neighbor grow
 
 void VoxelReconstructionNoLightTransport::setScene(RenderContext* pRenderContext, const ref<Scene>& pScene)
 {
+    resetContourSampling();
     mpScene = pScene;
     mLoadedReconstructionForViewing = false;
     mReconstructionIOStatus.clear();
@@ -1019,6 +1031,7 @@ void VoxelReconstructionNoLightTransport::updateOutputResolution()
     const uint2 resolution = training ? uint2(800, 800) : (mViewingResolution == 0 ? uint2(800, 800) : uint2(1920, 1080));
     if (any(mRayMarchingPass.mOutputResolution != resolution))
     {
+        resetContourSampling();
         mRayMarchingPass.mOutputResolution = resolution;
         mRayMarchingPass.mSampleIndex = 0;
         mRayMarchingPass.mOptionsChanged = true;
@@ -1036,6 +1049,7 @@ void VoxelReconstructionNoLightTransport::startReconstruction()
 
 void VoxelReconstructionNoLightTransport::stopReconstruction()
 {
+    mContourBatchActive = false;
     resetGrowthEvidence();
     mPointCloud.startRequested = false;
     mEnableReconstruction = false;

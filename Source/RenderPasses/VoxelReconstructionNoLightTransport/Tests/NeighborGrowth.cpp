@@ -17,6 +17,7 @@
 #include "../VoxelReconstructionNoLightTransport.h"
 
 void runCoarseToFineTests(const ref<Device>& device);
+void runContourSamplingTests(VoxelReconstructionNoLightTransport& pass, RenderContext* ctx);
 
 struct NeighborGrowthTestAccess
 {
@@ -1181,6 +1182,7 @@ struct NeighborGrowthTestAccess
                          "context/deletion/occupied layers\n";
             checkEvidenceGrowth(*pass, ctx);
             runCoarseToFineTests(device);
+            runContourSamplingTests(*pass, ctx);
             device->wait();
             std::cout << "All neighbor-growth GPU regression tests passed.\n";
             return 0;

@@ -146,6 +146,7 @@ uint64_t checkedVoxelCount(uint3 count, uint32_t dimensionLimit)
 
 void VoxelReconstructionNoLightTransport::resetLoadedReconstruction(RenderContext* pRenderContext)
 {
+    resetContourSampling();
     mReconstructionExperimentKey.clear();
     mEnableReconstruction = false;
     mOptimizerParams.reset();
