@@ -153,7 +153,7 @@ mode0 的 opacity 前 20 轮冻结，随后 30 轮线性恢复到目标学习率
 | 模式 | 分辨率流程 | 生长 | 多视角删除 |
 |---|---|---|---|
 | mode0 | 固定分辨率，默认 512 | 默认每 10 轮，δ = 1 | opacity 恢复结束后开启 |
-| mode1 | 起始分辨率逐次翻倍到目标 | 所有层级默认每 15 轮 | 仅目标层级开启 |
+| mode1 | 起始分辨率逐次翻倍到目标 | 所有层级默认每 10 轮 | 仅目标层级开启 |
 
 RECONSTRUCTION_MODE 默认 1。GRID_RESOLUTION 默认 512；COARSE_TO_FINE_START_RESOLUTION 默认 16。实际实验从 64 开始时，应在 UI 设置 Coarse Start Resolution = 64；不能把实验习惯与源码默认值混淆。
 

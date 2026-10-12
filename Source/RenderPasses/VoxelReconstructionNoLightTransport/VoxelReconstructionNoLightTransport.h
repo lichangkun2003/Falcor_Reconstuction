@@ -367,7 +367,7 @@ public:
         bool enableCoarseGrowth = true;
         float coarsestGrowthFacePenetration = COARSEST_GROWTH_FACE_PENETRATION;
         float growthFinerLevelMultiplier = FINER_GROWTH_THRESHOLD_MULTIPLIER;
-        uint32_t coarseGrowthInterval = 15u;
+        uint32_t coarseGrowthInterval = 10u;
         bool saveEachLevel = true;
         uint32_t scheduleStartResolution = 0;
         uint32_t levelStartIteration = 0;
