@@ -939,8 +939,8 @@ GridData VoxelReconstructionNoLightTransport::makeVoxelGrid(uint32_t voxelResolu
     //
     // 手动指定 AABB。
     //
-    const float3 aabbMin = float3(-1.3f);
-    const float3 aabbMax = float3(1.3f);
+    const float3 aabbMin = float3(-1.4f);
+    const float3 aabbMax = float3(1.4f);
 
     float3 diag = aabbMax - aabbMin;
     float3 center = 0.5f * (aabbMin + aabbMax);
