@@ -1,9 +1,16 @@
 #pragma once
 
-// Experimental one-sided geometry proxy: hit -> miss, miss -> hit only.
+// Transition geometry proxy: preserve hit shrinking and near-miss expansion;
+// allow hit expansion only inside the compact boundary band below.
 // Set to 0 to restore the original two-sided proxy and geometry Adam behavior.
 #ifndef GEOMETRY_TRANSITION_ONLY
 #define GEOMETRY_TRANSITION_ONLY 1
+#endif
+
+// Inward width of the hard-hit expansion band, in Geometry Tau units.
+// Expansion fades to exactly zero at this depth. 0 restores hit-shrink-only.
+#ifndef GEOMETRY_HIT_EXPANSION_BAND_TAU
+#define GEOMETRY_HIT_EXPANSION_BAND_TAU 1.0f
 #endif
 
 // Shared by host code and shaders. Reconstruction uses point-cloud initialization.

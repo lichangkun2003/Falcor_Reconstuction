@@ -84,6 +84,22 @@ float3 gaussianEllipsoidImplicitGradientWorld(
     return 2.0f * mul(rotation, principal * invScaleSquared);
 }
 
+bool gaussianEllipsoidContainsVoxel(GaussianEllipsoid ellipsoid, float3 voxelSize)
+{
+    // The ellipsoid is convex: containing all eight corners contains the box.
+    // An ellipsoid AABB containing the voxel would not be sufficient.
+    float3x3 worldToPrincipal = transpose(gaussianRotationMatrix(ellipsoid.rotation));
+    float3 invScaleSquared = exp(clamp(-2.0f * ellipsoid.logScale, float3(-60.0f), float3(60.0f)));
+    for (uint corner = 0; corner < 8; ++corner)
+    {
+        float3 xLocal = float3(corner & 1u, (corner >> 1u) & 1u, (corner >> 2u) & 1u);
+        float3 principal = mul(worldToPrincipal, (xLocal - ellipsoid.center) * voxelSize);
+        if (!(dot(principal * invScaleSquared, principal) <= 1.0f))
+            return false;
+    }
+    return true;
+}
+
 // First-order signed distance proxy at the implicit minimum on a voxel-clipped ray segment.
 // Normalize with the gradient at the radially projected surface point, where
 // it cannot vanish. This is accurate near the hit boundary, not an exact SDF.

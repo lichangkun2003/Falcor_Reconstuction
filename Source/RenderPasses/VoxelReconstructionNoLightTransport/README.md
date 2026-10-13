@@ -135,6 +135,8 @@ dw / dd = -w · (1 - w) / tau
 
 Geometry Tau 默认 0.12 个体素宽度，由 CPU 转换为世界长度。代理作用于 hard-hit 和已有占据体素中的 near-miss，推动 center、logScale 和 rotation。Alpha Geometry Weight 默认 0.1，仅额外缩放 alpha 对几何的代理贡献，不替代图像损失中的 Alpha Loss Weight。
 
+`GEOMETRY_TRANSITION_ONLY=1` 时，hard-hit 保留收缩梯度，并允许边界内侧一个 tau 范围中的扩张梯度补偿历史前缀的覆盖不足。设 `b = GEOMETRY_HIT_EXPANSION_BAND_TAU * tau`，扩张权重为 `smoothstep(0, 1, saturate(1 + distanceWorld / b))`；深度达到 b 后严格为零。默认倍率为 1，改为 0 可恢复所有 hit 均禁止扩张的对照。背景 hit 和已经包含体素八个角点的椭球禁止扩张；near-miss 仍只允许向 hit 推动。门控作用于合并 RGB/alpha 信号并限幅后的几何代理，再乘采样 PDF 权重；零梯度仍保留有效记录，以便清除旧的几何 Adam 动量。这是几何代理的实验性调整，不能保证消除白点。
+
 明确背景像素的处理不是只调透明度：
 
 - 禁止 radiance 用改变颜色来拟合背景，背景 hard-hit 的 radiance 梯度置零。

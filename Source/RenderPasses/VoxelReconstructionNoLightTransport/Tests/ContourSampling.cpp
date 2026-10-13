@@ -354,6 +354,163 @@ struct ContourSamplingTestAccess
         std::cout << "PASS: appearance, hard-hit, near-miss and carve gradients weighted exactly once after proxy clamp\n";
     }
 
+    static void hitExpansionBand(VoxelReconstructionNoLightTransport& pass, RenderContext* ctx)
+    {
+        GridData grid = {};
+        grid.voxelCount = uint3(8);
+        grid.voxelSize = float3(1, 2, 1); // Containment must use world-space axes.
+        grid.activeVoxelCount = grid.solidVoxelCount = 1u;
+        auto resources = pass.allocateSparseGrid(ctx, grid, 1u);
+        auto block = pass.createSparseGridBlock(resources);
+        pass.commitSparseGrid(std::move(resources), block, 8u);
+        const uint32_t cell = 3u + 8u * 3u + 64u * 3u;
+        const auto flags = ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess;
+        auto texture = [&](float4 value) { return pass.mpDevice->createTexture2D(1, 1, ResourceFormat::RGBA32Float, 1, 1, &value); };
+        auto pathBuffer = pass.mpDevice->createStructuredBuffer(sizeof(PathRecord), 1, flags);
+        auto dummy = pass.mpDevice->createTexture2D(1, 1, ResourceFormat::RGBA32Float, 1, 1, nullptr, flags);
+        ProgramDesc desc;
+        desc.addShaderLibrary(GradientPassShaderFilePath).csEntry("main");
+        ref<ComputePass> gradients[3];
+        for (uint32_t mode = 0; mode < 3; ++mode)
+        {
+            auto defines = pass.getReconstructionDefines();
+            defines.add("GEOMETRY_TRANSITION_ONLY", mode == 2 ? "0" : "1");
+            defines.add("GEOMETRY_HIT_EXPANSION_BAND_TAU", mode == 1 ? "0.0f" : "1.0f");
+            gradients[mode] = ComputePass::create(pass.mpDevice, desc, defines, true);
+            auto var = gradients[mode]->getRootVar();
+            var["gGridDataParamBlock"] = block;
+            var["gPathRecordBuffer"] = pathBuffer;
+            var["dummy"] = dummy;
+            auto cb = var["CB"];
+            cb["gResolution"] = uint2(1);
+            cb["gVoxelCount"] = grid.voxelCount;
+            cb["gGeometryTauWorld"] = 0.12f;
+            cb["gGeometryGradClamp"] = 0.001f;
+            cb["gAlphaGeometryWeight"] = 1.0f;
+            cb["gBackgroundCarveWeight"] = 0.01f;
+            cb["gCollectDeletionEvidence"] = false;
+        }
+        VoxelData voxel = {};
+        voxel.occupied = 1;
+        voxel.ellipsoid.center = float3(0.5f);
+        voxel.ellipsoid.logScale = float3(std::log(0.45f));
+        voxel.ellipsoid.rotation = float4(1, 0, 0, 0);
+        float3 xLocal(0.5f);
+        float gmin = 0;
+        auto setSphereDepth = [&](float depth)
+        {
+            gmin = -2 * depth / 0.45f;
+            xLocal = float3(0.5f) + float3(0.45f * std::sqrt(1 + gmin), 0, 0);
+        };
+        auto evaluate = [&](uint32_t mode, float4 derivative, uint32_t classification = 0u, float pdfWeight = 1.0f)
+        {
+            pass.uploadSparseBatch(ctx, block, 0, &cell, 1, &voxel);
+            pass.barrierSparseVoxels(ctx);
+            for (const auto& page : pass.mGridResources.indexPages) ctx->uavBarrier(page.get());
+            PathRecord path = {};
+            path.valid = path.contributingVoxelCount = 1;
+            path.viewDir = float3(0, 0, 1);
+            path.backgroundColor = float3(1);
+            path.inverseSamplingPdf = pdfWeight;
+            path.voxels[0].opacity = 0.5f;
+            path.voxels[0].transmittanceBefore = 1;
+            path.voxels[0].gmin = gmin;
+            path.voxels[0].xStar = float3(3) + xLocal;
+            pathBuffer->setBlob(&path, 0, sizeof(path));
+            auto var = gradients[mode]->getRootVar();
+            var["gDL_dColorBuffer"] = texture(derivative);
+            var["gBackgroundMaskBuffer"] = pass.mpDevice->createTexture2D(1, 1, ResourceFormat::R32Uint, 1, 1, &classification);
+            pass.clearSparseGradients(ctx);
+            gradients[mode]->execute(ctx, uint3(1));
+            pass.barrierSparseGradients(ctx);
+            ctx->submit(true);
+            GradRecord result;
+            pass.mGridResources.gradPages[0]->getBlob(&result, 0, sizeof(result));
+            return result;
+        };
+        auto zeroGeometry = [&](const GradRecord& g)
+        {
+            require(g.geometryValid == 1, "Gated hit must retain a valid record to clear momentum");
+            require(length(g.center) == 0 && length(g.logScale) == 0 && length(g.rotation) == 0, "Gated hit leaked geometry gradient");
+        };
+        const float4 expand(1, 1, 1, -1), shrink(-1, -1, -1, 1);
+        setSphereDepth(0.02f);
+        const auto boundary = evaluate(0, expand);
+        require(boundary.logScale.x < 0, "Near hit failed to expand under gradient descent");
+        zeroGeometry(evaluate(1, expand)); // Old hit-shrink-only control.
+        const auto weighted = evaluate(0, expand, 0, 2);
+        require(length(weighted.logScale - 2.0f * boundary.logScale) < 1e-7f, "Expansion PDF weight must follow saturated clamp and gate");
+        setSphereDepth(0.09f);
+        const auto inward = evaluate(0, expand);
+        require(inward.logScale.x < 0 && std::abs(inward.logScale.x) < std::abs(boundary.logScale.x), "Expansion did not fade inward");
+        setSphereDepth(0.15f);
+        zeroGeometry(evaluate(0, expand));
+        require(evaluate(2, expand).logScale.x < 0, "Deep-hit fixture must expand with legacy two-sided proxy");
+        for (float depth : {0.02f, 0.15f})
+        {
+            setSphereDepth(depth);
+            for (uint32_t classification : {0u, 1u})
+            {
+                const auto current = evaluate(0, shrink, classification);
+                const auto legacy = evaluate(2, shrink, classification);
+                require(current.logScale.x > 0 && length(current.logScale - legacy.logScale) < 1e-7f, "Hit shrinking or background carve changed");
+            }
+        }
+
+        // A rotated ellipsoid can fully cover a non-cubic voxel yet leave its
+        // corner hits inside the expansion band. It must still not expand.
+        const float invSqrt2 = std::sqrt(0.5f);
+        voxel.ellipsoid.rotation = float4(std::cos(0.3926990817f), 0, 0, std::sin(0.3926990817f));
+        auto setRotatedPoint = [&](float3 axes, float3 point)
+        {
+            voxel.ellipsoid.logScale = float3(std::log(axes.x), std::log(axes.y), std::log(axes.z));
+            xLocal = point;
+            const float3 d = (point - float3(0.5f)) * grid.voxelSize;
+            const float3 unit = float3((d.x + d.y) * invSqrt2, (d.y - d.x) * invSqrt2, d.z) / axes;
+            gmin = dot(unit, unit) - 1;
+        };
+        setRotatedPoint(float3(1.8f, 1.3f, 1.2f), float3(0.001f, 0.999f, 0.999f));
+        require(length(evaluate(2, expand).logScale) > 0, "Contained fixture has no legacy expansion");
+        zeroGeometry(evaluate(0, expand));
+        require(length(evaluate(0, shrink).logScale) > 0, "Containment must not disable shrinking");
+        // Its AABB covers the voxel, but the thin rotated ellipsoid does not.
+        setRotatedPoint(float3(1.5f, 0.35f, 1.2f), float3(0.5f) + float3(-0.32f * invSqrt2, 0.16f * invSqrt2, 0));
+        require(length(evaluate(0, expand).logScale) > 0, "AABB containment incorrectly suppressed partial coverage repair");
+
+        // Feed real LossPass residuals into the hit proxy: a prior miss can
+        // expand a currently correct hit, while 1 SPP retains its own residual.
+        voxel.ellipsoid.rotation = float4(1, 0, 0, 0);
+        voxel.ellipsoid.logScale = float3(std::log(0.45f));
+        setSphereDepth(0.02f);
+        ProgramDesc lossDesc;
+        lossDesc.addShaderLibrary(LossPassShaderFilePath).csEntry("main");
+        auto loss = ComputePass::create(pass.mpDevice, lossDesc, DefineList(), true);
+        auto var = loss->getRootVar();
+        auto derivatives = pass.mpDevice->createTexture2D(1, 1, ResourceFormat::RGBA32Float, 1, 1, nullptr, flags);
+        var["gDL_dColorBuffer"] = derivatives;
+        var["gLossBuffer"] = pass.mpDevice->createTexture2D(1, 1, ResourceFormat::R32Float, 1, 1, nullptr, flags);
+        var["gBackgroundMaskBuffer"] = pass.mpDevice->createTexture2D(1, 1, ResourceFormat::R32Uint, 1, 1, nullptr, flags);
+        auto cb = var["CB"];
+        cb["gResolution"] = uint2(1);
+        cb["gAlphaLossWeight"] = 1.0f;
+        cb["gForegroundAlphaMin"] = 0.95f;
+        cb["gBackgroundAlphaMax"] = 0.0001f;
+        for (uint32_t trial = 0; trial < 3; ++trial)
+        {
+            const uint32_t spp = trial == 0 ? 2u : 1u;
+            cb["gSpp"] = spp;
+            cb["gSampleCount"] = spp;
+            var["gRenderedColor"] = texture(trial == 0 ? float4(0.75f, 0.75f, 0.75f, 0.25f) : float4(0.5f));
+            var["gCurrentFrameColor"] = texture(float4(0.5f));
+            var["gReferenceImage"] = texture(float4(0, 0, 0, trial == 2 ? 1.0f : 0.5f));
+            loss->execute(ctx, uint3(1));
+            const auto result = evaluate(0, pixel(ctx, derivatives));
+            if (trial == 1) zeroGeometry(result);
+            else require(result.logScale.x < 0, "Historical-prefix or 1-SPP residual failed to drive near-hit expansion");
+        }
+        std::cout << "PASS: compact hit expansion, deep/contained suppression, rotated containment, shrink/carve, PDF and prefix/1-SPP residuals\n";
+    }
+
     static void singleSppTraining(VoxelReconstructionNoLightTransport& pass, RenderContext* ctx)
     {
         // Call the production execute() loop, including scheduling, loss,
@@ -510,6 +667,7 @@ struct ContourSamplingTestAccess
         lifecycle(pass, ctx);
         distribution(pass, ctx);
         prefix(pass, ctx);
+        hitExpansionBand(pass, ctx);
         paths(pass, ctx);
         singleSppTraining(pass, ctx);
     }

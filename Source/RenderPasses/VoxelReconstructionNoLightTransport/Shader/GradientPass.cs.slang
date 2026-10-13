@@ -185,10 +185,23 @@ void calcHardHitGeometryGrad(
         );
 
     #if GEOMETRY_TRANSITION_ONLY
-    // Gradient descent increases g when dL/dg < 0 (hit -> miss).
-    // Filter before constructing center/scale/rotation derivatives. Keep a
-    // valid zero record so update can clear stale geometry momentum.
-    dL_dG = min(dL_dG, 0.0f);
+    // dL/dg > 0 makes this hit deeper under gradient descent. Near the
+    // boundary it can repair coverage missing from the historical prefix.
+    // Deep hits must have EXACTLY zero expansion; a small sigmoid tail can
+    // still yield sizable Adam steps. Shrinking/carve remains unchanged.
+    if (dL_dG > 0.0f)
+    {
+        float bandWidth = tau * max(float(GEOMETRY_HIT_EXPANSION_BAND_TAU), 0.0f);
+        float t = !isReferenceBackground && bandWidth > 0.0f
+            ? saturate(1.0f + distanceWorld / bandWidth) : 0.0f;
+        float expansionWeight = t * t * (3.0f - 2.0f * t);
+        // Test containment only for expansion surviving the boundary gate.
+        if (expansionWeight > 0.0f && gaussianEllipsoidContainsVoxel(ellipsoid, gGridDataParamBlock.voxelSize))
+            expansionWeight = 0.0f;
+        dL_dG *= expansionWeight;
+    }
+    // Keep a valid zero record so update can clear stale geometry momentum.
+    // The sampling PDF weight is applied later, after this gate and clamp.
     #endif
     fillGaussianEllipsoidGradient(ellipsoid, xLocal, dL_dG, geometryGradRecord);
     if (isReferenceBackground && geometryGradRecord.geometryValid != 0)
