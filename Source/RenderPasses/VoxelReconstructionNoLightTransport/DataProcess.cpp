@@ -234,7 +234,7 @@ std::string VoxelReconstructionNoLightTransport::getOptimizedParamTag() const
 }
 std::string VoxelReconstructionNoLightTransport::getReconstructionExperimentPrefix()
 {
-    auto sceneDirectory = std::filesystem::path(ReferenceImageDir).lexically_normal();
+    auto sceneDirectory = mReferenceImageDir.lexically_normal();
     // A trailing separator gives an empty filename; use the last directory component.
     if (sceneDirectory.filename().empty()) sceneDirectory = sceneDirectory.parent_path();
     std::string sceneName = sceneDirectory.filename().string();

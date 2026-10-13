@@ -45,12 +45,22 @@ opacity(v)  = sigmoid(Σ opacity_SH[k] · Yk(v))
 
 ### 1.3 输入与初值
 
-路径定义在 VoxelReconstructionNoLightTransport.h，相对路径以 Falcor 项目目录为根：
+在重建 pass 的 **Input Dataset** 中，从 **Scene Directory** 下拉框选择 `Reconstruction_Input` 的子目录，点击 **Load / Initialize Selected Dataset**。选择下拉框本身不会切换数据。这个操作只切换重建输入，不调用或修改 Falcor 的 `setScene`；仍需先加载用于提供相机和环境的 Falcor 宿主场景。
 
-- ReferenceImageDir：参考图像及点云所在目录。
-- ReferenceCameraFile：训练相机 JSON。
-- InitializationPointCloudFile：默认 init_points.ply，即输入 3DGS 的原始稀疏点云；point_cloud.ply 可用于对比优化后的 3DGS 输出。
-- ReconstructionDataDir：默认 Reconstruction_Output。
+- 相机读取所选目录的 `transforms_train.json`，参考图按其中的 `file_path` 读取；图片仍按 sRGB 解码。
+- **Initialization PLY** 默认 `init_points.ply`，可改成 `point_cloud.ply` 等该目录内的点云文件名。
+- 切换后重置训练、采样历史和累计，图片逐帧加载完成后初始化点云，使用参考相机 0 预览；不会自动开始优化。
+- 重建二进制结果仍保存到 `Reconstruction_Output`。
+
+默认脚本将 AccumulatePass 和白底参考 `dummy` 接入 FLIPPass，再把这两个输入和 `FLIPPass.errorMapDisplay` 接入 **ResultSave**。停止重建、启用 **Use ReferenceCamera**、采用 **Default** 绘制模式并等待所需帧累计后，点击 **Save output / ref / flip PNG**，一次保存三张 RGB PNG：
+
+```text
+picture/MM.DD/<场景目录名>_<从0开始的相机索引>_output.png
+picture/MM.DD/<场景目录名>_<从0开始的相机索引>_ref.png
+picture/MM.DD/<场景目录名>_<从0开始的相机索引>_flip.png
+```
+
+日期使用运行机器的本地日期，相机索引补齐三位；重复保存添加共同编号，不覆盖旧结果。浮点线性 RGB 经 sRGB 编码、截断到 [0,1] 后保存为 8 位 PNG；FLIP 保存显示热图，不是原始数值误差图。PNG 不保留 HDR 精度。保存的是点击后的当前累计，不会自动等待 1024 帧。Python 也可调用 `graph.getPass("ResultSave").requestSave()`，在下一次执行图时保存。
 
 PLY 支持 ASCII 和 binary little-endian。XYZ 点云仅占据每个点落入的 cell；带 opacity、scale、rotation 的 Gaussian PLY 则按高斯覆盖的相交 cell 初始化，并受 Gaussian Opacity Threshold 筛选。该阈值不影响纯 XYZ 输入。NeRF 数据坐标变换为 (x, z, -y)。
 

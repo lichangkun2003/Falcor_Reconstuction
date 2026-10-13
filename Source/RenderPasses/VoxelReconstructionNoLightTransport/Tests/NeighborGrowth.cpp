@@ -18,6 +18,7 @@
 
 void runCoarseToFineTests(const ref<Device>& device);
 void runContourSamplingTests(VoxelReconstructionNoLightTransport& pass, RenderContext* ctx);
+void runDatasetSelectionTests(VoxelReconstructionNoLightTransport& pass, RenderContext* ctx);
 
 struct NeighborGrowthTestAccess
 {
@@ -1182,6 +1183,7 @@ struct NeighborGrowthTestAccess
             checkEvidenceGrowth(*pass, ctx);
             runCoarseToFineTests(device);
             runContourSamplingTests(*pass, ctx);
+            runDatasetSelectionTests(*pass, ctx);
             device->wait();
             std::cout << "All neighbor-growth GPU regression tests passed.\n";
             return 0;

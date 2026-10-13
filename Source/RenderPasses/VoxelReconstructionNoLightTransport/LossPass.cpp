@@ -179,7 +179,7 @@ bool VoxelReconstructionNoLightTransport::loadReferenceCamerasFromFile(const std
         //
         std::string relativeImagePath = frame["file_path"].get<std::string>();
 
-        std::filesystem::path imagePath = resolveReconstructionPath(ReferenceImageDir) / relativeImagePath;
+        std::filesystem::path imagePath = mReferenceImageDir / relativeImagePath;
 
         // NeRF json 中通常写 "./train/r_0"，没有 .png
         if (!imagePath.has_extension())
@@ -309,7 +309,7 @@ void VoxelReconstructionNoLightTransport::loadReferenceImages()
         mReferenceImagePaths.clear();
         mReferenceImages.clear();
 
-        if (!loadReferenceCamerasFromFile(ReferenceCameraFile))
+        if (!loadReferenceCamerasFromFile(mReferenceCameraFile.string()))
         {
             throw RuntimeError("Failed to load NeRF training dataset.");
         }

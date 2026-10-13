@@ -2,6 +2,7 @@ add_plugin(VoxelReconstructionNoLightTransport)
 
 set(voxel_reconstruction_sources
     VoxelReconstructionNoLightTransport.cpp
+    DatasetSelection.cpp
     PointCloudInitialization.cpp
     RayMarchingPass.cpp
     LossPass.cpp
@@ -93,6 +94,7 @@ if(VOXEL_RECONSTRUCTION_BUILD_GROWTH_TESTS)
         Tests/NeighborGrowth.cpp
         Tests/CoarseToFine.cpp
         Tests/ContourSampling.cpp
+        Tests/DatasetSelection.cpp
         Tests/ContourSampling.cs.slang
         ${voxel_reconstruction_sources}
         ${voxel_reconstruction_shared_headers}

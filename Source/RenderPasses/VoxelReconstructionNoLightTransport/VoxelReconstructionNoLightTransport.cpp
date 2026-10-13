@@ -26,6 +26,7 @@
  # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  **************************************************************************/
 #include "VoxelReconstructionNoLightTransport.h"
+#include "../ReconstructionResultPass/ResultMetadata.h"
 #include <algorithm>
 
 extern "C" FALCOR_API_EXPORT void registerPlugin(Falcor::PluginRegistry& registry)
@@ -190,12 +191,16 @@ RenderPassReflection VoxelReconstructionNoLightTransport::reflect(const CompileD
 
 void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext, const RenderData& renderData)
 {
+    auto& resultDictionary = renderData.getDictionary();
+    resultDictionary[getName() + ReconstructionResult::kReady] = false;
     // renderData holds the requested resources
     // auto& pTexture = renderData.getTexture("src");
     if (!mpScene)
         return;
     mFrameDim = mRayMarchingPass.mOutputResolution;
     beginFrame(pRenderContext, false);
+
+    if (mDatasetLoadRequested) loadSelectedDataset(pRenderContext);
 
     // Viewing an existing result must work even without the training images or PLY.
     if (mLoadReconstructionRequested)
@@ -215,7 +220,10 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
 
     bool needsTrainingData = mEnableReconstruction || mOptimizerParams.isRunning || mInitVoxelData;
     needsTrainingData |= mPointCloud.startRequested;
-    if ((needsTrainingData || mUseReferenceCamera || !mLoadedReconstructionForViewing) && mReferenceDataError.empty())
+    if (needsTrainingData && mReferenceImageDir.empty() && mReferenceCameras.empty())
+        mReferenceDataError = "Select an input directory and click Load / Initialize first.";
+    if ((needsTrainingData || mUseReferenceCamera || !mLoadedReconstructionForViewing) && mReferenceDataError.empty() &&
+        (!mReferenceImageDir.empty() || !mReferenceImagePaths.empty()))
     {
         try
         {
@@ -224,6 +232,8 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
         catch (const std::exception& e)
         {
             mReferenceDataError = e.what();
+            mDatasetReady = false;
+            mDatasetStatus = "Reference load failed: " + mReferenceDataError;
             // Parsing can fail after a prefix of cameras has been appended. Retry the whole dataset.
             mReferenceCameras.clear();
             mReferenceImagePaths.clear();
@@ -254,6 +264,12 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
     {
         const bool startAfterInit = mPointCloud.startRequested;
         pointCloudInitFailed = !initializePointCloudVoxelData(pRenderContext);
+        if (!mReferenceImageDir.empty())
+        {
+            mDatasetReady = !pointCloudInitFailed && referencesReady;
+            mDatasetStatus = pointCloudInitFailed ? mPointCloud.status :
+                fmt::format("Ready: {} ({} cameras/images).", mReferenceImageDir.filename().string(), mReferenceCameras.size());
+        }
         mPointCloud.startRequested = startAfterInit && !pointCloudInitFailed;
         mInitVoxelData = false;
     }
@@ -313,6 +329,14 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
         shuffleTrainingViews();
 
     rayMarchingPass(pRenderContext, renderData);
+
+    // Describe the image just rendered, before a final training sample can stop optimization below.
+    const bool resultReady = mDatasetReady && referencesReady && mPointCloud.initialized &&
+        !mEnableReconstruction && !mOptimizerParams.isRunning && mUseReferenceCamera &&
+        testIndex < mReferenceImages.size() && mRayMarchingPass.mDrawMode == uint32_t(ReconstructionDrawMode::Default);
+    resultDictionary[getName() + ReconstructionResult::kReady] = resultReady;
+    resultDictionary[getName() + ReconstructionResult::kScene] = mReferenceImageDir.filename().string();
+    resultDictionary[getName() + ReconstructionResult::kCamera] = uint32_t(testIndex);
 
     if (mEnableReconstruction && mOptimizerParams.isRunning)
     {
@@ -421,6 +445,7 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
 
 void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget)
 {
+    renderUIDataset(widget);
     if (widget.checkbox("Pixel Frustum (forward preview)", mRayMarchingPass.mUsePixelFrustum))
         mRayMarchingPass.mOptionsChanged = true;
     if (mRayMarchingPass.mUsePixelFrustum)
@@ -471,7 +496,7 @@ void VoxelReconstructionNoLightTransport::renderUI(Gui::Widgets& widget)
         widget.text(fmt::format("Loading reference images: {} / {}", mReferenceImages.size(), mReferenceCameras.size()));
     renderUICoarseToFine(widget);
     widget.text("Point-cloud initialization");
-    widget.text("PLY: " + (resolveReconstructionPath(ReferenceImageDir) / InitializationPointCloudFile).string());
+    widget.text("PLY: " + (mReferenceImageDir / mInitializationPointCloudFile).string());
     widget.text("Gaussian Opacity Threshold applies only to PLY files with Gaussian attributes.");
     // 高斯占位阈值，改动在下次 Init / Reset from PLY 时生效.
     widget.var("Gaussian Opacity Threshold", mPointCloud.opacityThreshold, 0.001f, 1.0f, 0.005f);
@@ -1030,6 +1055,8 @@ void VoxelReconstructionNoLightTransport::stopReconstruction()
     mOptimizerParams.currentView = 0;
     mRayMarchingPass.mSampleIndex = 0;
     mPointCloud.clearAccumulation = true;
+    // The downstream AccumulatePass must discard frames from the training cameras.
+    mRayMarchingPass.mOptionsChanged = true;
     updateOutputResolution();
 }
 

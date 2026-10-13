@@ -156,22 +156,53 @@ void FLIPPass::parseProperties(const Properties& props)
 
 RenderPassReflection FLIPPass::reflect(const CompileData& compileData)
 {
+    // Compare and display at the reference's native resolution, independently of the window size.
+    uint2 outputSize = compileData.defaultTexDims;
+    if (const auto* reference = compileData.connectedResources.getField(kReferenceImageInput))
+    {
+        const uint2 referenceSize(reference->getWidth(), reference->getHeight());
+        if (all(referenceSize > uint2(0)))
+            outputSize = referenceSize;
+    }
+    mReflectedOutputSize = outputSize;
+
     RenderPassReflection reflector;
     reflector.addInput(kTestImageInput, "Test image").bindFlags(Falcor::ResourceBindFlags::ShaderResource).texture2D(0, 0);
     reflector.addInput(kReferenceImageInput, "Reference image").bindFlags(Falcor::ResourceBindFlags::ShaderResource).texture2D(0, 0);
     reflector.addOutput(kErrorMapOutput, "FLIP error map for computations")
         .format(ResourceFormat::RGBA32Float)
         .bindFlags(Falcor::ResourceBindFlags::UnorderedAccess | Falcor::ResourceBindFlags::ShaderResource)
-        .texture2D(0, 0);
+        .texture2D(outputSize.x, outputSize.y);
     reflector.addOutput(kErrorMapDisplayOutput, "FLIP error map for display")
         .format(ResourceFormat::RGBA8UnormSrgb)
         .bindFlags(Falcor::ResourceBindFlags::RenderTarget)
-        .texture2D(0, 0);
+        .texture2D(outputSize.x, outputSize.y);
     reflector.addOutput(kExposureMapDisplayOutput, "HDR-FLIP exposure map for display")
         .format(ResourceFormat::RGBA8UnormSrgb)
         .bindFlags(Falcor::ResourceBindFlags::RenderTarget)
-        .texture2D(0, 0);
+        .texture2D(outputSize.x, outputSize.y);
     return reflector;
+}
+
+void FLIPPass::compile(RenderContext* pRenderContext, const CompileData& compileData)
+{
+    // Initial reflection has no connections. Request re-reflection once input sizes are known.
+    if (const auto* reference = compileData.connectedResources.getField(kReferenceImageInput))
+    {
+        const uint2 referenceSize(reference->getWidth(), reference->getHeight());
+        if (all(referenceSize > uint2(0)))
+        {
+            FALCOR_CHECK(all(mReflectedOutputSize == referenceSize), "FLIPPass output must match its reference input.");
+            if (const auto* test = compileData.connectedResources.getField(kTestImageInput))
+            {
+                const uint2 testSize(test->getWidth(), test->getHeight());
+                FALCOR_CHECK(
+                    any(testSize == uint2(0)) || all(testSize == referenceSize),
+                    "FLIPPass test and reference images must have the same dimensions."
+                );
+            }
+        }
+    }
 }
 
 void FLIPPass::updatePrograms()
@@ -261,6 +292,7 @@ void FLIPPass::computeExposureParameters(const float Ymedian, const float Ymax)
 
 void FLIPPass::execute(RenderContext* pRenderContext, const RenderData& renderData)
 {
+    renderData.getDictionary()[getName() + ".outputValid"] = false;
     if (!mEnabled)
         return;
 
@@ -325,7 +357,7 @@ void FLIPPass::execute(RenderContext* pRenderContext, const RenderData& renderDa
         auto var = rootVar["PerFrameCB"];
         var["gIsHDR"] = mIsHDR;
         var["gUseMagma"] = mUseMagma;
-        var["gClampInput"] = mUseMagma;
+        var["gClampInput"] = mClampInput;
         var["gResolution"] = outputResolution;
         var["gMonitorWidthPixels"] = mMonitorWidthPixels;
         var["gMonitorWidthMeters"] = mMonitorWidthMeters;
@@ -375,6 +407,7 @@ void FLIPPass::execute(RenderContext* pRenderContext, const RenderData& renderDa
         mMinFLIP = FLIPMinMax[0].a;
         mMaxFLIP = FLIPMinMax[1].a;
     }
+    renderData.getDictionary()[getName() + ".outputValid"] = true;
 }
 
 void FLIPPass::renderUI(Gui::Widgets& widget)

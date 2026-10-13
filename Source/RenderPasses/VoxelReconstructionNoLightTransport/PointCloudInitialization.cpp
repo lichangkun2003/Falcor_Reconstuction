@@ -320,7 +320,7 @@ void VoxelReconstructionNoLightTransport::resetPointCloudOptimization(RenderCont
 
 bool VoxelReconstructionNoLightTransport::initializePointCloudVoxelData(RenderContext* pRenderContext, const std::filesystem::path& source)
 {
-    const auto path = source.empty() ? resolveReconstructionPath(ReferenceImageDir) / InitializationPointCloudFile : source;
+    const auto path = source.empty() ? mReferenceImageDir / mInitializationPointCloudFile : source;
     try
     {
         // Read and validate before touching the active reconstruction.

@@ -79,12 +79,6 @@ inline std::string kAccumulateOutputColor = "AccuColor";
 
 // Relative paths are rooted at the Falcor source project, independently of the process working directory.
 inline std::string ReconstructionDataDir = "Reconstruction_Output";
-inline std::string ReferenceImageDir = "Reconstruction_Input/ship";
-inline std::string ReferenceCameraFile = "Reconstruction_Input/ship/transforms_train.json";
-// Use the sparse point cloud that was supplied to 3DGS. The optimized 3DGS
-// output remains available as "point_cloud.ply" for comparison experiments.
-inline std::string InitializationPointCloudFile = "init_points.ply";
-//inline std::string InitializationPointCloudFile = "point_cloud.ply";
 
 inline std::filesystem::path resolveReconstructionPath(const std::filesystem::path& path)
 {
@@ -97,6 +91,7 @@ class VoxelReconstructionNoLightTransport : public RenderPass
     friend struct NeighborGrowthTestAccess;
     friend struct CoarseToFineTestAccess;
     friend struct ContourSamplingTestAccess;
+    friend struct DatasetSelectionTestAccess;
 public:
     FALCOR_PLUGIN_CLASS(VoxelReconstructionNoLightTransport, "VoxelReconstructionNoLightTransport", "Insert pass description here.");
 
@@ -390,6 +385,22 @@ public:
     };
 
 private:
+    void renderUIDataset(Gui::Widgets& widget);
+    void refreshDatasetList();
+    void loadSelectedDataset(RenderContext* pRenderContext);
+
+    // UI selection is pending until Load / Initialize is clicked. These paths belong to this pass instance.
+    std::vector<std::filesystem::path> mDatasetDirectories;
+    uint32_t mSelectedDataset = 0;
+    bool mDatasetListDirty = true;
+    bool mDatasetLoadRequested = false;
+    bool mDatasetReady = false;
+    std::string mDatasetStatus = "Select an input directory, then click Load / Initialize.";
+    std::string mSelectedPointCloudFile = "init_points.ply";
+    std::filesystem::path mReferenceImageDir;
+    std::filesystem::path mReferenceCameraFile;
+    std::string mInitializationPointCloudFile = "init_points.ply";
+
     struct ContourSamplingSettings
     {
         bool enabled = true;
