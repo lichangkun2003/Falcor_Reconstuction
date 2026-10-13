@@ -55,8 +55,9 @@ void VoxelReconstructionNoLightTransport::runGradientPass(RenderContext* pRender
     // gradBuffer 不在这里清零：整批内每一帧都要把自己的梯度原子累加进去.
     // 只在批开始时清一次（见 frameLoop 里 isFirstSample 的处理）.
     // 这里的 barrier 保证上一帧的累加对本帧的原子加可见.
+    const bool collectDeletion = shouldCollectDeletionEvidence();
     barrierSparseGradients(pRenderContext);
-    if (shouldCollectDeletionEvidence()) barrierTopologyEvidence(pRenderContext);
+    if (collectDeletion) barrierTopologyEvidence(pRenderContext);
     pRenderContext->uavBarrier(mpPathRecordBuffer.get());
 
     //mGradientPass.mpComputePass->addDefine("CHECK_VISIBILITY", mRayMarchingPass.mCheckVisibility ? "1" : "0");
@@ -66,6 +67,7 @@ void VoxelReconstructionNoLightTransport::runGradientPass(RenderContext* pRender
 
     var["gGridDataParamBlock"] = mpGridBlock;
     var["gDL_dColorBuffer"] = mLossPass.dL_dColor;
+    var["gDeletionReferenceImage"] = collectDeletion ? mReferenceImages[mLossPass.mView] : nullptr;
     var["gPathRecordBuffer"] = mpPathRecordBuffer;
     var["dummy"] = renderData.getTexture("dummy");
     var["gBackgroundMaskBuffer"] = mLossPass.mpBackGroundMask;
@@ -78,7 +80,7 @@ void VoxelReconstructionNoLightTransport::runGradientPass(RenderContext* pRender
     cb["gGeometryGradClamp"] = mGradientPass.geometryGradClamp;
     cb["gAlphaGeometryWeight"] = mGradientPass.alphaGeometryWeight;
     cb["gBackgroundCarveWeight"] = 0.01f;
-    cb["gCollectDeletionEvidence"] = shouldCollectDeletionEvidence();
+    cb["gCollectDeletionEvidence"] = collectDeletion;
     // The topology pass clears camera bitsets at every evidence-window boundary,
     // so the camera index makes each physical view vote at most once per window.
     cb["gEvidenceViewID"] = getTrainingViewIndex() + 1u;
@@ -94,6 +96,6 @@ void VoxelReconstructionNoLightTransport::runGradientPass(RenderContext* pRender
     );
 
     barrierSparseGradients(pRenderContext);
-    if (shouldCollectDeletionEvidence()) barrierTopologyEvidence(pRenderContext);
+    if (collectDeletion) barrierTopologyEvidence(pRenderContext);
 
 }

@@ -173,8 +173,10 @@ struct NeighborGrowthTestAccess
             sizeof(PathRecord), 1u, ResourceBindFlags::ShaderResource, MemoryType::DeviceLocal, &path
         );
         const float4 derivative(0, 0, 0, 1);
+        const float4 backgroundReference(1, 1, 1, 0);
         const uint32_t background = 1u;
         var["gDL_dColorBuffer"] = pass.mpDevice->createTexture2D(1, 1, ResourceFormat::RGBA32Float, 1, 1, &derivative);
+        var["gDeletionReferenceImage"] = pass.mpDevice->createTexture2D(1, 1, ResourceFormat::RGBA32Float, 1, 1, &backgroundReference);
         var["gBackgroundMaskBuffer"] = pass.mpDevice->createTexture2D(1, 1, ResourceFormat::R32Uint, 1, 1, &background);
         var["dummy"] = pass.mpDevice->createTexture2D(1, 1, ResourceFormat::RGBA32Float, 1, 1, nullptr, ResourceBindFlags::UnorderedAccess);
         auto cb = var["CB"];
@@ -218,10 +220,12 @@ struct NeighborGrowthTestAccess
         // Exercise both sides of 32-bit word boundaries and the final supported ID.
         std::vector<PathRecord> paths(256u, path);
         std::vector<float4> derivatives(256u, derivative);
+        std::vector<float4> references(256u, backgroundReference);
         std::vector<uint32_t> classes(256u, background);
         var["gPathRecordBuffer"] = pass.mpDevice->createStructuredBuffer(
             sizeof(PathRecord), uint32_t(paths.size()), ResourceBindFlags::ShaderResource, MemoryType::DeviceLocal, paths.data());
         var["gDL_dColorBuffer"] = pass.mpDevice->createTexture2D(16, 16, ResourceFormat::RGBA32Float, 1, 1, derivatives.data());
+        var["gDeletionReferenceImage"] = pass.mpDevice->createTexture2D(16, 16, ResourceFormat::RGBA32Float, 1, 1, references.data());
         var["gBackgroundMaskBuffer"] = pass.mpDevice->createTexture2D(16, 16, ResourceFormat::R32Uint, 1, 1, classes.data());
         var["dummy"] = pass.mpDevice->createTexture2D(16, 16, ResourceFormat::RGBA32Float, 1, 1, nullptr,
             ResourceBindFlags::UnorderedAccess);
@@ -249,8 +253,10 @@ struct NeighborGrowthTestAccess
             == uniqueCameras.size(), "Interleaved/repeated cameras inflated the background count");
         // A camera can independently supply one vote of each class, never one per pixel/round.
         derivatives.assign(256u, float4(0, 0, 0, -1));
+        references.assign(256u, float4(0, 0, 0, 1));
         classes.assign(256u, 2u);
         var["gDL_dColorBuffer"] = pass.mpDevice->createTexture2D(16, 16, ResourceFormat::RGBA32Float, 1, 1, derivatives.data());
+        var["gDeletionReferenceImage"] = pass.mpDevice->createTexture2D(16, 16, ResourceFormat::RGBA32Float, 1, 1, references.data());
         var["gBackgroundMaskBuffer"] = pass.mpDevice->createTexture2D(16, 16, ResourceFormat::R32Uint, 1, 1, classes.data());
         for (uint32_t camera : {1u, 2u, 1u, 2u, 1u}) vote(camera, 59u);
         ctx->submit(true);
@@ -292,6 +298,160 @@ struct NeighborGrowthTestAccess
         pass.mTopologySettings.evidenceInterval = interval;
         pass.mOptimizerParams.currentIteration = 50u;
     }
+    static void checkDeletionPathResidual(VoxelReconstructionNoLightTransport& pass, RenderContext* ctx)
+    {
+        seed(pass, ctx, {cell(3, 3, 3), cell(3, 3, 4)}, {parentVoxel(), parentVoxel()});
+        ProgramDesc lossDesc, gradientDesc;
+        lossDesc.addShaderLibrary(LossPassShaderFilePath).csEntry("main");
+        gradientDesc.addShaderLibrary(GradientPassShaderFilePath).csEntry("main");
+        auto loss = ComputePass::create(pass.mpDevice, lossDesc, DefineList(), true);
+        auto gradient = ComputePass::create(pass.mpDevice, gradientDesc, pass.getReconstructionDefines(), true);
+        auto lv = loss->getRootVar();
+        auto gv = gradient->getRootVar();
+        const auto flags = ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess;
+        auto texture = [&](const float4& value) {
+            return pass.mpDevice->createTexture2D(1, 1, ResourceFormat::RGBA32Float, 1, 1, &value);
+        };
+        auto derivatives = pass.mpDevice->createTexture2D(1, 1, ResourceFormat::RGBA32Float, 1, 1, nullptr, flags);
+        auto classes = pass.mpDevice->createTexture2D(1, 1, ResourceFormat::R32Uint, 1, 1, nullptr, flags);
+        lv["gDL_dColorBuffer"] = derivatives;
+        gv["gDL_dColorBuffer"] = derivatives;
+        lv["gBackgroundMaskBuffer"] = classes;
+        gv["gBackgroundMaskBuffer"] = classes;
+        lv["gLossBuffer"] = pass.mpDevice->createTexture2D(1, 1, ResourceFormat::R32Float, 1, 1, nullptr, flags);
+        gv["dummy"] = pass.mpDevice->createTexture2D(1, 1, ResourceFormat::RGBA32Float, 1, 1, nullptr, flags);
+        gv["gGridDataParamBlock"] = pass.mpGridBlock;
+        auto lc = lv["CB"];
+        auto gc = gv["CB"];
+        constexpr float alphaWeight = 0.5f;
+        lc["gResolution"] = uint2(1);
+        lc["gAlphaLossWeight"] = alphaWeight;
+        lc["gForegroundAlphaMin"] = 0.95f;
+        lc["gBackgroundAlphaMax"] = 0.0001f;
+        gc["gResolution"] = uint2(1);
+        gc["gVoxelCount"] = uint3(8);
+        gc["gGeometryTauWorld"] = 0.12f;
+        gc["gGeometryGradClamp"] = 5.0f;
+        gc["gAlphaGeometryWeight"] = 1.0f;
+        gc["gBackgroundCarveWeight"] = 0.01f;
+        gc["gEvidenceViewID"] = 1u;
+        gc["gCurrentIteration"] = 50u;
+        gc["gMinEvidenceTransmittance"] = 0.0f;
+        gc["gAlphaLossWeight"] = alphaWeight;
+
+        // Independent oracle: re-render the recorded hits, skipping one, then
+        // subtract the two squared losses instead of repeating the shader delta.
+        const auto render = [](const PathRecord& path, int removed) {
+            float3 color(0);
+            float transmittance = 1.0f;
+            for (uint32_t i = 0u; i < path.contributingVoxelCount; ++i)
+            {
+                if (int(i) == removed) continue;
+                color += transmittance * path.voxels[i].opacity * path.voxels[i].radiance;
+                transmittance *= 1.0f - path.voxels[i].opacity;
+            }
+            return float4(color + transmittance * path.backgroundColor, 1.0f - transmittance);
+        };
+        const auto squaredLoss = [alphaWeight](float4 color, float4 reference) {
+            float3 residual = float3(color.x, color.y, color.z) -
+                (reference.w * float3(reference.x, reference.y, reference.z) + float3(1.0f - reference.w));
+            const float alphaResidual = color.w - reference.w;
+            return dot(residual, residual) + alphaWeight * alphaResidual * alphaResidual;
+        };
+        const auto run = [&](const PathRecord& path, float4 reference, uint32_t spp, float4 history,
+                             float threshold, bool collect = true) {
+            const float4 raw = render(path, -1);
+            const float weight = path.inverseSamplingPdf > 0.0f ? path.inverseSamplingPdf : 1.0f;
+            const float4 baseline(1, 1, 1, 0);
+            const float4 current = baseline + weight * (raw - baseline);
+            lv["gCurrentFrameColor"] = texture(current);
+            lv["gRenderedColor"] = texture((float(spp - 1u) * history + current) / float(spp));
+            auto referenceImage = texture(reference);
+            lv["gReferenceImage"] = referenceImage;
+            gv["gDeletionReferenceImage"] = referenceImage;
+            lc["gSpp"] = spp;
+            lc["gSampleCount"] = spp;
+            gv["gPathRecordBuffer"] = pass.mpDevice->createStructuredBuffer(
+                sizeof(PathRecord), 1u, ResourceBindFlags::ShaderResource, MemoryType::DeviceLocal, &path);
+            gc["gCollectDeletionEvidence"] = collect;
+            gc["gMinRemovalLossDelta"] = threshold;
+            pass.resetDeletionEvidence(ctx);
+            pass.clearSparseGradients(ctx);
+            loss->execute(ctx, uint3(1));
+            ctx->uavBarrier(derivatives.get());
+            ctx->uavBarrier(classes.get());
+            gradient->execute(ctx, uint3(1));
+            pass.barrierSparseGradients(ctx);
+            pass.barrierTopologyEvidence(ctx);
+            ctx->submit(true);
+            for (uint32_t i = 0u; i < path.contributingVoxelCount; ++i)
+            {
+                const float delta = squaredLoss(render(path, int(i)), reference) - squaredLoss(raw, reference);
+                const uint32_t expectedBackground = collect && reference.w <= 0.0001f && delta < -threshold ? 1u : 0u;
+                const uint32_t expectedForeground = collect && reference.w >= 0.95f && delta > threshold ? 1u : 0u;
+                auto evidence = read<TopologyEvidence>(pass.mGridResources.topologyEvidencePages, path.voxels[i].voxelID);
+                require(topologyBackgroundViews(evidence.packedCountsAndFlags) == expectedBackground,
+                    "Background removal vote disagrees with raw-ray re-rendering");
+                require(topologyForegroundViews(evidence.packedCountsAndFlags) == expectedForeground,
+                    "Foreground removal vote disagrees with raw-ray re-rendering");
+            }
+            return read<GradRecord>(pass.mGridResources.gradPages, 0u);
+        };
+
+        PathRecord path = {};
+        path.valid = 1u;
+        path.contributingVoxelCount = 1u;
+        path.viewDir = float3(0, 0, 1);
+        path.backgroundColor = float3(1);
+        path.inverseSamplingPdf = 1.0f;
+        path.voxels[0].opacity = 0.5f;
+        path.voxels[0].transmittanceBefore = 1.0f;
+        path.voxels[0].gmin = -0.01f;
+        path.voxels[0].xStar = float3(3.6f, 3.7f, 3.8f);
+        const float4 whiteBackground(1, 1, 1, 0);
+        auto single = run(path, whiteBackground, 1u, whiteBackground, 0.8f);
+        require(single.opacityGrad.coefficients[0] > 0.0f, "1 SPP lost its current-sample opacity gradient");
+        auto multi = run(path, whiteBackground, 8u, whiteBackground, 0.8f);
+        require(multi.opacityGrad.coefficients[0] == 0.0f, "Deletion residual leaked into historical-prefix training");
+        auto disabled = run(path, whiteBackground, 8u, whiteBackground, 0.8f, false);
+        require(length(multi.center - disabled.center) == 0.0f && length(multi.logScale - disabled.logScale) == 0.0f &&
+            length(multi.rotation - disabled.rotation) == 0.0f && multi.geometryValid == disabled.geometryValid &&
+            multi.backgroundCarveValid == disabled.backgroundCarveValid && multi.appearanceValid == disabled.appearanceValid,
+            "Deletion collection changed geometry gradients or counts");
+        for (uint32_t i = 0u; i < SH_COUNT; ++i)
+            require(length(multi.radianceGrad.coefficients[i] - disabled.radianceGrad.coefficients[i]) == 0.0f,
+                "Deletion collection changed radiance gradients");
+        for (uint32_t i = 0u; i < SH_OPACITY_COUNT; ++i)
+            require(multi.opacityGrad.coefficients[i] == disabled.opacityGrad.coefficients[i],
+                "Deletion collection changed opacity gradients");
+        // Removal benefit is 0.875 regardless of the training PDF or prefix.
+        for (float weight : {0.25f, 4.0f})
+        {
+            path.inverseSamplingPdf = weight;
+            run(path, whiteBackground, 8u, whiteBackground, 0.8f);
+        }
+        run(path, whiteBackground, 8u, whiteBackground, 0.9f);
+        run(path, float4(0.2f, 0.4f, 0.6f, 0.5f), 8u, whiteBackground, 0.0f); // Uncertain alpha never votes.
+        path.inverseSamplingPdf = 1.0f;
+        path.voxels[0].radiance = float3(0.2f, 0.4f, 0.6f);
+        path.voxels[0].opacity = 1.0f;
+        run(path, float4(0.2f, 0.4f, 0.6f, 1), 8u, whiteBackground, 0.0001f);
+        path.contributingVoxelCount = 2u;
+        path.voxels[1] = path.voxels[0];
+        path.voxels[1].voxelID = 1u;
+        path.voxels[1].radiance = float3(0.8f, 0.1f, 0.3f);
+        path.voxels[1].opacity = 0.7f;
+        for (float frontOpacity : {0.3f, 1.0f})
+        {
+            path.voxels[0].opacity = frontOpacity;
+            path.voxels[1].transmittanceBefore = 1.0f - frontOpacity;
+            for (float refAlpha : {0.0f, 1.0f})
+                run(path, float4(0.2f, 0.4f, 0.6f, refAlpha), 8u, whiteBackground, 0.0001f);
+        }
+        std::cout << "PASS: deletion raw-ray residual, 1/8 SPP, rare final hit, unchanged training, PDF independence, "
+                     "thresholds, uncertain alpha, foreground support and two-hit occlusion\n";
+    }
+
     static void checkDeletionVoteRatio(VoxelReconstructionNoLightTransport& pass, RenderContext* ctx)
     {
         // Exercise a known ratio without constraining user-tunable experiment defaults.
@@ -980,6 +1140,7 @@ struct NeighborGrowthTestAccess
             pass->createDeletionPassResources();
             checkDeletionVoteRatio(*pass, ctx);
             std::cout << "PASS: deletion vote dominance, two-window confirmation, weak-window history, foreground recovery, protection\n";
+            checkDeletionPathResidual(*pass, ctx);
             checkGrowthPenetration(*pass, ctx);
             std::cout << "PASS: face-depth trigger, strict thresholds, per-face direction, occupied neighbors, non-cubic widths, rotated "
                          "footprint\n";

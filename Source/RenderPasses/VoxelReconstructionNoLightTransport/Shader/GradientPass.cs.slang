@@ -7,6 +7,7 @@ import Utils.Debug.PixelDebug;
 
 // Input
 Texture2D<float4> gDL_dColorBuffer;
+Texture2D<float4> gDeletionReferenceImage;
 StructuredBuffer<PathRecord> gPathRecordBuffer;
 Texture2D<uint> gBackgroundMaskBuffer;
 
@@ -426,11 +427,36 @@ void recordUniqueDeletionEvidence(uint voxelIndex, bool foreground)
     }
 }
 
+float4 calcDeletionLossDerivative(PathRecord rec, uint2 pixel)
+{
+    // Reconstruct the raw current ray, before any importance-sampling correction.
+    // A whole-hit removal delta must use this ray's residual, not the training
+    // residual from other samples in the historical prefix.
+    float3 color = float3(0.0f);
+    float transmittance = 1.0f;
+    uint hitCount = min(rec.contributingVoxelCount, (uint)MAX_CONTRIBUTING_VOXELS_PER_RAY);
+    for (uint i = 0u; i < hitCount; ++i)
+    {
+        float opacity = clamp(sanitizeFloat(rec.voxels[i].opacity), 0.0f, 1.0f);
+        color += transmittance * opacity * sanitizeFloat3(rec.voxels[i].radiance);
+        transmittance *= 1.0f - opacity;
+    }
+    color += transmittance * sanitizeFloat3(rec.backgroundColor);
+
+    // Match LossPass's white-background reference composition and alpha weight.
+    float4 reference = gDeletionReferenceImage.Load(int3(pixel, 0));
+    float3 referenceColor = reference.rgb * reference.a + float3(1.0f) * (1.0f - reference.a);
+    return float4(
+        2.0f * (color - referenceColor),
+        2.0f * gAlphaLossWeight * (1.0f - transmittance - reference.a)
+    );
+}
+
 void collectDeletionEvidence(
     uint voxelIndex,
     uint referenceClass,
-    float3 dL_dC,
-    float dL_dA,
+    float3 deletionDL_dC,
+    float deletionDL_dA,
     float3 radiance,
     float3 behindColor,
     float opacity,
@@ -443,14 +469,15 @@ void collectDeletionEvidence(
         (referenceClass != 1u && referenceClass != 2u))
         return;
 
-    // Exact loss change for locally removing this hard hit while holding all
-    // other recorded hits fixed. Positive means removal hurts (keep it);
+    // Exact raw-ray loss change for locally removing this hard hit while holding
+    // other recorded hits fixed, without tracing newly exposed geometry.
+    // Positive means removal hurts (keep it);
     // negative means removal improves the pixel (background conflict).
     float3 colorDelta = transmittanceBefore * opacity * (behindColor - radiance);
     float alphaDelta = -transmittanceBefore * opacity * transmittanceAfter;
     float removalLossDelta =
-        dot(dL_dC, colorDelta) + dot(colorDelta, colorDelta) +
-        dL_dA * alphaDelta + gAlphaLossWeight * alphaDelta * alphaDelta;
+        dot(deletionDL_dC, colorDelta) + dot(colorDelta, colorDelta) +
+        deletionDL_dA * alphaDelta + gAlphaLossWeight * alphaDelta * alphaDelta;
     removalLossDelta = sanitizeFloat(removalLossDelta);
 
     if (referenceClass == 2u && removalLossDelta > gMinRemovalLossDelta)
@@ -485,6 +512,9 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
     // -------------------------
     if (rec.valid != 0)
     {
+        float4 deletionLossDerivative = float4(0.0f);
+        if (gCollectDeletionEvidence && (referenceClass == 1u || referenceClass == 2u))
+            deletionLossDerivative = calcDeletionLossDerivative(rec, pixel);
         uint hitCount = min(rec.contributingVoxelCount, (uint)MAX_CONTRIBUTING_VOXELS_PER_RAY);
         float3 behindColor = sanitizeFloat3(rec.backgroundColor.xyz);
         float transmittanceAfter = 1.0f;
@@ -558,8 +588,8 @@ void main(uint3 dispatchThreadId: SV_DispatchThreadID) {
             collectDeletionEvidence(
                 voxelIndex,
                 referenceClass,
-                dL_dC,
-                dL_dA,
+                deletionLossDerivative.xyz,
+                deletionLossDerivative.w,
                 radiance,
                 behindColor,
                 opacity,
