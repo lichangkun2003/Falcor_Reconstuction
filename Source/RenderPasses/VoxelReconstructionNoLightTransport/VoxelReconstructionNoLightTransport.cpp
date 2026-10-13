@@ -283,7 +283,7 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
         mReconstructionFileListDirty = true;
     }
 
-    // test input
+    // Preview the reference using the same linear-space white background as the loss.
     if (!mEnableReconstruction)
     {
         ref<Texture> pDummy = renderData.getTexture("dummy");
@@ -291,7 +291,13 @@ void VoxelReconstructionNoLightTransport::execute(RenderContext* pRenderContext,
 
         if (pDummy && pRef)
         {
-            pRenderContext->blit(pRef->getSRV(), pDummy->getRTV());
+            if (!mpReferenceBackgroundPass)
+                mpReferenceBackgroundPass = ComputePass::create(mpDevice, ReferenceBackgroundShaderFilePath);
+
+            auto var = mpReferenceBackgroundPass->getRootVar();
+            var["gReferenceImage"] = pRef;
+            var["gOutput"] = pDummy;
+            mpReferenceBackgroundPass->execute(pRenderContext, pDummy->getWidth(), pDummy->getHeight());
         }
         else if (pDummy)
             pRenderContext->clearRtv(pDummy->getRTV().get(), float4(0));

@@ -50,6 +50,7 @@ target_sources(VoxelReconstructionNoLightTransport PRIVATE
     Shader/PixelFrustumForward.slang
     Math/PixelCoverage.slang
     Shader/LossPass.cs.slang
+    Shader/ReferenceBackground.cs.slang
     Shader/ContourSampling.cs.slang
     Shader/ReduceTexturePass.cs.slang
     Shader/ReduceBufferPass.cs.slang

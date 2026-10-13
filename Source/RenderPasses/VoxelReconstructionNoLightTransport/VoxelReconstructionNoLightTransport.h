@@ -65,6 +65,7 @@ namespace
 const std::string ReflectTypesShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/ReflectTypes.cs.slang";
 const std::string RayMarchingShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/RayMarchingPass.ps.slang";
 const std::string LossPassShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/LossPass.cs.slang";
+const std::string ReferenceBackgroundShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/ReferenceBackground.cs.slang";
 const std::string GradientPassShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/GradientPass.cs.slang";
 const std::string UpdatePassShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/UpdatePass.cs.slang";
 const std::string TopologyPassShaderFilePath = "RenderPasses/VoxelReconstructionNoLightTransport/Shader/TopologyPass.cs.slang";
@@ -514,6 +515,7 @@ private:
 
     // Passes
     ref<ComputePass> mpReflectTypes;
+    ref<ComputePass> mpReferenceBackgroundPass;
     GradientPass mGradientPass;
     UpdatePass mUpdatePass;
     LossPass mLossPass;
