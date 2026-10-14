@@ -27,11 +27,6 @@ cbuffer CB
 {
     uint2 pixelCount;
     float4x4 invVP;
-    float4x4 viewProjection;
-    float3 cameraPosition;
-    float3 cameraForward;
-    float2 cameraDepthRange;
-    bool usePixelFrustum;
     uint drawMode;
     uint topologyDebugLayer;
     bool showOccupiedContext;
@@ -545,20 +540,11 @@ float4 shadingGlobal(
 
 
 
-#include "PixelFrustumForward.slang"
-
 PsOut main(float2 texCoord: TEXCOORD, float4 pos: SV_POSITION)
 {
     PsOut psOut = {};
     uint2 pixel = uint2(texCoord * pixelCount);
     printSetPixel(pixel);
-
-    if (usePixelFrustum && !enableReconstruction && drawMode == uint(ReconstructionDrawMode::Default))
-    {
-        psOut.color = renderPixelFrustum(pixel);
-        gAccuColor[pixel] += psOut.color;
-        return psOut;
-    }
 
     float2 jitter = randomJitter();
     uint contourSlot = 0u;

@@ -228,7 +228,6 @@ struct ContourSamplingTestAccess
         auto cb = var["CB"];
         cb["pixelCount"] = uint2(1);
         cb["enableReconstruction"] = true;
-        cb["usePixelFrustum"] = false;
         cb["drawMode"] = uint32_t(ReconstructionDrawMode::Default);
         cb["renderBackGround"] = false;
         cb["clearColor"] = float4(0.7f, 0.8f, 0.9f, 0);
@@ -662,8 +661,79 @@ struct ContourSamplingTestAccess
         std::cout << "PASS: full 1-SPP training with guiding on/off, learned revisits, per-frame loss/backward/Adam/history and 8 -> 1 restart\n";
     }
 
+    static void updateNormalization(const ref<Device>& device)
+    {
+        ProgramDesc desc;
+        desc.addShaderLibrary("RenderPasses/VoxelReconstructionNoLightTransport/Shader/UpdatePass.cs.slang").csEntry("main");
+        desc.setShaderModel(ShaderModel::SM6_5);
+        DefineList defines;
+        defines.add("SPARSE_POOL_PAGE_SIZE", "32u");
+        defines.add("SPARSE_POOL_MAX_PAGES", "2");
+        auto pass = ComputePass::create(device, desc, defines);
+        auto var = pass->getRootVar();
+        auto block = ParameterBlock::create(device, pass->getProgram()->getReflector()->getParameterBlock("gGridDataParamBlock"));
+        auto grid = block->getRootVar();
+        grid["activeVoxelCount"] = 4u;
+        grid["voxelSize"] = float3(1);
+        var["gGridDataParamBlock"] = block;
+        const auto flags = ResourceBindFlags::ShaderResource | ResourceBindFlags::UnorderedAccess;
+        auto cb = var["CB"];
+        cb["gSparseUpdateOffset"] = 0u;
+        cb["gGradScale"] = 1.0f;
+        cb["gLrRadiance"] = 0.0f;
+        cb["gLrOpacity"] = 0.001f;
+        cb["gLrCenter"] = 0.001f;
+        cb["gLrShape"] = 0.0f;
+        cb["gLrRotation"] = 0.0f;
+        cb["gBackgroundCarveAdamMultiplier"] = 1.0f;
+        for (uint32_t samples : {1u, 7u})
+        {
+            std::vector<VoxelData> voxels(32);
+            std::vector<GradRecord> gradients(32);
+            std::vector<GeometryAdamState> moments(32);
+            for (uint32_t id = 0; id < 4; ++id)
+            {
+                voxels[id].occupied = 1u;
+                voxels[id].ellipsoid.center = float3(0.5f);
+                voxels[id].ellipsoid.logScale = log(float3(0.1f));
+                voxels[id].ellipsoid.rotation = float4(1, 0, 0, 0);
+                // Equal gradient sums with different hit counts must yield equal
+                // moments. A doubled sum must retain its doubled contribution.
+                gradients[id].appearanceValid = gradients[id].geometryValid = id == 0 ? 1u : (id == 3 ? 0u : 20u);
+                gradients[id].opacityGrad.coefficients[0] = id == 2 ? 1.4f : 0.7f;
+                gradients[id].center = float3(gradients[id].opacityGrad.coefficients[0], 0, 0);
+                // Zero current y gradient must stop stale motion; a positive z
+                // gradient must not follow a negative (expanding) old momentum.
+                gradients[id].center.z = 0.01f;
+                moments[id].centerMean = float3(0, -0.1f, -0.1f);
+                moments[id].centerSquaredMean = float3(0, 0.01f, 0.01f);
+            }
+            grid["voxelPages"][0] = device->createStructuredBuffer(sizeof(VoxelData), 32u, flags, MemoryType::DeviceLocal, voxels.data());
+            grid["gradPages"][0] = device->createStructuredBuffer(sizeof(GradRecord), 32u, flags, MemoryType::DeviceLocal, gradients.data());
+            auto adam = device->createStructuredBuffer(sizeof(GeometryAdamState), 32u, flags, MemoryType::DeviceLocal, moments.data());
+            var["gGeometryAdamPages"][0] = adam;
+            cb["gGradientSampleCount"] = samples;
+            auto ctx = device->getRenderContext();
+            pass->execute(ctx, uint3(4, 1, 1));
+            ctx->submit(true);
+            adam->getBlob(moments.data(), 0, moments.size() * sizeof(GeometryAdamState));
+            for (uint32_t id = 0; id < 3; ++id)
+            {
+                const float mean = 0.1f * gradients[id].opacityGrad.coefficients[0] / float(samples);
+                require(std::abs(moments[id].opacityMean[0] - mean) < 1e-6f, "Opacity used voxel hit count instead of backward sample count");
+                require(std::abs(moments[id].centerMean.x - mean) < 1e-6f, "Geometry used voxel hit count instead of backward sample count");
+                require(moments[id].centerMean.y == 0.0f && moments[id].centerMean.z == 0.0f,
+                    "Geometry retained zero-gradient or opposing momentum");
+            }
+            require(moments[3].opacitySteps == 0u && moments[3].centerSteps == 0u,
+                "Zero-valid voxel unexpectedly advanced Adam");
+        }
+        std::cout << "Backward-sample normalization GPU tests passed (1 and 7 samples, multiple pixels, zero-valid gate).\n";
+    }
+
     static void run(VoxelReconstructionNoLightTransport& pass, RenderContext* ctx)
     {
+        updateNormalization(pass.mpDevice);
         lifecycle(pass, ctx);
         distribution(pass, ctx);
         prefix(pass, ctx);

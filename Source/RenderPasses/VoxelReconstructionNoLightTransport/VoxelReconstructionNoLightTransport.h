@@ -183,7 +183,6 @@ public:
         uint2 mOutputResolution;
         float3 mClearColor;
         bool mCheckPrimitive;
-        bool mUsePixelFrustum = false;
         uint mDrawMode;
         bool mRenderBackGround;
         uint mMaxContributingVoxelCount;

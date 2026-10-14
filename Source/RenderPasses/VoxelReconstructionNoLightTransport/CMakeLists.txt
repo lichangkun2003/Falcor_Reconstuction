@@ -48,8 +48,6 @@ target_sources(VoxelReconstructionNoLightTransport PRIVATE
     Shader/InitializePointCloud.cs.slang
     Shader/BuildSparseIndex.cs.slang
     Shader/RayMarchingPass.ps.slang
-    Shader/PixelFrustumForward.slang
-    Math/PixelCoverage.slang
     Shader/LossPass.cs.slang
     Shader/ReferenceBackground.cs.slang
     Shader/ContourSampling.cs.slang
@@ -78,14 +76,6 @@ set_property(SOURCE PointCloudLoader.cpp PointCloudInitialization.cpp APPEND PRO
 )
 
 target_source_group(VoxelReconstructionNoLightTransport "RenderPasses")
-
-option(VOXEL_RECONSTRUCTION_BUILD_FRUSTUM_TESTS "Build the headless pixel-frustum forward regression test" OFF)
-if(VOXEL_RECONSTRUCTION_BUILD_FRUSTUM_TESTS)
-    add_falcor_executable(VoxelFrustumTests)
-    target_sources(VoxelFrustumTests PRIVATE Tests/PixelFrustum.cpp Tests/PixelCoverage.cs.slang)
-    target_compile_definitions(VoxelFrustumTests PRIVATE SPARSE_POOL_PAGE_SIZE=32u SPARSE_POOL_MAX_PAGES=2)
-    set_property(SOURCE Tests/PixelFrustum.cpp APPEND PROPERTY OBJECT_DEPENDS ${voxel_reconstruction_object_dependencies})
-endif()
 
 option(VOXEL_RECONSTRUCTION_BUILD_GROWTH_TESTS "Build the headless neighbor-growth GPU regression test" OFF)
 if(VOXEL_RECONSTRUCTION_BUILD_GROWTH_TESTS)
