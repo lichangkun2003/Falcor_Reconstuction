@@ -28,6 +28,7 @@ struct ContourSamplingTestAccess
         pass.resetContourSampling();
         pass.mEnableReconstruction = pass.mOptimizerParams.isRunning = true;
         pass.mContourSampling = {};
+        pass.mContourSampling.enabled = true; // Explicitly opt into the guiding lifecycle under test.
         pass.mRayMarchingPass.mOutputResolution = uint2(4, 1);
         float4 colors[] = {float4(0, 0, 0, 0), float4(0, 0, 0, 0.25f), float4(0, 0, 0, 1), float4(0, 0, 0, 0.75f)};
         auto reference = pass.mpDevice->createTexture2D(4, 1, ResourceFormat::RGBA32Float, 1, 1, colors);

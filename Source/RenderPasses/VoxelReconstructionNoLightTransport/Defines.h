@@ -2,9 +2,9 @@
 
 // Experimental coverage proxy: both hit and miss may expand or shrink, but
 // only inside a symmetric compact boundary band. Background carve is exempt.
-// Set to 0 to use the legacy transition controls below.
+// Disabled by default to restore the October 8 sigmoid transition proxy.
 #ifndef GEOMETRY_TWO_SIDED_BOUNDARY
-#define GEOMETRY_TWO_SIDED_BOUNDARY 1
+#define GEOMETRY_TWO_SIDED_BOUNDARY 0
 #endif
 
 // Half-width on each side of the surface, in Geometry Tau units.
@@ -24,7 +24,7 @@
 // Inward width of the hard-hit expansion band, in Geometry Tau units.
 // Expansion fades to exactly zero at this depth. 0 restores hit-shrink-only.
 #ifndef GEOMETRY_HIT_EXPANSION_BAND_TAU
-#define GEOMETRY_HIT_EXPANSION_BAND_TAU 1.0f
+#define GEOMETRY_HIT_EXPANSION_BAND_TAU 0.0f
 #endif
 
 // Independent of the proxy mode: stop stale geometry momentum when the

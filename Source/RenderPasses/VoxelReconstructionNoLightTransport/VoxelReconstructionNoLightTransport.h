@@ -189,7 +189,7 @@ public:
         float mTransmittanceThreshold;
 
         // loss 的前缀平均需要 N >= 2 才有意义（N == 1 时前缀为空，会退回旧行为）.
-        uint mSpp = 8;
+        uint mSpp = 1;
         uint mSampleIndex = 0;
 
         ref<FullScreenPass> mpFullScreenPass;
@@ -402,7 +402,7 @@ private:
 
     struct ContourSamplingSettings
     {
-        bool enabled = true;
+        bool enabled = false;
         float uniformFraction = 0.5f;
         float historyRate = 0.3f;
     } mContourSampling;

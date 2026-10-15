@@ -110,7 +110,7 @@ Alpha Loss Weight 默认 0.5。alpha 监督约束前景覆盖和背景透明，�
 所有相机完成：结算该轮 loss → 拓扑操作或升层
 ```
 
-每轮每个相机恰好访问一次，同一视角的 spp 连续完成。实际相机、参考图像和证据 ID 使用相同的原始数据编号；currentView 只表示本轮遍历位置。查看用 Camera Index 仍按原始编号排列。
+默认训练为 1 SPP，可在 UI 中修改。每轮每个相机恰好访问一次，同一视角的 spp 连续完成。实际相机、参考图像和证据 ID 使用相同的原始数据编号；currentView 只表示本轮遍历位置。查看用 Camera Index 仍按原始编号排列。
 
 多 spp 时，第 0 个样本提供基线，不反传；之后每个样本用不包含自身的前缀平均计算上游残差，再反传当前 PathRecord，以减轻残差与同一个随机样本耦合产生的偏差。1 spp 时直接使用本帧残差。这不意味着硬几何的代理梯度是精确无偏梯度。
 
@@ -118,7 +118,7 @@ Alpha Loss Weight 默认 0.5。alpha 监督约束前景覆盖和背景透明，�
 
 ### 2.4 轮廓像素的历史重要性采样
 
-UI 的 `Contour Importance Sampling` 默认开启，只作用于参考 alpha 严格满足 `0 < alpha < 1` 的像素。每个轮廓像素划分为 4×4 个等面积小格，按实际相机编号保存各格的历史平均路径 alpha；纯前景和纯背景像素继续均匀采样。训练中的随机数使用像素编号和帧编号，预览保持原来的采样方式。
+UI 的 `Contour Importance Sampling` 默认关闭，使用均匀采样。开启后只作用于参考 alpha 严格满足 `0 < alpha < 1` 的像素。每个轮廓像素划分为 4×4 个等面积小格，按实际相机编号保存各格的历史平均路径 alpha；纯前景和纯背景像素继续均匀采样。训练中的随机数使用像素编号和帧编号，预览保持原来的采样方式。
 
 记第 b 格的历史分数为 h_b，均匀混合比例为 ε，则选格概率为 `P_b = ε/16 + (1−ε) h_b / Σh`。分数全零时退回均匀分布。每条路径独立随机选格，再在格内均匀采样；这是重要性采样，不保证固定的前后景样本数量。单位像素面积上的 PDF 为 `q = 16 P_b`。
 
@@ -145,7 +145,9 @@ dw / dd = -w · (1 - w) / tau
 
 Geometry Tau 默认 0.12 个体素宽度，由 CPU 转换为世界长度。代理作用于 hard-hit 和已有占据体素中的 near-miss，推动 center、logScale 和 rotation。Alpha Geometry Weight 默认 0.1，仅额外缩放 alpha 对几何的代理贡献，不替代图像损失中的 Alpha Loss Weight。
 
-默认启用 `GEOMETRY_TWO_SIDED_BOUNDARY=1` 的双向边界实验。对于非可靠背景像素，hard-hit 和 near-miss 都允许扩张或收缩，并使用相同的有限边界带：
+默认恢复 10.8 的 sigmoid 方向门控：`GEOMETRY_TWO_SIDED_BOUNDARY=0`、`GEOMETRY_TRANSITION_ONLY=1`、`GEOMETRY_HIT_EXPANSION_BAND_TAU=0`。hard-hit 只保留收缩，near-miss 只保留扩张；这两个方向使用原 sigmoid 的梯度衰减，不再叠加有限边界带截断。可靠背景的 carve 和几何 Adam 保护继续保留。
+
+可选的 `GEOMETRY_TWO_SIDED_BOUNDARY=1` 双向边界实验仍保留，但默认关闭。开启后，对于非可靠背景像素，hard-hit 和 near-miss 都允许扩张或收缩，并使用相同的有限边界带：
 
 ```text
 b = GEOMETRY_BOUNDARY_BAND_TAU * tau
