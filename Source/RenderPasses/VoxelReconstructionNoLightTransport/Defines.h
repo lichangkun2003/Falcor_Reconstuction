@@ -1,8 +1,22 @@
 #pragma once
 
-// Transition geometry proxy: preserve hit shrinking and near-miss expansion;
-// allow hit expansion only inside the compact boundary band below.
-// Set to 0 to restore the original two-sided proxy and geometry Adam behavior.
+// Experimental coverage proxy: both hit and miss may expand or shrink, but
+// only inside a symmetric compact boundary band. Background carve is exempt.
+// Set to 0 to use the legacy transition controls below.
+#ifndef GEOMETRY_TWO_SIDED_BOUNDARY
+#define GEOMETRY_TWO_SIDED_BOUNDARY 1
+#endif
+
+// Half-width on each side of the surface, in Geometry Tau units.
+// Uses the existing sigmoid gradient times a compact taper (not an exact
+// coverage derivative). Does not increase its peak or change the learning rate.
+#ifndef GEOMETRY_BOUNDARY_BAND_TAU
+#define GEOMETRY_BOUNDARY_BAND_TAU 1.0f
+#endif
+
+// Legacy proxy, used only when GEOMETRY_TWO_SIDED_BOUNDARY=0.
+// 1: hit shrinking / miss expansion, plus the optional hit expansion band.
+// 0: original sigmoid proxy without directional or compact-band gating.
 #ifndef GEOMETRY_TRANSITION_ONLY
 #define GEOMETRY_TRANSITION_ONLY 1
 #endif
@@ -11,6 +25,12 @@
 // Expansion fades to exactly zero at this depth. 0 restores hit-shrink-only.
 #ifndef GEOMETRY_HIT_EXPANSION_BAND_TAU
 #define GEOMETRY_HIT_EXPANSION_BAND_TAU 1.0f
+#endif
+
+// Independent of the proxy mode: stop stale geometry momentum when the
+// current component is zero or opposes that momentum.
+#ifndef GEOMETRY_ADAM_DIRECTION_GUARD
+#define GEOMETRY_ADAM_DIRECTION_GUARD 1
 #endif
 
 // Shared by host code and shaders. Reconstruction uses point-cloud initialization.

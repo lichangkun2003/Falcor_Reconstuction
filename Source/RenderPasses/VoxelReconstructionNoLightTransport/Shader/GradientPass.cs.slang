@@ -97,6 +97,15 @@ float calcAlphaGeometryDistanceGrad(
     return dL_dGate * (-w * (1.0f - w) / tau);
 }
 
+float compactGeometryBoundaryWeight(float distanceWorld, float tau)
+{
+    float bandWidth = tau * max(float(GEOMETRY_BOUNDARY_BAND_TAU), 0.0f);
+    if (bandWidth <= 0.0f)
+        return 0.0f;
+    float t = saturate(1.0f - abs(distanceWorld) / bandWidth);
+    return t * t * (3.0f - 2.0f * t);
+}
+
 void calcHardHitGeometryGrad(
     VoxelRecord voxelRec,
     float3 behindColor,
@@ -185,7 +194,19 @@ void calcHardHitGeometryGrad(
             gGeometryGradClamp
         );
 
-    #if GEOMETRY_TRANSITION_ONLY
+    #if GEOMETRY_TWO_SIDED_BOUNDARY
+    // The same taper acts on both signs of the combined RGB/alpha proxy.
+    // Apply after the clamp to keep the legacy near-hit expansion magnitude;
+    // importance correction still happens exactly once, below.
+    if (!isReferenceBackground)
+        dL_dG *= compactGeometryBoundaryWeight(distanceWorld, tau);
+
+    // Reliable background keeps its deep-hit cleanup. An ellipsoid already
+    // containing the entire clipped voxel cannot gain coverage by expanding.
+    if (dL_dG > 0.0f &&
+        (isReferenceBackground || gaussianEllipsoidContainsVoxel(ellipsoid, gGridDataParamBlock.voxelSize)))
+        dL_dG = 0.0f;
+    #elif GEOMETRY_TRANSITION_ONLY
     // dL/dg > 0 makes this hit deeper under gradient descent. Near the
     // boundary it can repair coverage missing from the historical prefix.
     // Deep hits must have EXACTLY zero expansion; a small sigmoid tail can
@@ -201,9 +222,9 @@ void calcHardHitGeometryGrad(
             expansionWeight = 0.0f;
         dL_dG *= expansionWeight;
     }
+    #endif
     // Keep a valid zero record so update can clear stale geometry momentum.
     // The sampling PDF weight is applied later, after this gate and clamp.
-    #endif
     fillGaussianEllipsoidGradient(ellipsoid, xLocal, dL_dG, geometryGradRecord);
     if (isReferenceBackground && geometryGradRecord.geometryValid != 0)
         geometryGradRecord.backgroundCarveValid = 1;
@@ -275,7 +296,11 @@ void calcMissCandidateGeometryGrad(
 
     float dL_dG = clamp(sanitizeFloat(dL_dDistance * distanceScale), -gGeometryGradClamp, gGeometryGradClamp);
 
-    #if GEOMETRY_TRANSITION_ONLY
+    #if GEOMETRY_TWO_SIDED_BOUNDARY
+    // Allow miss -> deeper miss as well as miss -> hit near the boundary.
+    // Deep misses receive a valid zero record, just like deep foreground hits.
+    dL_dG *= compactGeometryBoundaryWeight(distanceWorld, tau);
+    #elif GEOMETRY_TRANSITION_ONLY
     // Gradient descent decreases g when dL/dg > 0 (miss -> hit).
     dL_dG = max(dL_dG, 0.0f);
     #endif

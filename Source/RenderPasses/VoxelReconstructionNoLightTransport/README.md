@@ -145,7 +145,22 @@ dw / dd = -w · (1 - w) / tau
 
 Geometry Tau 默认 0.12 个体素宽度，由 CPU 转换为世界长度。代理作用于 hard-hit 和已有占据体素中的 near-miss，推动 center、logScale 和 rotation。Alpha Geometry Weight 默认 0.1，仅额外缩放 alpha 对几何的代理贡献，不替代图像损失中的 Alpha Loss Weight。
 
-`GEOMETRY_TRANSITION_ONLY=1` 时，hard-hit 保留收缩梯度，并允许边界内侧一个 tau 范围中的扩张梯度补偿历史前缀的覆盖不足。设 `b = GEOMETRY_HIT_EXPANSION_BAND_TAU * tau`，扩张权重为 `smoothstep(0, 1, saturate(1 + distanceWorld / b))`；深度达到 b 后严格为零。默认倍率为 1，改为 0 可恢复所有 hit 均禁止扩张的对照。背景 hit 和已经包含体素八个角点的椭球禁止扩张；near-miss 仍只允许向 hit 推动。门控作用于合并 RGB/alpha 信号并限幅后的几何代理，再乘采样 PDF 权重；零梯度仍保留有效记录，以便清除旧的几何 Adam 动量。这是几何代理的实验性调整，不能保证消除白点。
+默认启用 `GEOMETRY_TWO_SIDED_BOUNDARY=1` 的双向边界实验。对于非可靠背景像素，hard-hit 和 near-miss 都允许扩张或收缩，并使用相同的有限边界带：
+
+```text
+b = GEOMETRY_BOUNDARY_BAND_TAU * tau
+t = saturate(1 - abs(distanceWorld) / b)
+weight = t * t * (3 - 2 * t)
+dL/dg = clamp(合并的 RGB/alpha 几何代理, -clamp, clamp) * weight
+```
+
+`GEOMETRY_BOUNDARY_BAND_TAU` 默认 1，即表面内外各一个 tau；b 为 0 时该代理权重为 0。带内保留两个方向，带外严格为零。与此前宽度为一个 tau 的 hit 扩张相比，扩张强度保持一致；新增 near-miss 收缩，同时限制非背景 deep-hit 收缩和 deep-miss 扩张。可靠背景的 carve 与 alpha 几何清理不受此带宽限制；背景 hit 和完全包含体素八个角点的椭球仍禁止扩张。已有占据体素的候选筛选方式保持不变，因此此代理本身不创建空体素。
+
+门控作用于合并 RGB/alpha 信号并限幅后的几何代理，再乘一次采样 PDF 权重。它是对原 sigmoid 代理的对称衰减，没有按核积分归一化；并非像素覆盖面积的精确导数，也不保证消除白雾。1 SPP 和多 SPP 共用此代理，但各自的残差计算方式保持原样。
+
+对照配置仍在 `Defines.h`：设 `GEOMETRY_TWO_SIDED_BOUNDARY=0` 后，`GEOMETRY_TRANSITION_ONLY=1` 使用旧门控，`GEOMETRY_HIT_EXPANSION_BAND_TAU=0` 恢复 hit 只收缩、miss 只扩张；后者为 1 则允许旧的有限带 hit 扩张。`GEOMETRY_TRANSITION_ONLY=0` 恢复没有方向门控的原 sigmoid 代理。
+
+`GEOMETRY_ADAM_DIRECTION_GUARD=1` 独立控制几何 Adam：当前分量梯度为零或与动量反向时，清除该分量的一阶动量并取消当次位移。切换代理不再连带切换 Adam；零几何梯度仍保留有效记录，以便门控实际生效。学习率、步长上限和生长/删除规则均未随此次实验调整。
 
 明确背景像素的处理不是只调透明度：
 

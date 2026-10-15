@@ -369,10 +369,12 @@ struct ContourSamplingTestAccess
         auto dummy = pass.mpDevice->createTexture2D(1, 1, ResourceFormat::RGBA32Float, 1, 1, nullptr, flags);
         ProgramDesc desc;
         desc.addShaderLibrary(GradientPassShaderFilePath).csEntry("main");
-        ref<ComputePass> gradients[3];
-        for (uint32_t mode = 0; mode < 3; ++mode)
+        ref<ComputePass> gradients[4];
+        for (uint32_t mode = 0; mode < 4; ++mode)
         {
             auto defines = pass.getReconstructionDefines();
+            defines.add("GEOMETRY_TWO_SIDED_BOUNDARY", mode == 3 ? "1" : "0");
+            defines.add("GEOMETRY_BOUNDARY_BAND_TAU", "1.0f");
             defines.add("GEOMETRY_TRANSITION_ONLY", mode == 2 ? "0" : "1");
             defines.add("GEOMETRY_HIT_EXPANSION_BAND_TAU", mode == 1 ? "0.0f" : "1.0f");
             gradients[mode] = ComputePass::create(pass.mpDevice, desc, defines, true);
@@ -399,9 +401,9 @@ struct ContourSamplingTestAccess
         auto setSphereDepth = [&](float depth)
         {
             gmin = -2 * depth / 0.45f;
-            xLocal = float3(0.5f) + float3(0.45f * std::sqrt(1 + gmin), 0, 0);
+            xLocal = voxel.ellipsoid.center + float3(0.45f * std::sqrt(1 + gmin), 0, 0);
         };
-        auto evaluate = [&](uint32_t mode, float4 derivative, uint32_t classification = 0u, float pdfWeight = 1.0f)
+        auto evaluate = [&](uint32_t mode, float4 derivative, uint32_t classification = 0u, float pdfWeight = 1.0f, bool miss = false)
         {
             pass.uploadSparseBatch(ctx, block, 0, &cell, 1, &voxel);
             pass.barrierSparseVoxels(ctx);
@@ -415,6 +417,14 @@ struct ContourSamplingTestAccess
             path.voxels[0].transmittanceBefore = 1;
             path.voxels[0].gmin = gmin;
             path.voxels[0].xStar = float3(3) + xLocal;
+            if (miss)
+            {
+                path.valid = path.contributingVoxelCount = 0;
+                path.candidateCount = path.candidates[0].valid = 1;
+                path.candidates[0].transmittanceBefore = 1;
+                path.candidates[0].gmin = gmin;
+                path.candidates[0].xStar = float3(3) + xLocal;
+            }
             pathBuffer->setBlob(&path, 0, sizeof(path));
             auto var = gradients[mode]->getRootVar();
             var["gDL_dColorBuffer"] = texture(derivative);
@@ -456,6 +466,62 @@ struct ContourSamplingTestAccess
             }
         }
 
+        // Test both signs independently for RGB and alpha, on both sides of
+        // the boundary. The world-distance proxy must attenuate symmetrically;
+        // divide out dg/dlogScale to compare the scalar proxy, not the shape.
+        voxel.ellipsoid.center.x = 0.3f; // Keep deep-miss xStar inside this voxel.
+        for (const float4 signal : {float4(1, 1, 1, 0), float4(0, 0, 0, -1)})
+        {
+            for (float depth : {0.02f, 0.09f})
+            {
+                float hitScalar = 0.0f;
+                for (bool miss : {false, true})
+                {
+                    setSphereDepth(miss ? -depth : depth);
+                    const auto expansion = evaluate(3, signal, 0, 1, miss);
+                    const auto contraction = evaluate(3, -signal, 0, 1, miss);
+                    require(expansion.geometryValid == 1 && contraction.geometryValid == 1,
+                        "Two-sided boundary proxy lost a hit/miss record");
+                    require(expansion.logScale.x < 0 && contraction.logScale.x > 0,
+                        "Two-sided boundary proxy rejected an expansion/shrink direction");
+                    require(length(expansion.logScale + contraction.logScale) < 1e-7f,
+                        "Boundary proxy treated gradient signs differently");
+                    const auto weightedBoundary = evaluate(3, signal, 0, 2, miss);
+                    require(length(weightedBoundary.logScale - 2.0f * expansion.logScale) < 1e-7f,
+                        "Two-sided proxy lost the PDF weight after saturated clamp");
+                    const float scalar = -expansion.logScale.x / (2 * (1 + gmin));
+                    if (!miss)
+                    {
+                        hitScalar = scalar;
+                        const auto previous = evaluate(0, signal);
+                        require(length(previous.logScale - expansion.logScale) < 1e-7f,
+                            "Two-sided mode changed the existing near-hit expansion magnitude");
+                    }
+                    else require(std::abs(scalar - hitScalar) < 1e-7f, "Hit/miss boundary weights are not symmetric");
+                }
+            }
+            for (bool miss : {false, true})
+            {
+                setSphereDepth(miss ? -0.15f : 0.15f);
+                zeroGeometry(evaluate(3, signal, 0, 1, miss));
+                zeroGeometry(evaluate(3, -signal, 0, 1, miss));
+            }
+        }
+        for (float depth : {0.02f, 0.15f})
+        {
+            setSphereDepth(depth);
+            const auto carve = evaluate(3, shrink, 1);
+            require(carve.logScale.x > 0 && carve.backgroundCarveValid == 1,
+                "Compact band disabled reliable-background cleanup");
+            require(length(carve.logScale - evaluate(0, shrink, 1).logScale) < 1e-7f,
+                "Two-sided mode changed background carve/alpha gradients");
+            zeroGeometry(evaluate(3, float4(0, 0, 0, -100), 1));
+        }
+        setSphereDepth(-0.02f);
+        require(evaluate(3, shrink, 1, 1, true).geometryValid == 0,
+            "Reliable background started inserting near-miss geometry");
+        voxel.ellipsoid.center = float3(0.5f);
+
         // A rotated ellipsoid can fully cover a non-cubic voxel yet leave its
         // corner hits inside the expansion band. It must still not expand.
         const float invSqrt2 = std::sqrt(0.5f);
@@ -471,10 +537,12 @@ struct ContourSamplingTestAccess
         setRotatedPoint(float3(1.8f, 1.3f, 1.2f), float3(0.001f, 0.999f, 0.999f));
         require(length(evaluate(2, expand).logScale) > 0, "Contained fixture has no legacy expansion");
         zeroGeometry(evaluate(0, expand));
+        zeroGeometry(evaluate(3, expand));
         require(length(evaluate(0, shrink).logScale) > 0, "Containment must not disable shrinking");
         // Its AABB covers the voxel, but the thin rotated ellipsoid does not.
         setRotatedPoint(float3(1.5f, 0.35f, 1.2f), float3(0.5f) + float3(-0.32f * invSqrt2, 0.16f * invSqrt2, 0));
         require(length(evaluate(0, expand).logScale) > 0, "AABB containment incorrectly suppressed partial coverage repair");
+        require(length(evaluate(3, expand).logScale) > 0, "Two-sided mode rejected partial coverage repair");
 
         // Feed real LossPass residuals into the hit proxy: a prior miss can
         // expand a currently correct hit, while 1 SPP retains its own residual.
@@ -503,11 +571,16 @@ struct ContourSamplingTestAccess
             var["gCurrentFrameColor"] = texture(float4(0.5f));
             var["gReferenceImage"] = texture(float4(0, 0, 0, trial == 2 ? 1.0f : 0.5f));
             loss->execute(ctx, uint3(1));
-            const auto result = evaluate(0, pixel(ctx, derivatives));
-            if (trial == 1) zeroGeometry(result);
-            else require(result.logScale.x < 0, "Historical-prefix or 1-SPP residual failed to drive near-hit expansion");
+            const auto derivative = pixel(ctx, derivatives);
+            for (uint32_t mode : {0u, 3u})
+            {
+                const auto result = evaluate(mode, derivative);
+                if (trial == 1) zeroGeometry(result);
+                else require(result.logScale.x < 0, "Historical-prefix or 1-SPP residual failed to drive near-hit expansion");
+            }
         }
         std::cout << "PASS: compact hit expansion, deep/contained suppression, rotated containment, shrink/carve, PDF and prefix/1-SPP residuals\n";
+        std::cout << "PASS: two-sided RGB/alpha hit/miss gradients, symmetric band, exact deep zeros and preserved background carve\n";
     }
 
     static void singleSppTraining(VoxelReconstructionNoLightTransport& pass, RenderContext* ctx)
@@ -669,6 +742,10 @@ struct ContourSamplingTestAccess
         DefineList defines;
         defines.add("SPARSE_POOL_PAGE_SIZE", "32u");
         defines.add("SPARSE_POOL_MAX_PAGES", "2");
+        // Changing the visibility proxy must not silently disable Adam guards.
+        defines.add("GEOMETRY_TRANSITION_ONLY", "0");
+        defines.add("GEOMETRY_TWO_SIDED_BOUNDARY", "0");
+        defines.add("GEOMETRY_ADAM_DIRECTION_GUARD", "1");
         auto pass = ComputePass::create(device, desc, defines);
         auto var = pass->getRootVar();
         auto block = ParameterBlock::create(device, pass->getProgram()->getReflector()->getParameterBlock("gGridDataParamBlock"));
@@ -708,7 +785,8 @@ struct ContourSamplingTestAccess
                 moments[id].centerMean = float3(0, -0.1f, -0.1f);
                 moments[id].centerSquaredMean = float3(0, 0.01f, 0.01f);
             }
-            grid["voxelPages"][0] = device->createStructuredBuffer(sizeof(VoxelData), 32u, flags, MemoryType::DeviceLocal, voxels.data());
+            auto voxelBuffer = device->createStructuredBuffer(sizeof(VoxelData), 32u, flags, MemoryType::DeviceLocal, voxels.data());
+            grid["voxelPages"][0] = voxelBuffer;
             grid["gradPages"][0] = device->createStructuredBuffer(sizeof(GradRecord), 32u, flags, MemoryType::DeviceLocal, gradients.data());
             auto adam = device->createStructuredBuffer(sizeof(GeometryAdamState), 32u, flags, MemoryType::DeviceLocal, moments.data());
             var["gGeometryAdamPages"][0] = adam;
@@ -717,6 +795,7 @@ struct ContourSamplingTestAccess
             pass->execute(ctx, uint3(4, 1, 1));
             ctx->submit(true);
             adam->getBlob(moments.data(), 0, moments.size() * sizeof(GeometryAdamState));
+            voxelBuffer->getBlob(voxels.data(), 0, voxels.size() * sizeof(VoxelData));
             for (uint32_t id = 0; id < 3; ++id)
             {
                 const float mean = 0.1f * gradients[id].opacityGrad.coefficients[0] / float(samples);
@@ -724,6 +803,8 @@ struct ContourSamplingTestAccess
                 require(std::abs(moments[id].centerMean.x - mean) < 1e-6f, "Geometry used voxel hit count instead of backward sample count");
                 require(moments[id].centerMean.y == 0.0f && moments[id].centerMean.z == 0.0f,
                     "Geometry retained zero-gradient or opposing momentum");
+                require(voxels[id].ellipsoid.center.y == 0.5f && voxels[id].ellipsoid.center.z == 0.5f,
+                    "Geometry moved despite a zero-gradient or opposing-momentum guard");
             }
             require(moments[3].opacitySteps == 0u && moments[3].centerSteps == 0u,
                 "Zero-valid voxel unexpectedly advanced Adam");

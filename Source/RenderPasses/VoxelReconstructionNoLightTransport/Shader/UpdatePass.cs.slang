@@ -82,7 +82,7 @@ float adamStepWithBias(float gradient, inout float mean, inout float squaredMean
 float3 geometryAdamStep(float3 gradient, inout float3 mean, inout float3 squaredMean, inout uint steps, float lr)
 {
     float3 step = adamStep(gradient, mean, squaredMean, steps, lr);
-    #if GEOMETRY_TRANSITION_ONLY
+    #if GEOMETRY_ADAM_DIRECTION_GUARD
     // Old momentum must not move a parameter when its accepted gradient is
     // zero, or move it against the currently accepted aggregate direction.
     // Miss contributions may still legitimately expand the same voxel.
